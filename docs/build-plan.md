@@ -60,22 +60,36 @@ enforce nothing.
 
 ---
 
-## Stage 1 — Talk to a radio
+## Stage 1 — Talk to a radio ✅ complete
 
-The vertical slice everything rests on. Built and proven against hardware before any UI exists.
+Hardware-verified on a RAK WisMesh Tag (firmware **2.7.3**, EU_868) with a Galaxy
+Fold (SM-F976B, Android 17).
 
-- Kable BLE: scan by service UUID, connect, MTU 512, four characteristics.
-- PhoneAPI FSM: enable FromNum notify → `want_config_id` → **poll** FromRadio until drained
-  (notifications are gated behind `STATE_SEND_PACKETS`) → collect until `config_complete_id`.
-- Drain-until-empty read loop; drain after every ToRadio write; `rebooted:true` → re-handshake;
-  graceful `disconnect:true`.
-- **ToRadio pacer** as a first-class component — the firmware drops rate-limited packets silently
-  while still returning a normal `QueueStatus`, so the app must own the spacing.
-- **hop_limit guard** in the packet builder.
-- `FakeTransport` replaying recorded FromRadio streams, so Stages 2–6 develop without hardware.
+| Proof | Result |
+|---|---|
+| Scan filtered by service UUID | only Meshtastic radios listed |
+| Connect + config download | `Connecting → Downloading → Ready` in **4.6 s** |
+| Snapshot contents | MyNodeInfo, DeviceMetadata, **8 channels**, LoRa config, 11 NodeInfos |
+| Capability gating | PKI `true`, signing `false` — correct for 2.7.3 |
+| Survives a radio reset | two cycles, each back to Ready in **~12 s**, then stable |
 
-**Exit proof:** connects to a T-Echo, downloads config, prints `MyNodeInfo` + 8 channels +
-`DeviceMetadata`, survives a forced reboot, reconnects. Capability gates parsed and stored.
+**Bug this stage existed to find:** a radio reset dropped the BLE link but the
+app stayed on "Connected" forever. Kable's `observe()` Flow survives disconnects
+by design, and an idle session issues no I/O, so nothing ever threw. Fixed by
+racing the session against `peripheral.state`. Waiting for I/O to fail is not a
+valid disconnect detector.
+
+**Known rough edge:** after a reset, `PhoneApiSession.run()` can return normally
+(the FromNum flow completes rather than failing), causing one redundant
+reconnect with `attempt=0` before settling. Self-heals; tidy up in Stage 2 by
+treating a completed notification flow as a lost link.
+
+### Still to build in this area (moves to Stage 2)
+
+- `OutboundPacer` and `MeshPacketBuilder` are written and unit-tested but not yet
+  exercised against hardware — nothing sends mesh packets until Stage 2.
+- `FakeTransport` lives in `:core:protocol` test sources; promote to
+  `:core:testing` when `:core:data` needs it.
 
 ---
 
