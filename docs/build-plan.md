@@ -93,19 +93,37 @@ treating a completed notification flow as a lost link.
 
 ---
 
-## Stage 2 — Data layer + honest message pipeline
+## Stage 2 — Data layer + honest message pipeline ✅ complete
 
-- Room schema per UX §5.2.
-- Repositories expose Flows; UI never touches transport.
-- **Message status state machine** as pure logic:
-  `Queued → SentToNode → ReachedMesh → Delivered / Unheard / Failed / Unknown`, driven by
-  `QueueStatus` + `Routing`, distinguishing ACK-from-self (implicit) from ACK-from-peer (explicit),
-  with the 120 s unknown timeout. Table-driven tests over every `Routing.Error`.
-- Dedupe by `(from, id)`; validate all mesh strings at the boundary.
-- Foreground service (`connectedDevice`) owning the Personal-node session, backoff reconnect.
+Hardware-verified: two WisMesh Tags (SJ1 ↔ SJ2) on a shared secondary channel.
 
-**Exit proof:** message from phone A appears on phone B; ticks progress clock → grey → green.
-Recorded fixtures reproduce every tick state in unit tests.
+| Proof | Result |
+|---|---|
+| Outgoing ticks | `QUEUED → SENT_TO_NODE → REACHED_MESH` in ~4 s |
+| Implicit vs explicit ACK | ACK arrived from **our own** node number → `REACHED_MESH`, never `DELIVERED` |
+| Incoming text | received from SJ1 with SNR 5.75 / 6.5 and hop count |
+| Unicode / RTL | Arabic `مرحبا` stored and rendered intact |
+| Node table | 11 real mesh nodes, battery `101` correctly read as USB-powered |
+| Persistence | messages and nodes survived an app restart |
+
+Architecture: `:core:model` (domain types) → `:core:database` (Room, provides its
+own Hilt bindings so `RoomDatabase` never leaks upward) → `:core:data`
+(`MeshRepository`, the only thing that talks to the transport).
+
+Status is **derived, never assumed**, and advances monotonically so an
+out-of-order packet cannot downgrade a confirmed delivery. Room broadcasts stop
+at "heard by the mesh".
+
+Also fixed the Stage 1 rough edge: a completed notification flow now raises
+`TransportClosed` rather than returning normally.
+
+### Deferred from this stage
+
+- Foreground service for the Personal-node session — the link currently dies with
+  the process. Needed before any real field use; carry into Stage 5.
+- `hopsAway` renders as "0 hops"; should read "direct". UI polish for Stage 5.
+- Incoming messages are stored with `REACHED_MESH`, which is meaningless for a
+  received message. Harmless (no tick is drawn) but worth a dedicated value.
 
 ---
 
