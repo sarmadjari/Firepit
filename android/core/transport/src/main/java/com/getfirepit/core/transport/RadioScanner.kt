@@ -34,7 +34,7 @@ class RadioScanner {
     /** Raw stream; the same radio is re-emitted every time it advertises. */
     fun scan(): Flow<DiscoveredRadio> = scanner.advertisements.map { advertisement ->
         DiscoveredRadio(
-            identifier = advertisement.identifier.toString(),
+            identifier = advertisement.identifier,
             name = advertisement.name ?: advertisement.peripheralName,
             rssi = advertisement.rssi,
             advertisement = advertisement,

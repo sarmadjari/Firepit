@@ -2,7 +2,7 @@ package com.getfirepit.core.designsystem.adaptive
 
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.WindowAdaptiveInfo
-import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfoV2
 import androidx.compose.material3.adaptive.layout.HingePolicy
 import androidx.compose.material3.adaptive.layout.PaneScaffoldDirective
 import androidx.compose.material3.adaptive.layout.calculatePaneScaffoldDirective
@@ -31,7 +31,7 @@ val MinimumSupportedWidth: Dp = 320.dp
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
 @Composable
 fun foldAwarePaneDirective(
-    adaptiveInfo: WindowAdaptiveInfo = currentWindowAdaptiveInfo(),
+    adaptiveInfo: WindowAdaptiveInfo = currentWindowAdaptiveInfoV2(),
 ): PaneScaffoldDirective {
     val base = calculatePaneScaffoldDirective(
         windowAdaptiveInfo = adaptiveInfo,

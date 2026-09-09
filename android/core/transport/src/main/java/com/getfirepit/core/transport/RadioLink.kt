@@ -11,6 +11,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -69,9 +70,18 @@ class RadioLink(private val scope: CoroutineScope) {
 
     private var job: Job? = null
 
+    /**
+     * Two sessions must never read the same transport: each `read` consumes one
+     * queued FromRadio, so concurrent readers split the config download between
+     * them and both end up with a partial snapshot. The previous attempt is
+     * therefore fully joined before a new one starts.
+     */
     fun connect(radio: DiscoveredRadio) {
-        job?.cancel()
-        job = scope.launch { maintainConnection(radio) }
+        val previous = job
+        job = scope.launch {
+            previous?.cancelAndJoin()
+            maintainConnection(radio)
+        }
     }
 
     /**
@@ -81,7 +91,7 @@ class RadioLink(private val scope: CoroutineScope) {
      */
     suspend fun disconnect() {
         runCatching { currentSession.value?.sendDisconnect() }
-        job?.cancel()
+        job?.cancelAndJoin()
         job = null
         currentSession.value = null
         setState(LinkState.Disconnected)

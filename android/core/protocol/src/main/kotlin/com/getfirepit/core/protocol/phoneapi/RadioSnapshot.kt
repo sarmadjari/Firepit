@@ -63,18 +63,17 @@ internal class RadioSnapshotAccumulator {
 
     /** Returns true once the radio signals this download is complete. */
     fun accept(message: FromRadio, expectedConfigId: Int): Boolean {
-        snapshot = when {
-            message.my_info != null -> snapshot.copy(myInfo = message.my_info)
-            message.metadata != null -> snapshot.copy(metadata = message.metadata)
-            message.channel != null ->
-                snapshot.copy(channels = snapshot.channels + (message.channel!!.index to message.channel!!))
-            message.config != null -> snapshot.copy(configs = snapshot.configs + message.config!!)
-            message.moduleConfig != null ->
-                snapshot.copy(moduleConfigs = snapshot.moduleConfigs + message.moduleConfig!!)
-            message.node_info != null ->
-                snapshot.copy(nodes = snapshot.nodes + (message.node_info!!.num to message.node_info!!))
-            message.region_presets != null -> snapshot.copy(regionPresets = message.region_presets)
-            else -> snapshot
+        snapshot = with(message) {
+            when {
+                my_info != null -> snapshot.copy(myInfo = my_info)
+                metadata != null -> snapshot.copy(metadata = metadata)
+                channel != null -> snapshot.copy(channels = snapshot.channels + (channel.index to channel))
+                config != null -> snapshot.copy(configs = snapshot.configs + config)
+                moduleConfig != null -> snapshot.copy(moduleConfigs = snapshot.moduleConfigs + moduleConfig)
+                node_info != null -> snapshot.copy(nodes = snapshot.nodes + (node_info.num to node_info))
+                region_presets != null -> snapshot.copy(regionPresets = region_presets)
+                else -> snapshot
+            }
         }
         return message.config_complete_id == expectedConfigId
     }

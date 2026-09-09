@@ -72,7 +72,7 @@ fun FirepitApp(modifier: Modifier = Modifier) {
     ) {
         when (selected) {
             TopLevelDestination.CHATS -> ChatsPane(onChatOpenChange = { chatOpen = it })
-            TopLevelDestination.MAP -> MapScreen()
+            TopLevelDestination.MAP -> MapScreen(onBack = { selected = TopLevelDestination.CHATS })
             TopLevelDestination.SETTINGS -> SettingsScreen()
         }
     }

@@ -55,7 +55,7 @@ class MeshRepository @Inject constructor(
     private val link: RadioLink,
     private val messageDao: MessageDao,
     private val nodeDao: NodeDao,
-    @ApplicationScope private val scope: CoroutineScope,
+    @param:ApplicationScope private val scope: CoroutineScope,
 ) {
     private val pacer = OutboundPacer(System::currentTimeMillis)
 
