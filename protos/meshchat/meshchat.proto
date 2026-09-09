@@ -85,6 +85,7 @@ message MeshChatControl {
     JoinHello join_hello = 2;
     RosterEvent roster_event = 3;
     LiveLocationRequest live_location_request = 4;
+    RosterSync roster_sync = 5;
   }
 }
 
@@ -115,4 +116,26 @@ message RosterEvent {
 message LiveLocationRequest {
   fixed32 room_id = 1;
   uint32 suggested_secs = 2;
+}
+
+// Inviter -> joiner, as a PKI direct message, right after a join is proved.
+//
+// Sent directed rather than answering a broadcast "who is here?", because on
+// LoRa every member replying to such a question is a packet storm on each join.
+// The inviter is already in the exchange, so this costs one extra packet.
+//
+// Contents are hearsay: the sender is asserting who they believe is present.
+// Receivers must not present a synced entry as strongly as somebody they have
+// actually heard.
+message RosterSync {
+  fixed32 room_id = 1;
+  // Truncated to fit one packet, most recently heard first, so a large room
+  // sends its liveliest members rather than failing to send at all.
+  repeated RosterEntry entries = 2;
+  bool truncated = 3;
+}
+
+message RosterEntry {
+  uint32 node_num = 1;
+  uint32 invited_by = 2;
 }

@@ -39,6 +39,7 @@ include(":core:designsystem")
 include(":core:transport")
 include(":core:database")
 include(":core:data")
+include(":core:crypto")
 
 // Modules are added as their stage arrives rather than pre-created empty:
 // :core:crypto :core:adaptive :core:service :core:testing :feature:*

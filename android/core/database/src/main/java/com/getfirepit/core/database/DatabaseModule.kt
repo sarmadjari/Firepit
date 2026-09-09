@@ -23,4 +23,7 @@ object DatabaseModule {
 
     @Provides
     fun provideNodeDao(database: FirepitDatabase): NodeDao = database.nodeDao()
+
+    @Provides
+    fun provideRoomMemberDao(database: FirepitDatabase): RoomMemberDao = database.roomMemberDao()
 }

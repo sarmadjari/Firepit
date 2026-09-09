@@ -2,6 +2,8 @@ package com.getfirepit.core.protocol
 
 import com.getfirepit.protocol.meshchat.JoinHello
 import com.getfirepit.protocol.meshchat.MeshChatControl
+import com.getfirepit.protocol.meshchat.RosterEntry
+import com.getfirepit.protocol.meshchat.RosterSync
 import okio.ByteString.Companion.toByteString
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -105,8 +107,35 @@ class ProtocolContractTest {
         )
     }
 
+    @Test
+    fun `a full roster sync fits in one packet`() {
+        // Worst case on the wire: negative node numbers are large uint32 values,
+        // which take the full five bytes as a varint. Measures 208 of 233.
+        val control = MeshChatControl(
+            version = 1,
+            roster_sync = RosterSync(
+                room_id = -1,
+                entries = List(MAX_ROSTER_ENTRIES) {
+                    RosterEntry(node_num = Int.MIN_VALUE + it, invited_by = Int.MIN_VALUE + it)
+                },
+                truncated = true,
+            ),
+        )
+
+        val encoded = MeshChatControl.ADAPTER.encode(control)
+
+        assertEquals(control, MeshChatControl.ADAPTER.decode(encoded))
+        assertTrue(
+            "Roster sync is ${encoded.size} bytes, over the ${Constants.DATA_PAYLOAD_LEN.value}-byte payload",
+            encoded.size <= Constants.DATA_PAYLOAD_LEN.value,
+        )
+    }
+
     private companion object {
         const val MESHCHAT_CONTROL_PORT = 300
         const val BROADCAST_NODENUM = -1 // 0xFFFFFFFF as a signed uint32
+
+        /** Mirrors RoomRepository.MAX_ROSTER_ENTRIES. */
+        const val MAX_ROSTER_ENTRIES = 14
     }
 }

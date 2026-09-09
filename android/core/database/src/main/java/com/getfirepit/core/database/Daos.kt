@@ -8,6 +8,7 @@ import androidx.room.Upsert
 import com.getfirepit.core.model.ChatMessage
 import com.getfirepit.core.model.MeshNode
 import com.getfirepit.core.model.MessageStatus
+import com.getfirepit.core.model.RoomMember
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -71,3 +72,59 @@ suspend fun MessageDao.saveIfNew(message: ChatMessage, myNodeNum: Int): Boolean 
     insertIfNew(message.toEntity(myNodeNum)) != -1L
 
 suspend fun MessageDao.find(id: Int): ChatMessage? = findEntity(id)?.toDomain()
+
+@Dao
+interface RoomMemberDao {
+
+    // NULLs sort last in SQLite, so members we have only been told about fall
+    // below the ones we have actually heard.
+    @Query("SELECT * FROM room_members WHERE roomId = :roomId ORDER BY lastHeard DESC")
+    fun observeRoomEntities(roomId: Int): Flow<List<RoomMemberEntity>>
+
+    @Query("SELECT * FROM room_members WHERE roomId = :roomId AND nodeNum = :nodeNum")
+    suspend fun findEntity(roomId: Int, nodeNum: Int): RoomMemberEntity?
+
+    @Upsert
+    suspend fun upsert(member: RoomMemberEntity)
+
+    @Query("DELETE FROM room_members WHERE roomId = :roomId")
+    suspend fun deleteRoom(roomId: Int)
+}
+
+fun RoomMemberDao.observeRoom(roomId: Int): Flow<List<RoomMember>> =
+    observeRoomEntities(roomId).map { entities -> entities.map(RoomMemberEntity::toDomain) }
+
+/**
+ * Records having actually heard somebody. [invitedBy] only ever gets set, never
+ * cleared, so hearing a vouched member speak does not downgrade them.
+ */
+suspend fun RoomMemberDao.record(roomId: Int, nodeNum: Int, now: Long, invitedBy: Int? = null) {
+    val existing = findEntity(roomId, nodeNum)
+    upsert(
+        RoomMemberEntity(
+            roomId = roomId,
+            nodeNum = nodeNum,
+            invitedBy = invitedBy ?: existing?.invitedBy,
+            firstSeen = existing?.firstSeen ?: now,
+            lastHeard = maxOf(now, existing?.lastHeard ?: now),
+        ),
+    )
+}
+
+/**
+ * Records somebody another member told us about. Never sets [lastHeard]: we
+ * have not heard them, and saying otherwise would dress up hearsay as a
+ * sighting.
+ */
+suspend fun RoomMemberDao.recordReported(roomId: Int, nodeNum: Int, now: Long, invitedBy: Int?) {
+    val existing = findEntity(roomId, nodeNum)
+    upsert(
+        RoomMemberEntity(
+            roomId = roomId,
+            nodeNum = nodeNum,
+            invitedBy = invitedBy ?: existing?.invitedBy,
+            firstSeen = existing?.firstSeen ?: now,
+            lastHeard = existing?.lastHeard,
+        ),
+    )
+}

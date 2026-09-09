@@ -2,6 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Scanning invite QR codes. Bluetooth permissions merge in from Kable. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Optional: a device with no camera can still be invited by someone else. -->
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
     <application
         android:name=".FirepitApplication"
         android:allowBackup="true"

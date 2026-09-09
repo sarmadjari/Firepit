@@ -18,6 +18,7 @@ import com.getfirepit.core.protocol.MeshConstants
 import com.getfirepit.core.protocol.MeshPacketBuilder
 import com.getfirepit.core.protocol.MessageStatusRules
 import com.getfirepit.core.protocol.OutboundPacer
+import com.getfirepit.core.protocol.phoneapi.RadioSnapshot
 import com.getfirepit.core.transport.LinkState
 import com.getfirepit.core.transport.RadioLink
 import javax.inject.Inject
@@ -32,6 +33,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import okio.ByteString
+import okio.ByteString.Companion.decodeBase64
 import okio.ByteString.Companion.encodeUtf8
 import okio.ByteString.Companion.toByteString
 import org.meshtastic.proto.Channel
@@ -43,6 +46,7 @@ import org.meshtastic.proto.PortNum
 import org.meshtastic.proto.QueueStatus
 import org.meshtastic.proto.Routing
 import org.meshtastic.proto.ToRadio
+import org.meshtastic.proto.User
 
 /**
  * Single source of truth for chat and node state.
@@ -65,6 +69,20 @@ class MeshRepository @Inject constructor(
     private val _channels = MutableStateFlow<List<RoomChannel>>(emptyList())
     val channels: StateFlow<List<RoomChannel>> = _channels.asStateFlow()
 
+    private val _snapshot = MutableStateFlow<RadioSnapshot?>(null)
+    val snapshot: StateFlow<RadioSnapshot?> = _snapshot.asStateFlow()
+
+    /** Our own `User`, needed to introduce ourselves when joining a room. */
+    val myUser: User?
+        get() = _snapshot.value?.let { it.nodes[it.myNodeNum]?.user }
+
+    /** A node's public key, required before anything can be sent to it over PKI. */
+    suspend fun publicKeyOf(nodeNum: Int): ByteString? =
+        _snapshot.value?.nodes?.get(nodeNum)?.user?.public_key?.takeIf { it.size == PUBLIC_KEY_SIZE }
+            ?: nodeDao.find(nodeNum)?.publicKey
+                ?.let { runCatching { it.decodeBase64() }.getOrNull() }
+                ?.takeIf { it.size == PUBLIC_KEY_SIZE }
+
     val isConnected: StateFlow<Boolean> = _myNodeNum
         .map { it != null }
         .stateIn(scope, SharingStarted.Eagerly, false)
@@ -80,6 +98,7 @@ class MeshRepository @Inject constructor(
         scope.launch {
             link.state.collect { state ->
                 if (state is LinkState.Ready) {
+                    _snapshot.value = state.snapshot
                     _myNodeNum.value = state.snapshot.myNodeNum
                     hopLimit = state.snapshot.lora?.hop_limit
                         ?.takeIf { it in 1..MeshConstants.MAX_HOP_LIMIT }
@@ -255,5 +274,8 @@ class MeshRepository @Inject constructor(
 
     private companion object {
         const val TAG = "FirepitMesh"
+
+        /** Curve25519 public key length; anything else cannot be a PKI key. */
+        const val PUBLIC_KEY_SIZE = 32
     }
 }

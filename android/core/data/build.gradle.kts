@@ -13,6 +13,7 @@ dependencies {
     api(projects.core.database)
     api(projects.core.protocol)
     api(projects.core.transport)
+    api(projects.core.crypto)
 
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)

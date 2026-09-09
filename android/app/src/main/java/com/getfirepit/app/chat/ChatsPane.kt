@@ -13,14 +13,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.layout.AnimatedPane
@@ -30,12 +34,20 @@ import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaf
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.getfirepit.app.rooms.CreateRoomDialog
+import com.getfirepit.app.rooms.InviteScreen
+import com.getfirepit.app.rooms.JoinRoomScreen
+import com.getfirepit.app.rooms.RoomMembersScreen
+import com.getfirepit.app.rooms.RoomsViewModel
 import com.getfirepit.core.designsystem.adaptive.foldAwarePaneDirective
 import com.getfirepit.core.designsystem.component.BackButton
 import com.getfirepit.core.designsystem.component.MessageBubble
@@ -58,17 +70,65 @@ fun ChatsPane(
     modifier: Modifier = Modifier,
     onChatOpenChange: (Boolean) -> Unit = {},
     viewModel: ChatsViewModel = hiltViewModel(),
+    roomsViewModel: RoomsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val roomsState by roomsViewModel.uiState.collectAsStateWithLifecycle()
     val navigator = rememberListDetailPaneScaffoldNavigator<Int>(
         scaffoldDirective = foldAwarePaneDirective(),
     )
     val scope = rememberCoroutineScope()
 
+    var overlay by remember { mutableStateOf<RoomsOverlay?>(null) }
+    var showCreateDialog by remember { mutableStateOf(false) }
+
     // True only when the detail covers the list, i.e. single-pane. Side by side
     // the list is still reachable, so navigation should stay.
     val chatCoversList = navigator.canNavigateBack()
-    LaunchedEffect(chatCoversList) { onChatOpenChange(chatCoversList) }
+    // Both the QR screens want the whole display, same as an open chat does.
+    LaunchedEffect(chatCoversList, overlay) { onChatOpenChange(chatCoversList || overlay != null) }
+
+    overlay?.let { current ->
+        val dismiss = {
+            overlay = null
+            roomsViewModel.clearMessages()
+        }
+        BackHandler(onBack = dismiss)
+        when (current) {
+            is RoomsOverlay.Invite -> InviteScreen(
+                roomId = current.roomId,
+                roomName = current.roomName,
+                onBack = dismiss,
+                modifier = modifier,
+                viewModel = roomsViewModel,
+            )
+
+            RoomsOverlay.Join -> JoinRoomScreen(
+                onBack = dismiss,
+                modifier = modifier,
+                viewModel = roomsViewModel,
+            )
+
+            is RoomsOverlay.Members -> RoomMembersScreen(
+                roomId = current.roomId,
+                roomName = current.roomName,
+                onBack = dismiss,
+                modifier = modifier,
+                viewModel = roomsViewModel,
+            )
+        }
+        return
+    }
+
+    if (showCreateDialog) {
+        CreateRoomDialog(
+            onDismiss = { showCreateDialog = false },
+            onCreate = { name ->
+                showCreateDialog = false
+                roomsViewModel.createRoom(name)
+            },
+        )
+    }
 
     BackHandler(enabled = chatCoversList) {
         scope.launch { navigator.navigateBack() }
@@ -83,10 +143,21 @@ fun ChatsPane(
                     channels = state.channels,
                     connected = state.connected,
                     selected = state.selected,
+                    roomsFull = roomsState.isFull,
+                    roomsBusy = roomsState.busy,
+                    roomsMessage = roomsState.error ?: roomsState.joinedRoomName,
                     onSelect = { index ->
                         viewModel.select(index)
                         scope.launch { navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, index) }
                     },
+                    onNewRoom = { showCreateDialog = true },
+                    onJoinRoom = {
+                        // A leftover "Created Camp" notice would otherwise close
+                        // the scanner the moment it opens.
+                        roomsViewModel.clearMessages()
+                        overlay = RoomsOverlay.Join
+                    },
+                    onDismissMessage = roomsViewModel::clearMessages,
                 )
             }
         },
@@ -105,11 +176,28 @@ fun ChatsPane(
                         } else {
                             null
                         },
+                        onInvite = if (channel.isRoom) {
+                            { overlay = RoomsOverlay.Invite(channel.id, channel.displayName) }
+                        } else {
+                            null
+                        },
+                        onShowMembers = if (channel.isRoom) {
+                            { overlay = RoomsOverlay.Members(channel.id, channel.displayName) }
+                        } else {
+                            null
+                        },
                     )
                 }
             }
         },
     )
+}
+
+/** Screens that take over the whole display rather than sitting in a pane. */
+private sealed interface RoomsOverlay {
+    data class Invite(val roomId: Int, val roomName: String) : RoomsOverlay
+    data class Members(val roomId: Int, val roomName: String) : RoomsOverlay
+    data object Join : RoomsOverlay
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -118,9 +206,43 @@ private fun ChannelList(
     channels: List<RoomChannel>,
     connected: Boolean,
     selected: Int?,
+    roomsFull: Boolean,
+    roomsBusy: Boolean,
+    roomsMessage: String?,
     onSelect: (Int) -> Unit,
+    onNewRoom: () -> Unit,
+    onJoinRoom: () -> Unit,
+    onDismissMessage: () -> Unit,
 ) {
-    Scaffold(topBar = { TopAppBar(title = { Text("Firepit") }) }) { padding ->
+    var menuOpen by remember { mutableStateOf(false) }
+
+    Scaffold(
+        topBar = { TopAppBar(title = { Text("Firepit") }) },
+        floatingActionButton = {
+            Box {
+                FloatingActionButton(onClick = { menuOpen = true }) { Text("+") }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text(if (roomsFull) "New room — no free slots" else "New room") },
+                        // The radio has eight slots. Leaving a room frees one.
+                        enabled = connected && !roomsFull && !roomsBusy,
+                        onClick = {
+                            menuOpen = false
+                            onNewRoom()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (roomsFull) "Scan invite — no free slots" else "Scan invite") },
+                        enabled = connected && !roomsFull && !roomsBusy,
+                        onClick = {
+                            menuOpen = false
+                            onJoinRoom()
+                        },
+                    )
+                }
+            }
+        },
+    ) { padding ->
         Column(Modifier.padding(padding)) {
             Text(
                 text = if (connected) "Connected to your node" else "Not connected — open Settings",
@@ -128,6 +250,23 @@ private fun ChannelList(
                 color = if (connected) FirepitTheme.colors.live else FirepitTheme.colors.stale,
                 modifier = Modifier.padding(horizontal = FirepitSpacing.screenMargin),
             )
+
+            roomsMessage?.let { message ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = FirepitSpacing.screenMargin, vertical = FirepitSpacing.s),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = message,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onDismissMessage) { Text("Dismiss") }
+                }
+            }
 
             if (channels.isEmpty()) {
                 EmptyState("No channels yet. Connect your node in Settings.")
@@ -141,7 +280,7 @@ private fun ChannelList(
                         supportingContent = {
                             Text(if (channel.isRoom) "Room · slot ${channel.index}" else "Primary channel")
                         },
-                        leadingContent = { RoomAvatar(RoomIcon.forRoomId(channel.id + channel.index)) },
+                        leadingContent = { RoomAvatar(RoomIcon.forRoomId(channel.id)) },
                         modifier = Modifier
                             .clickable { onSelect(channel.index) }
                             .then(
@@ -166,6 +305,8 @@ private fun ChannelChat(
     channel: RoomChannel,
     viewModel: ChatsViewModel,
     onBack: (() -> Unit)?,
+    onInvite: (() -> Unit)?,
+    onShowMembers: (() -> Unit)?,
 ) {
     val listState = rememberLazyListState()
 
@@ -180,6 +321,14 @@ private fun ChannelChat(
                 navigationIcon = {
                     // Only when the list is hidden behind this pane.
                     onBack?.let { back -> BackButton(onClick = back) }
+                },
+                actions = {
+                    onShowMembers?.let { members ->
+                        TextButton(onClick = members) { Text("Members") }
+                    }
+                    onInvite?.let { invite ->
+                        TextButton(onClick = invite) { Text("Invite") }
+                    }
                 },
             )
         },

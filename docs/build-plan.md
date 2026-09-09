@@ -182,6 +182,54 @@ snapshots checked in.
 **Exit proof:** A creates, B joins by scan, both rosters show "invited by"; 100 random leave
 sequences keep slots consecutive with `room_id → settings` intact.
 
+### Built
+
+- `ChannelSlotManager` — slot allocation and reindex-on-leave, property-tested over 200 random
+  leave sequences.
+- `RoomCrypto` / `InviteCodec` — PSK generation, HMAC-SHA256 invite key, 8 s rotating token,
+  `firepit://join?v=1&d=…`. JDK primitives only; libsodium arrives with the Stage 8 link+PIN invite.
+- `NodeAdminClient` — session passkey, `set_channel`, `get_channel`, `set_owner`, favorites.
+- `RoomRepository` — create, invite, join (NodeInfo hello → 5 s → PKI DM on port 300), leave.
+- UI — create dialog with an 11-byte counter, rotating QR invite, CameraX + ZXing scanner.
+  ZXing does both generation and decoding, which keeps ML Kit and Play Services out of the build.
+- **Roster** (`room_members`, DB v2) — who we have seen in a room, with `invited_by` provenance.
+  Receiving `JoinHello` and broadcasting `RosterEvent` were designed in `meshchat.proto` but had
+  never been implemented; the joiner was talking to nothing.
+- **Roster sync** (DB v3) — on a proved join the inviter DMs its roster to the joiner, so a new
+  member does not wait for everyone to speak. Directed rather than answering a broadcast
+  "who is here?", because on LoRa every member replying is a packet storm on every join.
+  Capped at 14 entries; a contract test pins the worst case at 208 of 233 bytes.
+
+Two gaps in the invite chain surfaced while wiring the receiving side. `JoinHello` echoes a token
+but not the window it was minted in, so it could not be verified at all — hence
+`RoomCrypto.matchesRecentToken`, which searches ~2 minutes of windows. And `invite_id` was
+regenerated on every 8 s rotation, so an arriving hello could never be tied back to a room; it is
+now stable per room while the invite screen is open, with the rotating token still doing the
+security work.
+
+### Not verified
+
+**The join handshake has never run against a real radio.** It needs two phones driving two nodes
+and only one Android device is available. `JoinHello` verification, the `RosterEvent` broadcast and
+the roster sync are therefore unproven on hardware, as is firmware-level PKI encryption of the DM
+and whether 5 s is enough for the NodeInfo hello to propagate.
+
+Verified on hardware: DB migrations v1→v2→v3 against a live database with messages and nodes
+intact, and the rooms UI rendering on the Fold.
+
+Two ways to close most of this without a second phone, both deferred by decision:
+
+- A loopback-transport integration test driving two `RoomRepository` instances, which would cover
+  the inviter side and run in CI permanently.
+- A synthetic invite minted on a desktop and scanned by the phone, which would exercise the real
+  `set_channel` write — the riskiest untested call.
+
+### Deferred from this stage
+
+- `buildInvite` hardcodes `generation = 1`. Stage 8 key rotation must store it per room, or a
+  rotated room keeps minting invites for the old key.
+- The camera permission path is untested: builds so far were pre-granted with `pm grant`.
+
 ---
 
 ## Stage 5 — Chat complete
