@@ -1,26 +1,37 @@
 package com.getfirepit.app.chat
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -40,6 +51,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -51,12 +64,18 @@ import com.getfirepit.app.rooms.RoomsViewModel
 import com.getfirepit.core.designsystem.adaptive.foldAwarePaneDirective
 import com.getfirepit.core.designsystem.component.BackButton
 import com.getfirepit.core.designsystem.component.MessageBubble
+import com.getfirepit.core.designsystem.component.QuotedMessage
 import com.getfirepit.core.designsystem.component.RoomAvatar
 import com.getfirepit.core.designsystem.component.RoomIcon
+import com.getfirepit.core.designsystem.component.SystemChip
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
+import com.getfirepit.core.designsystem.theme.identityColorFor
 import com.getfirepit.core.model.ChannelRole
+import com.getfirepit.core.model.ChatMessage
+import com.getfirepit.core.model.MessageStatus
 import com.getfirepit.core.model.RoomChannel
+import com.getfirepit.core.protocol.MeshConstants
 import kotlinx.coroutines.launch
 
 /**
@@ -64,7 +83,7 @@ import kotlinx.coroutines.launch
  * replaces the list; on a tablet or unfolded book posture they sit side by
  * side, split at the hinge.
  */
-@OptIn(ExperimentalMaterial3AdaptiveApi::class)
+@OptIn(ExperimentalMaterial3AdaptiveApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun ChatsPane(
     modifier: Modifier = Modifier,
@@ -309,6 +328,7 @@ private fun ChannelChat(
     onShowMembers: (() -> Unit)?,
 ) {
     val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(state.messages.size) {
         if (state.messages.isNotEmpty()) listState.animateScrollToItem(state.messages.lastIndex)
@@ -338,25 +358,64 @@ private fun ChannelChat(
                 .padding(padding)
                 .fillMaxSize(),
         ) {
+            val items = remember(state.messages) { buildChatItems(state.messages) }
+
             LazyColumn(
                 state = listState,
                 modifier = Modifier
                     .weight(1f)
                     .padding(horizontal = FirepitSpacing.screenMargin),
-                verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
+                contentPadding = PaddingValues(vertical = FirepitSpacing.s),
             ) {
-                items(state.messages, key = { it.id }) { message ->
-                    MessageBubble(
-                        text = message.text,
-                        time = formatTime(message.sentAt),
-                        isOutgoing = message.isOutgoing,
-                        senderName = state.nodes[message.fromNodeNum]?.displayName,
-                        senderNodeNum = message.fromNodeNum,
-                        status = message.status.takeIf { message.isOutgoing },
-                        footnote = message.hopsAway?.let { hops ->
-                            if (hops == 0) "direct" else "$hops hop${if (hops == 1) "" else "s"}"
-                        },
-                    )
+                items(items, key = { item -> item.key() }) { item ->
+                    when (item) {
+                        is ChatItem.Day -> SystemChip(
+                            text = item.label,
+                            modifier = Modifier.padding(vertical = FirepitSpacing.m),
+                        )
+
+                        is ChatItem.Bubble -> {
+                            val message = item.message
+                            val parent = state.repliedTo(message)
+                            MessageBubble(
+                                text = message.text,
+                                time = formatTime(message.rxTime ?: message.sentAt),
+                                isOutgoing = message.isOutgoing,
+                                senderName = state.nodes[message.fromNodeNum]?.displayName,
+                                senderNodeNum = message.fromNodeNum,
+                                status = message.status.takeIf { message.isOutgoing },
+                                footnote = message.hopsAway?.let { hops ->
+                                    if (hops == 0) "direct" else "$hops hop${if (hops == 1) "" else "s"}"
+                                },
+                                quoted = parent?.let {
+                                    QuotedMessage(
+                                        senderName = state.nodes[it.fromNodeNum]?.displayName
+                                            ?: MeshConstants.formatNodeId(it.fromNodeNum),
+                                        senderNodeNum = it.fromNodeNum,
+                                        text = it.text,
+                                    )
+                                },
+                                onQuoteClick = parent?.let {
+                                    {
+                                        val index = items.indexOfFirst { row ->
+                                            row is ChatItem.Bubble && row.message.id == it.id
+                                        }
+                                        if (index >= 0) scope.launch { listState.animateScrollToItem(index) }
+                                    }
+                                },
+                                isFirstInGroup = item.isFirstInGroup,
+                                isLastInGroup = item.isLastInGroup,
+                                // Tight inside a block, open between speakers.
+                                modifier = Modifier
+                                    .padding(top = if (item.isFirstInGroup) FirepitSpacing.s else 2.dp)
+                                    .combinedClickable(
+                                        onClick = { viewModel.inspect(message) },
+                                        onLongClick = { viewModel.startReply(message) },
+                                        onLongClickLabel = "Reply",
+                                    ),
+                            )
+                        }
+                    }
                 }
             }
 
@@ -372,43 +431,180 @@ private fun ChannelChat(
             Composer(state = state, viewModel = viewModel)
         }
     }
+
+    state.inspecting?.let { message ->
+        MessageInfoSheet(
+            message = message,
+            senderName = state.nodes[message.fromNodeNum]?.displayName,
+            onDismiss = { viewModel.inspect(null) },
+        )
+    }
+}
+
+/** Composer banner for the message being replied to, matching the in-bubble quote. */
+@Composable
+private fun ReplyBanner(state: ChatsUiState, parent: ChatMessage, onCancel: () -> Unit) {
+    val accent = identityColorFor(parent.fromNodeNum, FirepitTheme.colors.isDark)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = FirepitSpacing.s, vertical = FirepitSpacing.xs)
+            .clip(RoundedCornerShape(6.dp))
+            .background(accent.copy(alpha = if (FirepitTheme.colors.isDark) 0.18f else 0.12f))
+            .height(IntrinsicSize.Min),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .width(3.dp)
+                .fillMaxHeight()
+                .background(accent),
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = FirepitSpacing.s, vertical = FirepitSpacing.xs),
+        ) {
+            Text(
+                text = state.nodes[parent.fromNodeNum]?.displayName
+                    ?: MeshConstants.formatNodeId(parent.fromNodeNum),
+                style = MaterialTheme.typography.labelMedium,
+                color = accent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = parent.text,
+                style = MaterialTheme.typography.bodySmall,
+                color = FirepitTheme.colors.textSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        IconButton(onClick = onCancel) {
+            Text("✕", style = MaterialTheme.typography.bodyLarge, color = FirepitTheme.colors.textSecondary)
+        }
+    }
 }
 
 @Composable
 private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(FirepitSpacing.s),
-        verticalAlignment = Alignment.Bottom,
-        horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
-    ) {
-        OutlinedTextField(
-            value = state.draft,
-            onValueChange = viewModel::updateDraft,
+    Column(Modifier.fillMaxWidth()) {
+        state.replyingTo?.let { parent ->
+            ReplyBanner(state = state, parent = parent, onCancel = viewModel::cancelReply)
+        }
+
+        Row(
             modifier = Modifier
-                .weight(1f)
-                .heightIn(max = 140.dp),
-            placeholder = { Text("Message") },
-            supportingText = {
-                // Only appears near the limit, so the composer stays quiet.
-                if (state.draftBytes >= 150) {
-                    Text(
-                        text = "${state.remainingBytes} bytes left",
-                        color = if (state.remainingBytes < 0) {
-                            FirepitTheme.colors.danger
-                        } else {
-                            FirepitTheme.colors.textSecondary
-                        },
-                    )
-                }
-            },
-            maxLines = 4,
-        )
-        FilledIconButton(onClick = viewModel::send, enabled = state.canSend) {
-            Text("↑", style = MaterialTheme.typography.titleLarge)
+                .fillMaxWidth()
+                .padding(FirepitSpacing.s),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
+        ) {
+            OutlinedTextField(
+                value = state.draft,
+                onValueChange = viewModel::updateDraft,
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(max = 140.dp),
+                placeholder = { Text("Message") },
+                supportingText = {
+                    // Only appears near a limit, so the composer stays quiet.
+                    when {
+                        state.remainingBytes <= 0 -> Text(
+                            text = "Full — 200 bytes is the radio's limit",
+                            color = FirepitTheme.colors.danger,
+                        )
+
+                        state.losesSignature -> Text(
+                            text = "Over ${MeshConstants.SIGNED_BROADCAST_TEXT_BUDGET} bytes: sent unsigned",
+                            color = FirepitTheme.colors.warn,
+                        )
+
+                        state.draftBytes >= 150 -> Text(
+                            text = "${state.remainingBytes} bytes left",
+                            color = FirepitTheme.colors.textSecondary,
+                        )
+                    }
+                },
+                maxLines = 4,
+            )
+            FilledIconButton(onClick = viewModel::send, enabled = state.canSend) {
+                Text("↑", style = MaterialTheme.typography.titleLarge)
+            }
         }
     }
+}
+
+/**
+ * Delivery detail for one message.
+ *
+ * Only shows what the radio actually reported: absent values are omitted rather
+ * than rendered as zero, because "0 dB SNR" and "not measured" are different
+ * claims.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MessageInfoSheet(message: ChatMessage, senderName: String?, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = FirepitSpacing.screenMargin)
+                .padding(bottom = FirepitSpacing.xl),
+            verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
+        ) {
+            Text(
+                text = if (message.isOutgoing) "Sent message" else "From ${senderName ?: "Unknown"}",
+                style = MaterialTheme.typography.titleMedium,
+            )
+
+            InfoRow("Sent", formatTime(message.sentAt))
+            message.rxTime?.let { InfoRow("Radio clock", formatTime(it)) }
+
+            if (message.isOutgoing) {
+                InfoRow("Status", message.status.label())
+                message.failureReason?.let { InfoRow("Reason", it) }
+            }
+
+            message.hopsAway?.let { hops ->
+                InfoRow("Hops", if (hops == 0) "Direct, no relay" else "$hops")
+            }
+            message.rxSnr?.let { InfoRow("Signal to noise", "%.2f dB".format(it)) }
+            message.rxRssi?.let { InfoRow("Signal strength", "$it dBm") }
+            if (message.signed) InfoRow("Signature", "Verified")
+
+            Text(
+                text = "Delivery is only ever confirmed as far as the first node that heard it. " +
+                    "The mesh cannot tell you who read it.",
+                style = MaterialTheme.typography.bodySmall,
+                color = FirepitTheme.colors.textSecondary,
+            )
+        }
+    }
+}
+
+@Composable
+private fun InfoRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = FirepitTheme.colors.textSecondary)
+        Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/** Wording that never implies more than the mesh actually told us. */
+private fun MessageStatus.label(): String = when (this) {
+    MessageStatus.QUEUED -> "Waiting for the radio"
+    MessageStatus.SENT_TO_NODE -> "Handed to your node"
+    MessageStatus.UNKNOWN -> "Handed to your node, no confirmation"
+    MessageStatus.UNHEARD -> "Nobody repeated it"
+    MessageStatus.FAILED -> "Failed"
+    MessageStatus.REACHED_MESH -> "Heard by at least one node"
+    MessageStatus.DELIVERED -> "Acknowledged by the recipient"
 }
 
 @Composable

@@ -46,6 +46,7 @@ data class RadioUiState(
 class RadioViewModel @Inject constructor(
     private val scanner: RadioScanner,
     private val link: RadioLink,
+    private val session: RadioSessionController,
 ) : ViewModel() {
 
     private val scanning = MutableStateFlow(false)
@@ -84,11 +85,11 @@ class RadioViewModel @Inject constructor(
     fun connect(radio: DiscoveredRadio) {
         stopScan()
         error.value = null
-        link.connect(radio)
+        session.connect(radio)
     }
 
     fun disconnect() {
-        viewModelScope.launch { link.disconnect() }
+        viewModelScope.launch { session.disconnect() }
     }
 }
 

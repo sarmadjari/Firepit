@@ -40,7 +40,12 @@ fun RadioScreen(modifier: Modifier = Modifier, viewModel: RadioViewModel = hiltV
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
-    ) { granted -> if (granted.values.all { it }) viewModel.startScan() }
+    ) { granted ->
+        // Notifications are bundled into the same prompt but are not required
+        // to scan, so denying them must not block the radio.
+        val required = granted.filterKeys { it != Manifest.permission.POST_NOTIFICATIONS }
+        if (required.values.all { it }) viewModel.startScan()
+    }
 
     Column(
         modifier = modifier
@@ -137,10 +142,17 @@ private fun Field(label: String, value: String) {
     }
 }
 
-private fun blePermissions(): Array<String> =
+private fun blePermissions(): Array<String> = buildList {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+        add(Manifest.permission.BLUETOOTH_SCAN)
+        add(Manifest.permission.BLUETOOTH_CONNECT)
     } else {
         // Android 10-11 return no scan results without location permission.
-        arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        add(Manifest.permission.ACCESS_FINE_LOCATION)
     }
+    // Asked here because connecting follows immediately and the session runs
+    // behind a persistent notification. Denying it only hides that notification.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        add(Manifest.permission.POST_NOTIFICATIONS)
+    }
+}.toTypedArray()

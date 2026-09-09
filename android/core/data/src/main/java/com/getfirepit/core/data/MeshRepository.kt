@@ -127,7 +127,7 @@ class MeshRepository @Inject constructor(
         }
     }
 
-    suspend fun sendText(channel: Int, text: String) {
+    suspend fun sendText(channel: Int, text: String, replyId: Int? = null) {
         val myNodeNum = _myNodeNum.value ?: error("Not connected to a radio")
         val payload = text.encodeUtf8()
         require(payload.size <= MeshConstants.MAX_TEXT_BYTES) {
@@ -143,6 +143,7 @@ class MeshRepository @Inject constructor(
             // Decision D-5: without this the firmware reports nothing back, so
             // there would be no "heard by the mesh" signal at all.
             wantAck = true,
+            replyId = replyId,
         )
 
         messageDao.save(
@@ -155,6 +156,7 @@ class MeshRepository @Inject constructor(
                 sentAt = System.currentTimeMillis(),
                 status = MessageStatus.QUEUED,
                 isOutgoing = true,
+                replyId = replyId,
             ),
             myNodeNum,
         )
@@ -187,7 +189,15 @@ class MeshRepository @Inject constructor(
     private suspend fun handlePacket(packet: MeshPacket) {
         val data = packet.decoded ?: return
         when (data.portnum) {
-            PortNum.TEXT_MESSAGE_APP, PortNum.TEXT_MESSAGE_COMPRESSED_APP -> saveIncomingText(packet, data)
+            PortNum.TEXT_MESSAGE_APP -> saveIncomingText(packet, data)
+
+            // The firmware compresses outgoing text with Unishox2 on our behalf
+            // and decompresses inbound before handing it over, so this port
+            // should never arrive. If it does the bytes are not UTF-8, and
+            // decoding them anyway would store mojibake as somebody's words.
+            PortNum.TEXT_MESSAGE_COMPRESSED_APP ->
+                Log.w(TAG, "dropped compressed text from ${packet.from}: firmware did not decompress it")
+
             PortNum.ROUTING_APP -> handleRouting(packet, data)
             else -> Unit
         }

@@ -33,4 +33,32 @@ object MeshConstants {
     const val MAX_TO_FROM_RADIO_SIZE: Int = 512
 
     fun formatNodeId(nodeNum: Int): String = "!%08x".format(nodeNum)
+
+    /**
+     * Trims [text] to at most [maxBytes] of UTF-8 without splitting a character.
+     *
+     * The limit is in bytes but people type characters, and Arabic, emoji and
+     * accented Latin all cost more than one byte each. Cutting at a byte index
+     * would produce mojibake or a lone surrogate.
+     */
+    fun truncateToBytes(text: String, maxBytes: Int = MAX_TEXT_BYTES): String {
+        if (text.toByteArray(Charsets.UTF_8).size <= maxBytes) return text
+
+        var bytes = 0
+        val builder = StringBuilder(text.length)
+        var index = 0
+        while (index < text.length) {
+            // Surrogate pairs are one character over two chars, so step by the
+            // code point rather than the UTF-16 unit.
+            val codePoint = text.codePointAt(index)
+            val width = Character.charCount(codePoint)
+            val chunk = text.substring(index, index + width)
+            val chunkBytes = chunk.toByteArray(Charsets.UTF_8).size
+            if (bytes + chunkBytes > maxBytes) break
+            builder.append(chunk)
+            bytes += chunkBytes
+            index += width
+        }
+        return builder.toString()
+    }
 }
