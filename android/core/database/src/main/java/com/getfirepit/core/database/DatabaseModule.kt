@@ -29,4 +29,7 @@ object DatabaseModule {
 
     @Provides
     fun provideChannelStateDao(database: FirepitDatabase): ChannelStateDao = database.channelStateDao()
+
+    @Provides
+    fun provideMapPinDao(database: FirepitDatabase): MapPinDao = database.mapPinDao()
 }

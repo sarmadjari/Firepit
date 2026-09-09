@@ -25,8 +25,9 @@ internal class Converters {
         NodeEntity::class,
         RoomMemberEntity::class,
         ChannelStateEntity::class,
+        MapPinEntity::class,
     ],
-    version = 4,
+    version = 6,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -35,6 +36,7 @@ abstract class FirepitDatabase : RoomDatabase() {
     abstract fun nodeDao(): NodeDao
     abstract fun roomMemberDao(): RoomMemberDao
     abstract fun channelStateDao(): ChannelStateDao
+    abstract fun mapPinDao(): MapPinDao
 
     companion object {
         /** Adds the roster table. Messages and nodes are left untouched. */
@@ -104,9 +106,43 @@ abstract class FirepitDatabase : RoomDatabase() {
             }
         }
 
+        /** Adds last known position to each node. */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(connection: SQLiteConnection) {
+                listOf("latitudeI", "longitudeI", "altitude", "positionTime", "positionPrecision")
+                    .forEach { column ->
+                        connection.execSQL("ALTER TABLE nodes ADD COLUMN $column INTEGER")
+                    }
+            }
+        }
+
+        /** Adds map pins. */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS map_pins (
+                        id INTEGER NOT NULL,
+                        channel INTEGER NOT NULL,
+                        latitudeI INTEGER NOT NULL,
+                        longitudeI INTEGER NOT NULL,
+                        name TEXT NOT NULL,
+                        description TEXT NOT NULL,
+                        expire INTEGER NOT NULL,
+                        lockedTo INTEGER NOT NULL,
+                        icon TEXT,
+                        createdBy INTEGER NOT NULL,
+                        receivedAt INTEGER NOT NULL,
+                        PRIMARY KEY(id)
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
         fun create(context: Context): FirepitDatabase =
             Room.databaseBuilder(context, FirepitDatabase::class.java, "firepit.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .build()
     }
 }

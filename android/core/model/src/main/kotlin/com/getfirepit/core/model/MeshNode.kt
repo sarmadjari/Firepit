@@ -28,9 +28,23 @@ data class MeshNode(
     val channelUtilization: Float? = null,
     val airUtilTx: Float? = null,
     val isFavorite: Boolean = false,
+    /** 1e-7 degrees, as the mesh carries it. Null until the node reports a fix. */
+    val latitudeI: Int? = null,
+    val longitudeI: Int? = null,
+    val altitude: Int? = null,
+    /** When the position was measured, which is not when we heard about it. */
+    val positionTime: Long? = null,
+    /** Bits the sender truncated to; below 32 the point is an area, not a place. */
+    val positionPrecision: Int? = null,
 ) {
     /** Display form used by every Meshtastic client. */
     val displayId: String get() = userId ?: "!%08x".format(nodeNum)
 
     val displayName: String get() = longName?.takeIf { it.isNotBlank() } ?: displayId
+
+    val latitude: Double? get() = latitudeI?.let { it * 1e-7 }
+
+    val longitude: Double? get() = longitudeI?.let { it * 1e-7 }
+
+    val hasPosition: Boolean get() = latitudeI != null && longitudeI != null
 }

@@ -6,8 +6,10 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import com.getfirepit.app.notifications.MessageNotifier
 import com.getfirepit.core.data.ChatPresence
+import com.getfirepit.core.data.LocationRepository
 import com.getfirepit.core.data.MeshRepository
 import com.getfirepit.core.data.RoomRepository
+import com.getfirepit.core.data.WaypointRepository
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 
@@ -17,6 +19,10 @@ class FirepitApplication : Application() {
     @Inject lateinit var meshRepository: MeshRepository
 
     @Inject lateinit var roomRepository: RoomRepository
+
+    @Inject lateinit var locationRepository: LocationRepository
+
+    @Inject lateinit var waypointRepository: WaypointRepository
 
     @Inject lateinit var messageNotifier: MessageNotifier
 
@@ -28,6 +34,8 @@ class FirepitApplication : Application() {
         // than in a ViewModel.
         meshRepository.start()
         roomRepository.start()
+        waypointRepository.start()
+        locationRepository.start()
         messageNotifier.start()
 
         ProcessLifecycleOwner.get().lifecycle.addObserver(

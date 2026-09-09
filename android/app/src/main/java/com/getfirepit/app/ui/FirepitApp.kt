@@ -36,6 +36,7 @@ fun FirepitApp(modifier: Modifier = Modifier) {
     // death — all of which recreate the activity.
     var selected by rememberSaveable { mutableStateOf(TopLevelDestination.CHATS) }
     var chatOpen by remember { mutableStateOf(false) }
+    var settingsDetailOpen by remember { mutableStateOf(false) }
 
     val keyboardOpen = WindowInsets.isImeVisible
     val suiteState = rememberNavigationSuiteScaffoldState()
@@ -45,7 +46,8 @@ fun FirepitApp(modifier: Modifier = Modifier) {
     // keyboard.
     val immersive = keyboardOpen ||
         selected == TopLevelDestination.MAP ||
-        (selected == TopLevelDestination.CHATS && chatOpen)
+        (selected == TopLevelDestination.CHATS && chatOpen) ||
+        (selected == TopLevelDestination.SETTINGS && settingsDetailOpen)
 
     LaunchedEffect(immersive) {
         if (immersive) suiteState.hide() else suiteState.show()
@@ -81,7 +83,8 @@ fun FirepitApp(modifier: Modifier = Modifier) {
         when (selected) {
             TopLevelDestination.CHATS -> ChatsPane(onChatOpenChange = { chatOpen = it })
             TopLevelDestination.MAP -> MapScreen(onBack = { selected = TopLevelDestination.CHATS })
-            TopLevelDestination.SETTINGS -> SettingsScreen()
+            TopLevelDestination.SETTINGS ->
+                SettingsScreen(onImmersiveChange = { settingsDetailOpen = it })
         }
     }
 }

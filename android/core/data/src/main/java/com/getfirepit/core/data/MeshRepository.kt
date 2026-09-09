@@ -18,6 +18,7 @@ import com.getfirepit.core.protocol.MeshConstants
 import com.getfirepit.core.protocol.MeshPacketBuilder
 import com.getfirepit.core.protocol.MessageStatusRules
 import com.getfirepit.core.protocol.OutboundPacer
+import com.getfirepit.core.protocol.PositionPrecision
 import com.getfirepit.core.protocol.phoneapi.RadioSnapshot
 import com.getfirepit.core.transport.LinkState
 import com.getfirepit.core.transport.RadioLink
@@ -46,6 +47,7 @@ import org.meshtastic.proto.FromRadio
 import org.meshtastic.proto.MeshPacket
 import org.meshtastic.proto.NodeInfo
 import org.meshtastic.proto.PortNum
+import org.meshtastic.proto.Position
 import org.meshtastic.proto.QueueStatus
 import org.meshtastic.proto.Routing
 import org.meshtastic.proto.ToRadio
@@ -62,11 +64,14 @@ class MeshRepository @Inject constructor(
     private val link: RadioLink,
     private val messageDao: MessageDao,
     private val nodeDao: NodeDao,
+    private val sessionStore: SessionStore,
     @param:ApplicationScope private val scope: CoroutineScope,
 ) {
     private val pacer = OutboundPacer(System::currentTimeMillis)
 
-    private val _myNodeNum = MutableStateFlow<Int?>(null)
+    // Seeded from the last session so the map can identify us before, or
+    // without, a radio connection.
+    private val _myNodeNum = MutableStateFlow(sessionStore.myNodeNum)
     val myNodeNum: StateFlow<Int?> = _myNodeNum.asStateFlow()
 
     private val _channels = MutableStateFlow<List<RoomChannel>>(emptyList())
@@ -82,6 +87,18 @@ class MeshRepository @Inject constructor(
     /** Our own `User`, needed to introduce ourselves when joining a room. */
     val myUser: User?
         get() = _snapshot.value?.let { it.nodes[it.myNodeNum]?.user }
+
+    /** Records our own fix from the phone's GPS. Local only; nothing is transmitted. */
+    suspend fun setOwnPosition(nodeNum: Int, latitudeI: Int, longitudeI: Int, altitude: Int?, timeMillis: Long) {
+        nodeDao.updatePosition(
+            nodeNum = nodeNum,
+            latitudeI = latitudeI,
+            longitudeI = longitudeI,
+            altitude = altitude,
+            positionTime = timeMillis,
+            positionPrecision = PositionPrecision.FULL,
+        )
+    }
 
     /** A node's public key, required before anything can be sent to it over PKI. */
     suspend fun publicKeyOf(nodeNum: Int): ByteString? =
@@ -107,6 +124,7 @@ class MeshRepository @Inject constructor(
                 if (state is LinkState.Ready) {
                     _snapshot.value = state.snapshot
                     _myNodeNum.value = state.snapshot.myNodeNum
+                    sessionStore.myNodeNum = state.snapshot.myNodeNum
                     hopLimit = state.snapshot.lora?.hop_limit
                         ?.takeIf { it in 1..MeshConstants.MAX_HOP_LIMIT }
                         ?: MeshConstants.DEFAULT_HOP_LIMIT
@@ -206,8 +224,26 @@ class MeshRepository @Inject constructor(
                 Log.w(TAG, "dropped compressed text from ${packet.from}: firmware did not decompress it")
 
             PortNum.ROUTING_APP -> handleRouting(packet, data)
+            PortNum.POSITION_APP -> handlePosition(packet, data)
             else -> Unit
         }
+    }
+
+    private suspend fun handlePosition(packet: MeshPacket, data: Data) {
+        val position = runCatching { Position.ADAPTER.decode(data.payload) }.getOrNull() ?: return
+        val latitude = position.latitude_i ?: return
+        val longitude = position.longitude_i ?: return
+        // 0,0 is in the Atlantic and is what a node with no fix reports.
+        if (latitude == 0 && longitude == 0) return
+
+        nodeDao.updatePosition(
+            nodeNum = packet.from,
+            latitudeI = latitude,
+            longitudeI = longitude,
+            altitude = position.altitude,
+            positionTime = position.time.toLong().times(1_000).takeIf { position.time != 0 },
+            positionPrecision = position.precision_bits.takeIf { it != 0 },
+        )
     }
 
     private suspend fun saveIncomingText(packet: MeshPacket, data: Data) {
@@ -290,6 +326,11 @@ class MeshRepository @Inject constructor(
                 channelUtilization = info.device_metrics?.channel_utilization,
                 airUtilTx = info.device_metrics?.air_util_tx,
                 isFavorite = info.is_favorite,
+                latitudeI = info.position?.latitude_i?.takeIf { it != 0 },
+                longitudeI = info.position?.longitude_i?.takeIf { it != 0 },
+                altitude = info.position?.altitude,
+                positionTime = info.position?.time?.toLong()?.times(1_000)?.takeIf { it != 0L },
+                positionPrecision = info.position?.precision_bits?.takeIf { it != 0 },
             ),
             System.currentTimeMillis(),
         )

@@ -6,6 +6,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Upsert
 import com.getfirepit.core.model.ChatMessage
+import com.getfirepit.core.model.MapPin
 import com.getfirepit.core.model.MeshNode
 import com.getfirepit.core.model.MessageStatus
 import com.getfirepit.core.model.RoomMember
@@ -54,6 +55,22 @@ interface NodeDao {
 
     @Upsert
     suspend fun upsert(node: NodeEntity)
+
+    @Query(
+        """
+        UPDATE nodes SET latitudeI = :latitudeI, longitudeI = :longitudeI, altitude = :altitude,
+        positionTime = :positionTime, positionPrecision = :positionPrecision
+        WHERE nodeNum = :nodeNum
+        """,
+    )
+    suspend fun updatePosition(
+        nodeNum: Int,
+        latitudeI: Int?,
+        longitudeI: Int?,
+        altitude: Int?,
+        positionTime: Long?,
+        positionPrecision: Int?,
+    )
 }
 
 fun NodeDao.observeAll(): Flow<List<MeshNode>> =
@@ -63,7 +80,17 @@ suspend fun NodeDao.find(nodeNum: Int): MeshNode? = findEntity(nodeNum)?.toDomai
 
 suspend fun NodeDao.save(node: MeshNode, now: Long) {
     val existing = findEntity(node.nodeNum)
-    upsert(node.toEntity(firstSeen = existing?.firstSeen ?: now))
+    // NodeInfo often arrives without a position. Writing the node wholesale
+    // would then erase a fix learned from a position packet, so a known point
+    // is carried forward unless the update actually replaces it.
+    val merged = node.copy(
+        latitudeI = node.latitudeI ?: existing?.latitudeI,
+        longitudeI = node.longitudeI ?: existing?.longitudeI,
+        altitude = node.altitude ?: existing?.altitude,
+        positionTime = node.positionTime ?: existing?.positionTime,
+        positionPrecision = node.positionPrecision ?: existing?.positionPrecision,
+    )
+    upsert(merged.toEntity(firstSeen = existing?.firstSeen ?: now))
 }
 
 suspend fun MessageDao.save(message: ChatMessage, myNodeNum: Int) = upsert(message.toEntity(myNodeNum))
@@ -72,6 +99,25 @@ suspend fun MessageDao.saveIfNew(message: ChatMessage, myNodeNum: Int): Boolean 
     insertIfNew(message.toEntity(myNodeNum)) != -1L
 
 suspend fun MessageDao.find(id: Int): ChatMessage? = findEntity(id)?.toDomain()
+
+@Dao
+interface MapPinDao {
+
+    @Query("SELECT * FROM map_pins WHERE expire = 0 OR expire > :nowSeconds")
+    fun observeLiveEntities(nowSeconds: Long): Flow<List<MapPinEntity>>
+
+    @Upsert
+    suspend fun upsert(pin: MapPinEntity)
+
+    @Query("DELETE FROM map_pins WHERE id = :id")
+    suspend fun delete(id: Int)
+}
+
+/** Expired pins are filtered in SQL so a stale one never reaches the map. */
+fun MapPinDao.observeLive(nowMillis: Long = System.currentTimeMillis()): Flow<List<MapPin>> =
+    observeLiveEntities(nowMillis / 1000L).map { entities -> entities.map(MapPinEntity::toDomain) }
+
+suspend fun MapPinDao.save(pin: MapPin) = upsert(pin.toEntity())
 
 @Dao
 interface ChannelStateDao {

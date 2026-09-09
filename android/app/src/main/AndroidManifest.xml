@@ -7,6 +7,10 @@
     <!-- Optional: a device with no camera can still be invited by someone else. -->
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
+    <!-- Map tiles. Declared here rather than inherited from MapLibre's manifest,
+         because the map stops working without it. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- Keeps the radio session alive when the app is not in the foreground. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />

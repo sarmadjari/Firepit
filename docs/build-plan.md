@@ -17,20 +17,19 @@ RTL-ready from Stage 3) · invite-link domain deferred until Stage 8.
 Firepit/
 ├─ android/                     Gradle root
 │  ├─ build-logic/              convention plugins (firepit.android.*, firepit.jvm.library)
-│  ├─ app/                      MainActivity, DI graph, navigation host
+│  ├─ app/                      MainActivity, DI graph, navigation host,
+│  │                            and the feature screens: chat · rooms · map · radio · settings
 │  ├─ core/
 │  │  ├─ protocol/              [Stage 0] Wire protos, packet builders, ACK state machine,
 │  │  │                         slot manager, precision math — pure Kotlin, fast JVM tests
-│  │  ├─ designsystem/          [Stage 0] Ember tokens, type, components
+│  │  ├─ designsystem/          [Stage 0] Ember tokens, type, components, icons,
+│  │  │                         and adaptive/ — window size class + hinge posture + pane scaffolds
 │  │  ├─ model/                 [Stage 1] domain types
 │  │  ├─ transport/             [Stage 1] Kable BLE, PhoneAPI session FSM, FromRadio pump, ToRadio pacer
-│  │  ├─ crypto/                [Stage 4] libsodium: PSK gen, QR HMAC, Argon2id + XChaCha
+│  │  ├─ crypto/                [Stage 4] PSK generation, invite HMAC, rotating QR token.
+│  │  │                         JDK primitives only; libsodium arrives with the Stage 8 link+PIN invite
 │  │  ├─ database/              [Stage 2] Room entities/DAOs/migrations
-│  │  ├─ data/                  [Stage 2] repositories, single source of truth
-│  │  ├─ adaptive/              [Stage 3] window size class + hinge posture + pane scaffolds
-│  │  ├─ service/               [Stage 2] foreground service for the Personal-node session
-│  │  └─ testing/               [Stage 1] FakeTransport, packet fixtures, in-memory DAOs
-│  └─ feature/                  onboarding · chats · rooms · map · settings
+│  │  └─ data/                  [Stage 2] repositories, single source of truth
 ├─ ios/                         [Stage 10]
 ├─ protos/                      vendored Meshtastic @ v2.8.0 + meshchat.proto + primary key
 ├─ docs/                        design docs + this plan
@@ -39,6 +38,13 @@ Firepit/
 
 Modules are created when their stage needs them. Empty modules cost configuration time and
 enforce nothing.
+
+Two planned modules were not created, because the code turned out not to need the seam. The
+foreground service lives in `app` alongside the radio screens it serves, since it only anchors the
+process and mirrors `RadioLink` state. Feature screens live in `app` rather than a `feature/` tree:
+there is one app, and the split would have bought nothing but build files. `adaptive` is a package
+in `designsystem` for the same reason. A shared `testing` module has not been needed either — the
+pure-Kotlin layers are testable without fakes, which is most of why they are pure.
 
 ---
 
@@ -305,6 +311,65 @@ the session through 70 s of confirmed Dozing with zero link transitions.
 
 **Exit proof:** two people find each other outdoors using only the app.
 
+### Built
+
+- **`PositionPrecision`** — truncation matching the firmware bit for bit: mask the low bits, then add
+  half a cell so the point sits at the centre of its area rather than a corner. Property-tested over
+  500 random inputs, including the invariant that a result always lands on a cell midpoint. Full and
+  disabled precision are special-cased because Kotlin masks `Int` shift counts to five bits, so
+  `1 shl -1` would silently become `1 shl 31` and move the point across the planet.
+- **`PositionSharing`** — the one-channel rule as data, re-asserted whenever the radio reports its
+  channels rather than trusted to the UI. Two enabled channels means two audiences, one of which the
+  user never chose, so it fails closed by disabling both.
+- **Phone GPS** — the platform `LocationManager`, not Play Services: an off-grid app should not need
+  Google services to know where it is. Fed to the radio via `localPacket` with hop limit 0, so the
+  injection never goes on air itself.
+- **Map** — MapLibre + OpenFreeMap, node markers as identity-coloured tag discs with a live ring,
+  a blue you-are-here dot for yourself, and reduced opacity when the sender truncated their fix.
+- **Waypoints** — native Meshtastic waypoints, so other clients see our pins and we see theirs.
+  Deletion is re-broadcast with `expire = 1`, because there is no delete on the wire. New pins are
+  `locked_to` the person who dropped them.
+- **Offline areas** — `OfflineManager` regions with a name, download date, tile count and estimated
+  size, plus update and delete. `TileEstimate` computes exact slippy-map tile counts; the byte figure
+  is presented as an estimate because vector tiles vary hugely between open country and a city.
+- **Settings tree** — Radio → Nodes, Map → Offline areas, About.
+
+### Not verified
+
+The exit proof needs two people outdoors and has not been attempted. Everything below was confirmed
+on hardware: DB migrations v4→v5→v6 against a live database, positions arriving from five other
+nodes over the mesh, our own fix stored from the phone, and markers, pins and the self dot rendering
+(checked by sampling screenshot pixels, not by reading logs).
+
+### Bugs this stage exposed
+
+Four silent failures, all of the same shape — an early return that discarded a real condition:
+
+- `MeshRepository` had no `POSITION_APP` branch at all, so every position the mesh delivered was
+  dropped. The map could never have worked.
+- `storeOwnPosition` returned silently when the node number was unknown, hiding the reason our own
+  dot was missing.
+- `MarkerLayer.draw` returned when the map style had not finished loading, discarding the markers.
+  The style loads asynchronously, so this was the normal case, not an edge case.
+- `frameAll` returned early when the map was not ready, but the caller latched "already framed"
+  regardless, leaving the camera at 0°,0° in the Atlantic permanently.
+
+The bug that actually kept the markers invisible was none of those: OpenFreeMap serves glyphs only
+for **Noto Sans**, while MapLibre's `SymbolManager` defaults to asking for `"Open Sans Regular"`.
+The glyph fetch failed and the symbols never drew, with nothing in the log. Every symbol now names
+its font. `iconAllowOverlap` is also on, since a node hidden by collision is a person missing from
+the map.
+
+### Deferred from this stage
+
+- Marker taps opening node detail.
+- "Open in Maps" handoff for turn-by-turn, which platform map apps do better than we should try to.
+- Position auto-stop after a chosen duration, and its persistence across restart.
+- Multi-node sessions. The docs call this core: one persistent link to the Personal node plus
+  independent on-demand sessions for Base and Router nodes, never letting an on-demand session steal
+  the Personal node's slot. `RadioLink` is currently a singleton built for exactly one radio, so this
+  needs a session manager rather than a UI change.
+
 ---
 
 ## Stage 7 — v0.1 MVP hardening + field test
@@ -360,3 +425,5 @@ Espresso Device API (`setDisplaySize`, `setScreenOrientation`) for automated fol
 | 1 | **Licensing.** The vendored Meshtastic protobufs are GPL-3.0, so generated-and-linked code makes Firepit a derivative work. Every official Meshtastic client is GPL-3.0. Path of least resistance: license Firepit GPL-3.0. | **Needs owner decision before public release** |
 | 2 | Invite-link domain registration | Deferred to Stage 8 |
 | 3 | Arabic copy translation (layouts are RTL-ready regardless) | Ships in v1 |
+| 4 | **Map engine.** MapLibre only. Google Maps and MapKit cannot pre-cache arbitrary regions, so they show a grey grid off-grid — the one occasion the app matters. Google Maps also needs Play Services and an API key, and a second SDK would double the marker, camera and fold/unfold handling. MapLibre has an iOS SDK, so one implementation serves both platforms. | **Decided** |
+| 5 | **Tile hosting.** OpenFreeMap is donation-funded. Offline downloads must be capped by area and zoom; self-hosting or a bundled base map is the responsible move if usage grows. | Revisit before public release |

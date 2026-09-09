@@ -24,6 +24,11 @@ data class NodeEntity(
     val airUtilTx: Float?,
     val isFavorite: Boolean,
     val firstSeen: Long,
+    val latitudeI: Int? = null,
+    val longitudeI: Int? = null,
+    val altitude: Int? = null,
+    val positionTime: Long? = null,
+    val positionPrecision: Int? = null,
 )
 
 internal fun NodeEntity.toDomain() = MeshNode(
@@ -44,6 +49,11 @@ internal fun NodeEntity.toDomain() = MeshNode(
     channelUtilization = channelUtilization,
     airUtilTx = airUtilTx,
     isFavorite = isFavorite,
+    latitudeI = latitudeI,
+    longitudeI = longitudeI,
+    altitude = altitude,
+    positionTime = positionTime,
+    positionPrecision = positionPrecision,
 )
 
 internal fun MeshNode.toEntity(firstSeen: Long) = NodeEntity(
@@ -65,4 +75,9 @@ internal fun MeshNode.toEntity(firstSeen: Long) = NodeEntity(
     airUtilTx = airUtilTx,
     isFavorite = isFavorite,
     firstSeen = firstSeen,
+    latitudeI = latitudeI,
+    longitudeI = longitudeI,
+    altitude = altitude,
+    positionTime = positionTime,
+    positionPrecision = positionPrecision,
 )
