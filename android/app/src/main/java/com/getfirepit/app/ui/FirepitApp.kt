@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.material3.adaptive.navigationsuite.rememberNavigationSuiteScaffoldState
@@ -16,6 +17,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import com.getfirepit.app.chat.ChatsPane
 import com.getfirepit.app.map.MapScreen
 import com.getfirepit.app.settings.SettingsScreen
@@ -64,7 +66,13 @@ fun FirepitApp(modifier: Modifier = Modifier) {
                 item(
                     selected = selected == destination,
                     onClick = { selected = destination },
-                    icon = { Text(destination.glyph) },
+                    icon = {
+                        Icon(
+                            painter = painterResource(destination.icon),
+                            // The item's own label already announces it.
+                            contentDescription = null,
+                        )
+                    },
                     label = { Text(destination.label) },
                 )
             }

@@ -1,0 +1,21 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Sliders, not a gear: gear teeth need fine detail that muddies at 24dp
+         and would not match the single stroke weight of the other two. -->
+    <path
+        android:pathData="M3.5,7 H7.5 M12.5,7 H20.5 M3.5,12 H13.5 M18.5,12 H20.5 M3.5,17 H8.5 M13.5,17 H20.5"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M8,7 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 M14,12 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0 M9,17 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0"
+        android:fillColor="#00000000"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>
