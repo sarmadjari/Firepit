@@ -26,7 +26,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.getfirepit.app.chat.ChatSection
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 import com.getfirepit.core.transport.LinkState
@@ -83,12 +82,7 @@ fun RadioScreen(modifier: Modifier = Modifier, viewModel: RadioViewModel = hiltV
                 }
             }
         } else {
-            ChatSection(
-                availableChannels = details.channels
-                    .filter { it.role != "DISABLED" }
-                    .map { it.index to it.name },
-                modifier = Modifier.weight(1f),
-            )
+            RadioDetailsView(details)
         }
     }
 }

@@ -9,9 +9,11 @@ import com.getfirepit.core.database.observeChannel
 import com.getfirepit.core.database.save
 import com.getfirepit.core.database.saveIfNew
 import com.getfirepit.core.model.BROADCAST_NODE_NUM
+import com.getfirepit.core.model.ChannelRole
 import com.getfirepit.core.model.ChatMessage
 import com.getfirepit.core.model.MeshNode
 import com.getfirepit.core.model.MessageStatus
+import com.getfirepit.core.model.RoomChannel
 import com.getfirepit.core.protocol.MeshConstants
 import com.getfirepit.core.protocol.MeshPacketBuilder
 import com.getfirepit.core.protocol.MessageStatusRules
@@ -24,11 +26,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import okio.ByteString.Companion.encodeUtf8
 import okio.ByteString.Companion.toByteString
+import org.meshtastic.proto.Channel
 import org.meshtastic.proto.Data
 import org.meshtastic.proto.FromRadio
 import org.meshtastic.proto.MeshPacket
@@ -56,6 +62,13 @@ class MeshRepository @Inject constructor(
     private val _myNodeNum = MutableStateFlow<Int?>(null)
     val myNodeNum: StateFlow<Int?> = _myNodeNum.asStateFlow()
 
+    private val _channels = MutableStateFlow<List<RoomChannel>>(emptyList())
+    val channels: StateFlow<List<RoomChannel>> = _channels.asStateFlow()
+
+    val isConnected: StateFlow<Boolean> = _myNodeNum
+        .map { it != null }
+        .stateIn(scope, SharingStarted.Eagerly, false)
+
     private var hopLimit: Int = MeshConstants.DEFAULT_HOP_LIMIT
 
     fun observeChannel(channel: Int): Flow<List<ChatMessage>> = messageDao.observeChannel(channel)
@@ -71,6 +84,21 @@ class MeshRepository @Inject constructor(
                     hopLimit = state.snapshot.lora?.hop_limit
                         ?.takeIf { it in 1..MeshConstants.MAX_HOP_LIMIT }
                         ?: MeshConstants.DEFAULT_HOP_LIMIT
+                    _channels.value = state.snapshot.channels.values
+                        .sortedBy { it.index }
+                        .map { channel ->
+                            RoomChannel(
+                                index = channel.index,
+                                name = channel.settings?.name.orEmpty().let(::sanitizeMeshText),
+                                role = when (channel.role) {
+                                    Channel.Role.PRIMARY -> ChannelRole.PRIMARY
+                                    Channel.Role.SECONDARY -> ChannelRole.SECONDARY
+                                    else -> ChannelRole.DISABLED
+                                },
+                                id = channel.settings?.id ?: 0,
+                                positionPrecision = channel.settings?.module_settings?.position_precision ?: 0,
+                            )
+                        }
                     state.snapshot.nodes.values.forEach { saveNode(it) }
                 }
             }
