@@ -1,0 +1,118 @@
+syntax = "proto3";
+
+package meshchat;
+
+import "meshtastic/mesh.proto";
+import "meshtastic/config.proto";
+
+option java_package = "com.getfirepit.protocol.meshchat";
+option java_outer_classname = "MeshChatProtos";
+
+/*
+ * Firepit's own definitions. Two disjoint groups:
+ *
+ *   Invite / LoRaProfile / Inviter  — encoded into QR codes and links only.
+ *                                      NEVER transmitted over LoRa.
+ *   MeshChatControl and friends     — private application port 300, one packet
+ *                                      per event, never periodic, <= ~40 bytes.
+ *
+ * "MeshChat" is the internal protocol name and stays stable regardless of the
+ * product name (Firepit). Changing it changes the wire contract.
+ */
+
+// Which frequency slot the group's primary channel lands on. Every node in a
+// group must agree or they cannot hear each other. Carried in invites so a
+// joiner aligns automatically. See implementation guide D-1.
+enum MeshMode {
+  // Primary channel named "MeshChat" -> its own frequency slot. Quietest.
+  GROUP_ONLY = 0;
+  // Primary channel name left empty -> firmware derives the same slot as the
+  // public mesh, so public nodes relay our traffic. Content stays private.
+  PUBLIC_RELAY = 1;
+}
+
+// The inviter's radio settings, so the joiner can align before writing the room.
+// Applied with set_config(lora) only where values differ; region is a hint that
+// never silently overrides a region the joiner has already set.
+message LoRaProfile {
+  bool use_preset = 1;
+  meshtastic.Config.LoRaConfig.ModemPreset modem_preset = 2;
+  // 0 = derived from the primary channel name.
+  uint32 channel_num = 3;
+  float override_frequency = 4;
+  meshtastic.Config.LoRaConfig.RegionCode region = 5;
+  uint32 hop_limit = 6;
+  MeshMode mesh_mode = 7;
+}
+
+message Inviter {
+  uint32 node_num = 1;
+  // user.public_key must be 32 bytes; the joiner needs it to send the join
+  // hello as a PKI DM before any NodeInfo has propagated.
+  meshtastic.User user = 2;
+}
+
+// Everything needed to join a room. QR form is signed with a rotating token;
+// link form is encrypted under a PIN-derived key, so neither is useful alone.
+message Invite {
+  uint32 version = 1;
+  // Stable room identity across renames, re-indexing and key rotation.
+  fixed32 room_id = 2;
+  // <= 11 UTF-8 bytes (nanopb limit on ChannelSettings.name).
+  string room_name = 3;
+  // Exactly 32 bytes. Never empty: an empty PSK silently inherits the primary.
+  bytes room_psk = 4;
+  uint32 position_precision = 5;
+  // Increments on PSK rotation; lets a joiner overwrite a stale channel.
+  uint32 generation = 6;
+  LoRaProfile lora = 7;
+  Inviter inviter = 8;
+  fixed32 invite_id = 9;
+  uint32 issued_at = 10;
+
+  // QR invites only; absent on link invites.
+  uint32 window = 11;
+  bytes token = 12;
+}
+
+// ---------------------------------------------------------------------------
+// Private port 300 payloads
+// ---------------------------------------------------------------------------
+
+message MeshChatControl {
+  uint32 version = 1;
+  oneof payload {
+    JoinHello join_hello = 2;
+    RosterEvent roster_event = 3;
+    LiveLocationRequest live_location_request = 4;
+  }
+}
+
+// Joiner -> inviter, as a PKI direct message, after the NodeInfo hello has had
+// time to propagate. Proves which invite was used so the roster can show who
+// vouched for whom.
+message JoinHello {
+  fixed32 invite_id = 1;
+  bytes token = 2;
+  uint32 generation = 3;
+  uint32 app_version = 4;
+}
+
+// Inviter -> room broadcast, so every member's roster shows the trust chain.
+message RosterEvent {
+  enum Kind {
+    JOINED = 0;
+    KEY_ROTATED = 1;
+  }
+  Kind kind = 1;
+  uint32 node_num = 2;
+  uint32 invited_by = 3;
+  uint32 generation = 4;
+}
+
+// Member -> member, as a PKI direct message. Asking only; the recipient's app
+// shows a duration picker and starting to share is always their own decision.
+message LiveLocationRequest {
+  fixed32 room_id = 1;
+  uint32 suggested_secs = 2;
+}

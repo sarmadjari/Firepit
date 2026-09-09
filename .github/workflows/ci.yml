@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+
+      # Must match gradle/gradle-daemon-jvm.properties; the Java 17 toolchain
+      # the modules compile against is provisioned by the foojay resolver.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Regenerates Wire sources from protos/ and runs ProtocolContractTest,
+      # which fails if the vendored protobuf pin drifts.
+      - name: Build and test
+        run: ./gradlew build --stacktrace

@@ -1,13 +1,26 @@
 [versions]
+# Toolchain — AGP 9.4.0 declares kotlin-gradle-plugin 2.2.10 as its built-in
+# Kotlin, so this pin must stay in lockstep with agp. Verified in the AGP POM.
 agp = "9.4.0"
+kotlin = "2.2.10"
+javaTarget = "17"
+
+compileSdk = "37"
+minSdk = "29"
+targetSdk = "37"
+
+composeBom = "2026.02.01"
 coreKtx = "1.10.1"
 junit = "4.13.2"
 junitVersion = "1.1.5"
 espressoCore = "3.5.1"
 lifecycleRuntimeKtx = "2.6.1"
 activityCompose = "1.8.0"
-kotlin = "2.2.10"
-composeBom = "2026.02.01"
+
+# Protobuf. Generated from meshtastic/protobufs tag v2.8.0 — see protos/UPSTREAM.md.
+wire = "5.3.3"
+
+coroutines = "1.10.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -25,7 +38,26 @@ androidx-compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-
 androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
 
+wire-runtime = { group = "com.squareup.wire", name = "wire-runtime", version.ref = "wire" }
+
+kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
+
+# Referenced only by build-logic convention plugins, never by app modules.
+android-gradlePlugin = { group = "com.android.tools.build", name = "gradle", version.ref = "agp" }
+kotlin-gradlePlugin = { group = "org.jetbrains.kotlin", name = "kotlin-gradle-plugin", version.ref = "kotlin" }
+compose-gradlePlugin = { group = "org.jetbrains.kotlin", name = "compose-compiler-gradle-plugin", version.ref = "kotlin" }
+
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+wire = { id = "com.squareup.wire", version.ref = "wire" }
+
+# Convention plugins, defined in build-logic/.
+firepit-android-application = { id = "firepit.android.application" }
+firepit-android-library = { id = "firepit.android.library" }
+firepit-android-library-compose = { id = "firepit.android.library.compose" }
+firepit-jvm-library = { id = "firepit.jvm.library" }
 

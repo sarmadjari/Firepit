@@ -1,4 +1,5 @@
 pluginManagement {
+    includeBuild("build-logic")
     repositories {
         google {
             content {
@@ -22,5 +23,19 @@ dependencyResolutionManagement {
     }
 }
 
+enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
+
 rootProject.name = "Firepit"
+
 include(":app")
+
+// Pure Kotlin — no Android dependency, so the riskiest logic (packet parsing,
+// ACK state machine, slot manager) runs in fast JVM tests.
+include(":core:protocol")
+
+// Android libraries.
+include(":core:designsystem")
+
+// Modules are added as their stage arrives rather than pre-created empty:
+// :core:model :core:transport :core:crypto :core:database :core:data
+// :core:adaptive :core:service :core:testing :feature:*
