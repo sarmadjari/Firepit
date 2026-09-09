@@ -26,8 +26,8 @@ android {
 
 dependencies {
     implementation(projects.core.designsystem)
-    implementation(projects.core.protocol)
-    implementation(projects.core.transport)
+    // Re-exports :core:model, :core:database, :core:protocol and :core:transport.
+    implementation(projects.core.data)
 
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)

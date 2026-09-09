@@ -35,6 +35,12 @@ sealed interface SessionState {
 private class RadioRebooted : Exception("Radio rebooted")
 
 /**
+ * The transport stopped delivering notifications. Treated as a lost link rather
+ * than a clean end, so the caller reconnects with backoff instead of spinning.
+ */
+class TransportClosed : Exception("Radio transport closed")
+
+/**
  * Drives the PhoneAPI conversation over a connected [RadioTransport]:
  * handshake, config download, then a steady-state drain loop.
  *
@@ -67,9 +73,7 @@ class PhoneApiSession(
         try {
             while (coroutineContext.isActive) {
                 _state.value = SessionState.Ready(handshake())
-                // Pump only returns when the radio rebooted or the transport
-                // stopped emitting; the latter ends the session.
-                if (!pump()) return
+                if (!pump()) throw TransportClosed()
             }
         } finally {
             _state.value = SessionState.Idle

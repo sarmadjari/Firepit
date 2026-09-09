@@ -28,6 +28,7 @@ wire {
 }
 
 dependencies {
+    api(projects.core.model)
     api(libs.wire.runtime)
     api(libs.kotlinx.coroutines.core)
 

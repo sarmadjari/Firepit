@@ -31,12 +31,14 @@ include(":app")
 
 // Pure Kotlin — no Android dependency, so the riskiest logic (packet parsing,
 // ACK state machine, slot manager) runs in fast JVM tests.
+include(":core:model")
 include(":core:protocol")
 
 // Android libraries.
 include(":core:designsystem")
 include(":core:transport")
+include(":core:database")
+include(":core:data")
 
 // Modules are added as their stage arrives rather than pre-created empty:
-// :core:model :core:transport :core:crypto :core:database :core:data
-// :core:adaptive :core:service :core:testing :feature:*
+// :core:crypto :core:adaptive :core:service :core:testing :feature:*
