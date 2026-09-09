@@ -26,9 +26,12 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -71,6 +74,10 @@ class MeshRepository @Inject constructor(
 
     private val _snapshot = MutableStateFlow<RadioSnapshot?>(null)
     val snapshot: StateFlow<RadioSnapshot?> = _snapshot.asStateFlow()
+
+    /** Newly stored incoming messages. Replays nothing, so a late collector cannot re-notify. */
+    private val _incomingMessages = MutableSharedFlow<ChatMessage>(extraBufferCapacity = 16)
+    val incomingMessages: SharedFlow<ChatMessage> = _incomingMessages.asSharedFlow()
 
     /** Our own `User`, needed to introduce ourselves when joining a room. */
     val myUser: User?
@@ -210,27 +217,30 @@ class MeshRepository @Inject constructor(
         val text = sanitizeMeshText(data.payload.utf8())
         if (text.isEmpty()) return
 
-        val stored = messageDao.saveIfNew(
-            ChatMessage(
-                id = packet.id,
-                channel = packet.channel,
-                fromNodeNum = packet.from,
-                toNodeNum = packet.to,
-                text = text,
-                sentAt = System.currentTimeMillis(),
-                rxTime = packet.rx_time?.toLong()?.times(1_000),
-                status = MessageStatus.REACHED_MESH,
-                isOutgoing = false,
-                rxSnr = packet.rx_snr.takeIf { it != 0f },
-                rxRssi = packet.rx_rssi?.takeIf { it != 0 },
-                hopsAway = (packet.hop_start - packet.hop_limit).takeIf { packet.hop_start > 0 },
-                replyId = data.reply_id.takeIf { it != 0 },
-                emoji = data.emoji.takeIf { it != 0 },
-                signed = packet.xeddsa_signed,
-            ),
-            myNodeNum,
+        val message = ChatMessage(
+            id = packet.id,
+            channel = packet.channel,
+            fromNodeNum = packet.from,
+            toNodeNum = packet.to,
+            text = text,
+            sentAt = System.currentTimeMillis(),
+            rxTime = packet.rx_time?.toLong()?.times(1_000),
+            status = MessageStatus.RECEIVED,
+            isOutgoing = false,
+            rxSnr = packet.rx_snr.takeIf { it != 0f },
+            rxRssi = packet.rx_rssi?.takeIf { it != 0 },
+            hopsAway = (packet.hop_start - packet.hop_limit).takeIf { packet.hop_start > 0 },
+            replyId = data.reply_id.takeIf { it != 0 },
+            emoji = data.emoji.takeIf { it != 0 },
+            signed = packet.xeddsa_signed,
         )
-        if (stored) Log.i(TAG, "text from ${packet.from} on channel ${packet.channel}")
+
+        // Only announce genuinely new messages: the mesh repeats packets, and a
+        // duplicate must not raise a second notification.
+        if (messageDao.saveIfNew(message, myNodeNum)) {
+            Log.i(TAG, "text from ${packet.from} on channel ${packet.channel}")
+            _incomingMessages.tryEmit(message)
+        }
     }
 
     private suspend fun handleRouting(packet: MeshPacket, data: Data) {
@@ -251,6 +261,9 @@ class MeshRepository @Inject constructor(
 
     private suspend fun setStatus(packetId: Int, next: MessageStatus, reason: String?) {
         val current = messageDao.find(packetId) ?: return
+        // Packet ids are random, so a routing reply could collide with a
+        // received message. Only our own sends have a delivery status.
+        if (!current.isOutgoing) return
         val advanced = MessageStatusRules.advance(current.status, next)
         if (advanced != current.status) {
             messageDao.updateStatus(packetId, advanced, reason)

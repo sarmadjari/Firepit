@@ -74,6 +74,50 @@ suspend fun MessageDao.saveIfNew(message: ChatMessage, myNodeNum: Int): Boolean 
 suspend fun MessageDao.find(id: Int): ChatMessage? = findEntity(id)?.toDomain()
 
 @Dao
+interface ChannelStateDao {
+
+    @Query("SELECT * FROM channel_state")
+    fun observeAll(): Flow<List<ChannelStateEntity>>
+
+    @Query("SELECT * FROM channel_state WHERE channel = :channel")
+    suspend fun find(channel: Int): ChannelStateEntity?
+
+    @Upsert
+    suspend fun upsert(state: ChannelStateEntity)
+
+    /**
+     * Unread counts per channel. Channels with no row yet are absent, so a
+     * conversation is only "unread" once it has been opened at least once or
+     * has messages newer than its mark.
+     */
+    @Query(
+        """
+        SELECT m.channel AS channel, COUNT(*) AS count
+        FROM messages m
+        LEFT JOIN channel_state s ON s.channel = m.channel
+        WHERE m.isOutgoing = 0 AND m.sentAt > COALESCE(s.lastReadAt, 0)
+        GROUP BY m.channel
+        """,
+    )
+    fun observeUnread(): Flow<List<UnreadCount>>
+}
+
+data class UnreadCount(val channel: Int, val count: Int)
+
+suspend fun ChannelStateDao.markRead(channel: Int, now: Long) {
+    val existing = find(channel)
+    upsert(ChannelStateEntity(channel, lastReadAt = now, muted = existing?.muted == true))
+}
+
+suspend fun ChannelStateDao.setMuted(channel: Int, muted: Boolean) {
+    val existing = find(channel)
+    upsert(ChannelStateEntity(channel, lastReadAt = existing?.lastReadAt ?: 0L, muted = muted))
+}
+
+fun ChannelStateDao.observeMuted(): Flow<Set<Int>> =
+    observeAll().map { states -> states.filter { it.muted }.map { it.channel }.toSet() }
+
+@Dao
 interface RoomMemberDao {
 
     // NULLs sort last in SQLite, so members we have only been told about fall

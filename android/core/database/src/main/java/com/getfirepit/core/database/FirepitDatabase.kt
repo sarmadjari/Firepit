@@ -20,8 +20,13 @@ internal class Converters {
 }
 
 @Database(
-    entities = [MessageEntity::class, NodeEntity::class, RoomMemberEntity::class],
-    version = 3,
+    entities = [
+        MessageEntity::class,
+        NodeEntity::class,
+        RoomMemberEntity::class,
+        ChannelStateEntity::class,
+    ],
+    version = 4,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -29,6 +34,7 @@ abstract class FirepitDatabase : RoomDatabase() {
     abstract fun messageDao(): MessageDao
     abstract fun nodeDao(): NodeDao
     abstract fun roomMemberDao(): RoomMemberDao
+    abstract fun channelStateDao(): ChannelStateDao
 
     companion object {
         /** Adds the roster table. Messages and nodes are left untouched. */
@@ -76,9 +82,31 @@ abstract class FirepitDatabase : RoomDatabase() {
             }
         }
 
+        /** Adds per-channel read position and mute preference. */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS channel_state (
+                        channel INTEGER NOT NULL,
+                        lastReadAt INTEGER NOT NULL,
+                        muted INTEGER NOT NULL,
+                        PRIMARY KEY(channel)
+                    )
+                    """.trimIndent(),
+                )
+                // Existing conversations start read, so upgrading does not
+                // present a wall of unread badges for messages already seen.
+                connection.execSQL(
+                    "INSERT INTO channel_state (channel, lastReadAt, muted) " +
+                        "SELECT DISTINCT channel, ${System.currentTimeMillis()}, 0 FROM messages",
+                )
+            }
+        }
+
         fun create(context: Context): FirepitDatabase =
             Room.databaseBuilder(context, FirepitDatabase::class.java, "firepit.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
     }
 }

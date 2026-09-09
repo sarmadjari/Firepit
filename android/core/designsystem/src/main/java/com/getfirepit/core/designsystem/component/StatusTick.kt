@@ -48,4 +48,6 @@ fun MessageStatus.glyphAndLabel(): Pair<String, String> = when (this) {
     MessageStatus.DELIVERED -> "✓✓" to "Delivered to their node"
     MessageStatus.UNHEARD -> "✓" to "No node heard this"
     MessageStatus.FAILED -> "⚠" to "Failed, tap to retry"
+    // Nothing to report about a message we are holding.
+    MessageStatus.RECEIVED -> "" to ""
 }

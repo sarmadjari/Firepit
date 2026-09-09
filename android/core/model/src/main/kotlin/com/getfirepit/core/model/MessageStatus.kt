@@ -34,6 +34,13 @@ enum class MessageStatus {
 
     /** The destination node acknowledged. Direct messages only. */
     DELIVERED,
+
+    /**
+     * Somebody else's message that we received. Outside the progression above:
+     * a delivery status describes something we sent, and there is nothing to
+     * confirm about a message already in our hands.
+     */
+    RECEIVED,
     ;
 
     val isFailure: Boolean get() = this == FAILED || this == UNHEARD

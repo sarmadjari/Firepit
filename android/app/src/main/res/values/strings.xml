@@ -10,4 +10,7 @@
     <string name="radio_service_reconnecting">Reconnecting to your node…</string>
     <string name="radio_service_disconnected">Not connected</string>
     <string name="radio_service_disconnect">Disconnect</string>
+
+    <string name="message_channel">Messages</string>
+    <string name="message_channel_description">New messages in your rooms.</string>
 </resources>

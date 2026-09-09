@@ -1,6 +1,11 @@
 package com.getfirepit.app
 
 import android.app.Application
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
+import com.getfirepit.app.notifications.MessageNotifier
+import com.getfirepit.core.data.ChatPresence
 import com.getfirepit.core.data.MeshRepository
 import com.getfirepit.core.data.RoomRepository
 import dagger.hilt.android.HiltAndroidApp
@@ -13,11 +18,23 @@ class FirepitApplication : Application() {
 
     @Inject lateinit var roomRepository: RoomRepository
 
+    @Inject lateinit var messageNotifier: MessageNotifier
+
+    @Inject lateinit var presence: ChatPresence
+
     override fun onCreate() {
         super.onCreate()
         // The inbound pump must outlive every screen, so it starts here rather
         // than in a ViewModel.
         meshRepository.start()
         roomRepository.start()
+        messageNotifier.start()
+
+        ProcessLifecycleOwner.get().lifecycle.addObserver(
+            object : DefaultLifecycleObserver {
+                override fun onStart(owner: LifecycleOwner) = presence.setForeground(true)
+                override fun onStop(owner: LifecycleOwner) = presence.setForeground(false)
+            },
+        )
     }
 }

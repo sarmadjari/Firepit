@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Badge
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -48,6 +49,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -165,10 +167,13 @@ fun ChatsPane(
                     roomsFull = roomsState.isFull,
                     roomsBusy = roomsState.busy,
                     roomsMessage = roomsState.error ?: roomsState.joinedRoomName,
+                    unread = state.unread,
+                    muted = state.muted,
                     onSelect = { index ->
                         viewModel.select(index)
                         scope.launch { navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, index) }
                     },
+                    onToggleMute = viewModel::toggleMute,
                     onNewRoom = { showCreateDialog = true },
                     onJoinRoom = {
                         // A leftover "Created Camp" notice would otherwise close
@@ -228,7 +233,10 @@ private fun ChannelList(
     roomsFull: Boolean,
     roomsBusy: Boolean,
     roomsMessage: String?,
+    unread: Map<Int, Int>,
+    muted: Set<Int>,
     onSelect: (Int) -> Unit,
+    onToggleMute: (Int) -> Unit,
     onNewRoom: () -> Unit,
     onJoinRoom: () -> Unit,
     onDismissMessage: () -> Unit,
@@ -300,8 +308,30 @@ private fun ChannelList(
                             Text(if (channel.isRoom) "Room · slot ${channel.index}" else "Primary channel")
                         },
                         leadingContent = { RoomAvatar(RoomIcon.forRoomId(channel.id)) },
+                        trailingContent = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
+                            ) {
+                                if (channel.index in muted) {
+                                    Text(
+                                        text = "🔕",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                                // A muted room still counts unread; it just does
+                                // not interrupt.
+                                unread[channel.index]?.takeIf { it > 0 }?.let { count ->
+                                    Badge { Text(if (count > 99) "99+" else "$count") }
+                                }
+                            }
+                        },
                         modifier = Modifier
-                            .clickable { onSelect(channel.index) }
+                            .combinedClickable(
+                                onClick = { onSelect(channel.index) },
+                                onLongClick = { onToggleMute(channel.index) },
+                                onLongClickLabel = if (channel.index in muted) "Unmute" else "Mute",
+                            )
                             .then(
                                 if (channel.index == selected) {
                                     Modifier.fillMaxWidth()
@@ -329,25 +359,50 @@ private fun ChannelChat(
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    var searching by rememberSaveable(channel.index) { mutableStateOf(false) }
 
-    LaunchedEffect(state.messages.size) {
-        if (state.messages.isNotEmpty()) listState.animateScrollToItem(state.messages.lastIndex)
+    LaunchedEffect(state.messages.size, state.isSearching) {
+        // Jumping to the newest message would fight the reader while they scan
+        // results, so autoscroll pauses during a search.
+        if (state.messages.isNotEmpty() && !state.isSearching) {
+            listState.animateScrollToItem(state.messages.lastIndex)
+        }
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(channel.displayName) },
+                title = {
+                    if (searching) {
+                        OutlinedTextField(
+                            value = state.query,
+                            onValueChange = viewModel::updateQuery,
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text("Search this room") },
+                            singleLine = true,
+                        )
+                    } else {
+                        Text(channel.displayName)
+                    }
+                },
                 navigationIcon = {
                     // Only when the list is hidden behind this pane.
                     onBack?.let { back -> BackButton(onClick = back) }
                 },
                 actions = {
-                    onShowMembers?.let { members ->
-                        TextButton(onClick = members) { Text("Members") }
-                    }
-                    onInvite?.let { invite ->
-                        TextButton(onClick = invite) { Text("Invite") }
+                    TextButton(
+                        onClick = {
+                            searching = !searching
+                            if (!searching) viewModel.updateQuery("")
+                        },
+                    ) { Text(if (searching) "Done" else "Search") }
+                    if (!searching) {
+                        onShowMembers?.let { members ->
+                            TextButton(onClick = members) { Text("Members") }
+                        }
+                        onInvite?.let { invite ->
+                            TextButton(onClick = invite) { Text("Invite") }
+                        }
                     }
                 },
             )
@@ -358,7 +413,13 @@ private fun ChannelChat(
                 .padding(padding)
                 .fillMaxSize(),
         ) {
-            val items = remember(state.messages) { buildChatItems(state.messages) }
+            val visible = state.visibleMessages
+            val items = remember(visible) { buildChatItems(visible) }
+
+            if (state.isSearching && visible.isEmpty()) {
+                EmptyState("No messages match \"${state.query.trim()}\".")
+                return@Column
+            }
 
             LazyColumn(
                 state = listState,
@@ -605,6 +666,7 @@ private fun MessageStatus.label(): String = when (this) {
     MessageStatus.FAILED -> "Failed"
     MessageStatus.REACHED_MESH -> "Heard by at least one node"
     MessageStatus.DELIVERED -> "Acknowledged by the recipient"
+    MessageStatus.RECEIVED -> "Received"
 }
 
 @Composable

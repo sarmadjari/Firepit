@@ -241,6 +241,56 @@ with per-room mute, unread state, search.
 **Exit proof:** an afternoon of three-person chat with no false delivery claims and no rate-limit
 errors reaching the user.
 
+### Built
+
+- **Foreground service** — `RadioService` anchors the process so the session survives backgrounding.
+  It does not own the link; `RadioLink` stays the singleton owner and the service only mirrors state
+  into a notification. `START_NOT_STICKY`, because a system-restarted service has no radio to
+  reconnect to and a notification claiming otherwise would be false.
+- **Composer** — hard stop at 200 bytes via `MeshConstants.truncateToBytes`, which walks code points
+  so Arabic and emoji are never split. The 165-byte signing hint appears only when the radio reports
+  `supportsSigning`, so 2.7 firmware shows nothing rather than warning about a feature it lacks.
+- **Replies** — native `reply_id`, with the quote inside the bubble: accent bar, panel washed in the
+  original sender's identity colour, tap to jump to the original.
+- **Message info** — hops, SNR, RSSI, signature, status. Values the radio did not report are omitted
+  rather than shown as zero, because "0 dB" and "not measured" are different claims.
+- **Chat styling** — `buildChatItems` groups runs from one sender and inserts day separators, kept
+  pure so the rules are testable without a screen.
+- **Unread and mute** (DB v4) — per-channel read position and mute preference. Unread counts come
+  from a SQL join against the read mark, so they cannot drift from the messages themselves. Muting
+  still counts unread; it only stops the interruption.
+- **Notifications** — raised only when nobody is looking: `ChatPresence` reports the open
+  conversation and app foreground state, and duplicates are suppressed because only genuinely new
+  rows are emitted.
+- **Search** — filters the open room, and pauses autoscroll so jumping to the newest message does not
+  fight the reader.
+
+Two protocol facts settled here. Text compression is already done by the firmware with Unishox2 and
+`portnums.proto` says apps should not do it themselves, so Firepit does not. That check found us
+decoding `TEXT_MESSAGE_COMPRESSED_APP` as UTF-8, which would have stored mojibake as somebody's
+words; the port is now dropped with a log.
+
+Received messages also got their own `MessageStatus.RECEIVED` instead of borrowing `REACHED_MESH`,
+and delivery updates now refuse to touch anything not outgoing, so a packet-id collision cannot
+rewrite a message somebody sent us.
+
+### Not verified
+
+The exit proof needs three people and only one Android device is available, so multi-party chat is
+unproven. Delivery-status logic is unit-tested and was verified two-way on hardware in Stage 2.
+
+Verified on hardware: DB migration v3→v4 against a live database, and the foreground service holding
+the session through 70 s of confirmed Dozing with zero link transitions.
+
+### Deferred from this stage
+
+- **Quick replies** — not built.
+- **Swipe-to-reply** — long-press works and carries an accessibility label, but there is no visible
+  affordance and swipe is the gesture people reach for. Best done alongside quick replies, since
+  both belong in the same gesture layer.
+- Notification actions (reply from the shade, mark read) — the notification only opens the room.
+- Pre-existing incoming rows keep `REACHED_MESH`. Never rendered, so not worth a data migration.
+
 ---
 
 ## Stage 6 — Map and location

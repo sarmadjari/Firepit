@@ -26,4 +26,7 @@ object DatabaseModule {
 
     @Provides
     fun provideRoomMemberDao(database: FirepitDatabase): RoomMemberDao = database.roomMemberDao()
+
+    @Provides
+    fun provideChannelStateDao(database: FirepitDatabase): ChannelStateDao = database.channelStateDao()
 }
