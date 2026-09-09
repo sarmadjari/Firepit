@@ -4,17 +4,21 @@ import com.getfirepit.core.protocol.phoneapi.PhoneApiSession
 import com.getfirepit.core.protocol.phoneapi.RadioSnapshot
 import com.getfirepit.core.protocol.phoneapi.SessionState
 import com.juul.kable.Peripheral
+import com.juul.kable.State
+import android.util.Log
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -35,6 +39,9 @@ sealed interface LinkState {
     data class Reconnecting(val attempt: Int, val cause: String) : LinkState
 }
 
+/** The radio went away — reset, powered off, or out of range. */
+private class RadioDisconnected : Exception("Radio disconnected")
+
 /**
  * Keeps one radio connected: connect, run the PhoneAPI session, and reconnect
  * with backoff when the link drops.
@@ -46,6 +53,11 @@ class RadioLink(private val scope: CoroutineScope) {
 
     private val _state = MutableStateFlow<LinkState>(LinkState.Disconnected)
     val state: StateFlow<LinkState> = _state.asStateFlow()
+
+    private fun setState(next: LinkState) {
+        Log.i(TAG, "link: ${next::class.simpleName} ${describe(next)}")
+        _state.value = next
+    }
 
     private val currentSession = MutableStateFlow<PhoneApiSession?>(null)
 
@@ -72,7 +84,7 @@ class RadioLink(private val scope: CoroutineScope) {
         job?.cancel()
         job = null
         currentSession.value = null
-        _state.value = LinkState.Disconnected
+        setState(LinkState.Disconnected)
     }
 
     suspend fun send(message: ToRadio) {
@@ -92,19 +104,31 @@ class RadioLink(private val scope: CoroutineScope) {
             }
 
             try {
-                _state.value = LinkState.Connecting(attempt)
+                setState(LinkState.Connecting(attempt))
                 val connectionScope = peripheral.connect()
                 attempt = 0
 
                 val session = PhoneApiSession(BleRadioTransport(peripheral, connectionScope))
                 currentSession.value = session
                 connectionScope.launch { relayState(session) }
-                session.run()
+
+                // Kable's observe() Flow stays alive across disconnects instead
+                // of failing, and an idle session issues no I/O, so a dropped
+                // link would otherwise go unnoticed indefinitely. Watch the
+                // peripheral's own state instead.
+                coroutineScope {
+                    val lostWatcher = launch {
+                        peripheral.state.first { it is State.Disconnected }
+                        throw RadioDisconnected()
+                    }
+                    session.run()
+                    lostWatcher.cancel()
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 attempt++
-                _state.value = LinkState.Reconnecting(attempt, e.message ?: e::class.simpleName.orEmpty())
+                setState(LinkState.Reconnecting(attempt, e.message ?: e::class.simpleName.orEmpty()))
             } finally {
                 currentSession.value = null
                 runCatching { peripheral.close() }
@@ -121,12 +145,21 @@ class RadioLink(private val scope: CoroutineScope) {
                 SessionState.Downloading -> LinkState.Downloading
                 is SessionState.Ready -> LinkState.Ready(sessionState.snapshot)
             }
-        }.collect { linkState -> if (linkState != null) _state.value = linkState }
+        }.collect { linkState -> if (linkState != null) setState(linkState) }
     }
 
     private companion object {
+        const val TAG = "FirepitLink"
+
         val FIRST_BACKOFF = 1.seconds
         val MAX_BACKOFF = 30.seconds
+
+        fun describe(state: LinkState): String = when (state) {
+            is LinkState.Ready -> "node=${state.snapshot.myNodeNum} channels=${state.snapshot.channels.size}"
+            is LinkState.Reconnecting -> "attempt=${state.attempt} cause=${state.cause}"
+            is LinkState.Connecting -> "attempt=${state.attempt}"
+            else -> ""
+        }
 
         fun backoffFor(attempt: Int): Duration = when {
             attempt <= 0 -> Duration.ZERO
