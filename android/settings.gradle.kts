@@ -35,6 +35,7 @@ include(":core:protocol")
 
 // Android libraries.
 include(":core:designsystem")
+include(":core:transport")
 
 // Modules are added as their stage arrives rather than pre-created empty:
 // :core:model :core:transport :core:crypto :core:database :core:data

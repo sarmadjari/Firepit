@@ -49,8 +49,15 @@ See `docs/build-plan.md` for the stage list and the planned module set.
 
 ## Toolchain (verified 2026-09-09)
 
-- AGP **9.4.0**, which declares Kotlin **2.2.10** as its built-in Kotlin — keep those two in lockstep.
-- AGP 9 applies Kotlin itself: **do not** add `org.jetbrains.kotlin.android`.
+- AGP **9.4.0**. AGP applies Kotlin itself: **do not** add `org.jetbrains.kotlin.android`.
+- Kotlin **2.3.21**, declared in the version catalog. AGP 9.4 *defaults* to Kotlin 2.2.10, but the
+  catalog version overrides it — verified by compiling a library whose metadata 2.2.10 cannot read.
+- **Library metadata rule:** a Kotlin compiler reads metadata up to one minor above itself
+  (2.3.x reads 2.4.0). When a dependency fails with "compiled with an incompatible version of
+  Kotlin", raise the catalog's `kotlin` before downgrading the library.
+- **KSP is the ceiling, not Kotlin.** KSP lags Kotlin, and Hilt and Room both need it. Kotlin
+  2.4.x had no KSP release, which is why the project sits on 2.3.21 + KSP 2.3.11. Check KSP
+  availability before any Kotlin bump.
 - AGP 9 DSL changes: `CommonExtension` has **no type parameters**; `defaultConfig` and
   `compileOptions` are getters only at that level (use property access, not lambdas).
 - Gradle **9.6**, configuration cache **on**. Daemon JDK 25, modules compile to Java 17.

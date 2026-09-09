@@ -1,5 +1,7 @@
 plugins {
     alias(libs.plugins.firepit.android.application)
+    alias(libs.plugins.ksp)
+    alias(libs.plugins.hilt)
 }
 
 android {
@@ -25,6 +27,13 @@ android {
 dependencies {
     implementation(projects.core.designsystem)
     implementation(projects.core.protocol)
+    implementation(projects.core.transport)
+
+    implementation(libs.hilt.android)
+    ksp(libs.hilt.compiler)
+    implementation(libs.androidx.hilt.navigation.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)

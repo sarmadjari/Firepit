@@ -1,8 +1,9 @@
 [versions]
-# Toolchain — AGP 9.4.0 declares kotlin-gradle-plugin 2.2.10 as its built-in
-# Kotlin, so this pin must stay in lockstep with agp. Verified in the AGP POM.
+# AGP 9.4 defaults to Kotlin 2.2.10, but this catalog version overrides it.
+# The real ceiling is KSP (needed by Hilt and Room), which lags Kotlin: there is
+# no KSP for 2.4.x yet, so the project sits on the 2.3 line.
 agp = "9.4.0"
-kotlin = "2.2.10"
+kotlin = "2.3.21"
 javaTarget = "17"
 
 compileSdk = "37"
@@ -14,6 +15,7 @@ coreKtx = "1.10.1"
 junit = "4.13.2"
 junitVersion = "1.1.5"
 espressoCore = "3.5.1"
+turbine = "1.2.1"
 lifecycleRuntimeKtx = "2.6.1"
 activityCompose = "1.8.0"
 
@@ -22,9 +24,19 @@ wire = "5.3.3"
 
 coroutines = "1.10.2"
 
+# BLE. Kable is what the official Meshtastic Android client uses.
+kable = "0.44.3"
+
+# KSP must match the Kotlin version exactly.
+ksp = "2.3.11"
+hilt = "2.60.1"
+hiltNavigationCompose = "1.4.0"
+lifecycle = "2.11.0"
+
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+turbine = { group = "app.cash.turbine", name = "turbine", version.ref = "turbine" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
@@ -41,7 +53,16 @@ androidx-compose-material3 = { group = "androidx.compose.material3", name = "mat
 wire-runtime = { group = "com.squareup.wire", name = "wire-runtime", version.ref = "wire" }
 
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
+
+kable-core = { group = "com.juul.kable", name = "kable-core", version.ref = "kable" }
+
+hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }
+hilt-compiler = { group = "com.google.dagger", name = "hilt-compiler", version.ref = "hilt" }
+androidx-hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "hiltNavigationCompose" }
+androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }
+androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycle" }
 
 # Referenced only by build-logic convention plugins, never by app modules.
 android-gradlePlugin = { group = "com.android.tools.build", name = "gradle", version.ref = "agp" }
@@ -54,6 +75,8 @@ android-library = { id = "com.android.library", version.ref = "agp" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 wire = { id = "com.squareup.wire", version.ref = "wire" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
 
 # Convention plugins, defined in build-logic/.
 firepit-android-application = { id = "firepit.android.application" }

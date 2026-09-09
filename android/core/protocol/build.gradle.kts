@@ -29,4 +29,8 @@ wire {
 
 dependencies {
     api(libs.wire.runtime)
+    api(libs.kotlinx.coroutines.core)
+
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.turbine)
 }
