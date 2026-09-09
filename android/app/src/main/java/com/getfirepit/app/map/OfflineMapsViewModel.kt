@@ -16,11 +16,13 @@ data class OfflineMapsUiState(
     /** 0..1 while a download runs, null when idle. */
     val progress: Float? = null,
     val error: String? = null,
+    val offlineOnly: Boolean = false,
 )
 
 @HiltViewModel
 class OfflineMapsViewModel @Inject constructor(
     private val repository: OfflineMapRepository,
+    private val mapPreferences: MapPreferences,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(OfflineMapsUiState())
@@ -28,7 +30,14 @@ class OfflineMapsViewModel @Inject constructor(
 
     init {
         refresh()
+        viewModelScope.launch {
+            mapPreferences.offlineOnly.collect { enabled ->
+                _uiState.update { it.copy(offlineOnly = enabled) }
+            }
+        }
     }
+
+    fun setOfflineOnly(enabled: Boolean) = mapPreferences.setOfflineOnly(enabled)
 
     fun download(name: String, bounds: LatLngBounds, styleUrl: String) {
         viewModelScope.launch {

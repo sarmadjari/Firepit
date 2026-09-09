@@ -24,6 +24,8 @@ class FirepitApplication : Application() {
 
     @Inject lateinit var waypointRepository: WaypointRepository
 
+    @Inject lateinit var mapPreferences: com.getfirepit.app.map.MapPreferences
+
     @Inject lateinit var messageNotifier: MessageNotifier
 
     @Inject lateinit var presence: ChatPresence
@@ -32,6 +34,7 @@ class FirepitApplication : Application() {
         super.onCreate()
         // The inbound pump must outlive every screen, so it starts here rather
         // than in a ViewModel.
+        mapPreferences.apply()
         meshRepository.start()
         roomRepository.start()
         waypointRepository.start()

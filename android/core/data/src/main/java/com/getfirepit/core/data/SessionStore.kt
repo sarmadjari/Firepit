@@ -15,7 +15,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class SessionStore @Inject constructor(
-    @param:ApplicationContext context: Context,
+    @ApplicationContext context: Context,
 ) {
     private val preferences = context.getSharedPreferences("firepit_session", Context.MODE_PRIVATE)
 

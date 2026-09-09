@@ -14,6 +14,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -48,10 +49,21 @@ class MapViewModel @Inject constructor(
     private val location: LocationRepository,
     private val waypoints: WaypointRepository,
     private val mesh: MeshRepository,
+    private val offlineMaps: OfflineMapRepository,
+    mapPreferences: MapPreferences,
 ) : ViewModel() {
 
     private val busy = MutableStateFlow(false)
     private val error = MutableStateFlow<String?>(null)
+    private val savedAreas = MutableStateFlow<List<OfflineArea>>(emptyList())
+
+    init {
+        viewModelScope.launch { savedAreas.value = offlineMaps.areas() }
+    }
+
+    val offlineOnly: StateFlow<Boolean> = mapPreferences.offlineOnly
+
+    val areas: StateFlow<List<OfflineArea>> = savedAreas.asStateFlow()
 
     val uiState: StateFlow<MapUiState> = combine(
         mesh.isConnected,

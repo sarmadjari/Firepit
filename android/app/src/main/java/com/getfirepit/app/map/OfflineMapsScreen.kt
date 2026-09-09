@@ -19,6 +19,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -27,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -91,6 +93,32 @@ fun OfflineMapsScreen(
                 modifier = Modifier.padding(FirepitSpacing.screenMargin),
                 verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
             ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Offline maps only", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            text = if (state.areas.isEmpty() && state.offlineOnly) {
+                                "Nothing is downloaded, so the map will be blank."
+                            } else {
+                                "Never fetch tiles over the network. Ground you have not " +
+                                    "downloaded shows grey."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (state.areas.isEmpty() && state.offlineOnly) {
+                                FirepitTheme.colors.warn
+                            } else {
+                                FirepitTheme.colors.textSecondary
+                            },
+                        )
+                    }
+                    Switch(checked = state.offlineOnly, onCheckedChange = viewModel::setOfflineOnly)
+                }
+
+                HorizontalDivider()
+
                 Text(
                     text = "Move the map to the area you want, then download it. " +
                         "Street level only, and large areas are refused.",

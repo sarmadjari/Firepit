@@ -31,6 +31,8 @@ data class OfflineArea(
     /** Epoch millis of the last completed download, or 0 when unknown. */
     val downloadedAt: Long,
     val tiles: Long,
+    /** Null only if MapLibre reports a region shape we do not draw. */
+    val bounds: LatLngBounds?,
 ) {
     val sizeLabel: String get() = TileEstimate.describe(tiles)
 }
@@ -150,6 +152,7 @@ class OfflineMapRepository @Inject constructor(
                     maxZoom = MAX_ZOOM.toInt(),
                 )
             } ?: 0L,
+            bounds = bounds,
         )
     }
 

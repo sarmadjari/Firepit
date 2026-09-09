@@ -103,9 +103,12 @@ fun MapScreen(
     // Held so redraws reuse one manager: a new one per update would stack
     // annotation layers on the style until the map stopped drawing.
     val markerLayer = remember { MarkerLayer() }
+    val coverageMask = remember { CoverageMask() }
     var hasFramedMarkers by remember { mutableStateOf(false) }
     var droppingAt by remember { mutableStateOf<LatLng?>(null) }
     var openPin by remember { mutableStateOf<MapPin?>(null) }
+    val offlineOnly by viewModel.offlineOnly.collectAsStateWithLifecycle()
+    val areas by viewModel.areas.collectAsStateWithLifecycle()
 
     LaunchedEffect(state.markers, state.pins, dark) {
         markerLayer.draw(state.markers, state.pins, dark)
@@ -114,6 +117,10 @@ fun MapScreen(
             // beat the style load would leave the map stuck in the Atlantic.
             hasFramedMarkers = markerLayer.frameAll(state.markers)
         }
+    }
+
+    LaunchedEffect(offlineOnly, areas) {
+        markerLayer.style()?.let { coverageMask.apply(it, areas, offlineOnly) }
     }
 
     Scaffold(
@@ -142,6 +149,7 @@ fun MapScreen(
                 modifier = Modifier.fillMaxSize(),
             ) { map, view ->
                 markerLayer.attach(map, view)
+                map.style?.let { coverageMask.apply(it, areas, offlineOnly) }
                 hasFramedMarkers = markerLayer.frameAll(state.markers)
                 map.addOnMapLongClickListener { point ->
                     droppingAt = point
@@ -158,6 +166,12 @@ fun MapScreen(
             ) {
                 when {
                     !state.connected -> MapNotice("Not connected — open Settings to reach your node.")
+                    offlineOnly && areas.isEmpty() -> MapNotice(
+                        "Offline maps only is on but nothing is downloaded, so the map is blank. " +
+                            "Settings → Offline areas.",
+                    )
+
+                    offlineOnly -> MapNotice("Offline maps only. Grey ground is not downloaded.")
                     state.markers.none { it.isSelf } ->
                         MapNotice("Waiting for a GPS fix for your own position.")
 
@@ -437,6 +451,8 @@ private class MarkerLayer {
     }
 
     /** Frames every marker once, so later updates do not yank the camera around. */
+    fun style(): Style? = map?.style
+
     /** Frames every marker once. Returns false when the map is not ready yet. */
     fun frameAll(markers: List<MapMarker>): Boolean {
         val map = map ?: return false
