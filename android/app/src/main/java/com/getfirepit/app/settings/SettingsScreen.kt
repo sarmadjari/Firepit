@@ -76,6 +76,7 @@ fun SettingsScreen(
     val radioState by radioViewModel.uiState.collectAsStateWithLifecycle()
     val theme by settingsViewModel.theme.collectAsStateWithLifecycle()
     val person by settingsViewModel.person.collectAsStateWithLifecycle()
+    val connected by settingsViewModel.connected.collectAsStateWithLifecycle()
     val renameError by settingsViewModel.renameError.collectAsStateWithLifecycle()
 
     // A sub-screen takes the whole display, same as an open chat does.
@@ -114,7 +115,9 @@ fun SettingsScreen(
             },
             theme = theme,
             person = person,
+            connected = connected,
             onSavePerson = settingsViewModel::savePerson,
+            onUseAsNodeName = settingsViewModel::useAsNodeName,
             onChooseIdentity = settingsViewModel::chooseIdentitySlot,
             onChooseTheme = settingsViewModel::chooseTheme,
             onOpen = { section = it },
@@ -141,7 +144,9 @@ private fun SettingsList(
     nodeSummary: String,
     theme: ThemeChoice,
     person: Person?,
+    connected: Boolean,
     onSavePerson: (String, String) -> Unit,
+    onUseAsNodeName: () -> Unit,
     onChooseIdentity: (Int?) -> Unit,
     onChooseTheme: (ThemeChoice) -> Unit,
     onOpen: (SettingsSection) -> Unit,
@@ -159,7 +164,9 @@ private fun SettingsList(
             SectionLabel("You")
             PersonFields(
                 person = person,
+                connected = connected,
                 onSave = onSavePerson,
+                onUseAsNodeName = onUseAsNodeName,
                 onChooseIdentity = onChooseIdentity,
             )
             HorizontalDivider()
@@ -241,7 +248,9 @@ private fun SettingsList(
 @Composable
 private fun PersonFields(
     person: Person?,
+    connected: Boolean,
     onSave: (String, String) -> Unit,
+    onUseAsNodeName: () -> Unit,
     onChooseIdentity: (Int?) -> Unit,
 ) {
     var pickingColour by remember { mutableStateOf(false) }
@@ -281,7 +290,7 @@ private fun PersonFields(
                     text = if (nameBytes > OwnerName.MAX_LONG_BYTES) {
                         "Longer than a mesh packet can carry by ${nameBytes - OwnerName.MAX_LONG_BYTES} bytes"
                     } else {
-                        "What you are called in chats and on the map"
+                        "How this phone refers to you. The mesh sees your device's name"
                     },
                     color = if (nameBytes > OwnerName.MAX_LONG_BYTES) {
                         FirepitTheme.colors.danger
@@ -351,7 +360,24 @@ private fun PersonFields(
             ) {
                 Text("Save")
             }
+            // Offered rather than done: this is the one action here that leaves
+            // the phone and reconfigures hardware.
+            TextButton(
+                onClick = onUseAsNodeName,
+                enabled = connected && person != null && !changed,
+            ) {
+                Text("Use on my radio")
+            }
         }
+        Text(
+            text = if (connected) {
+                "Others see your device's name, not this one. Copy it across if you want to match."
+            } else {
+                "Others see your device's name, not this one."
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = FirepitTheme.colors.textSecondary,
+        )
     }
 
     if (pickingColour) {

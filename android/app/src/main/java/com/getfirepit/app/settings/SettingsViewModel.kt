@@ -47,6 +47,17 @@ class SettingsViewModel @Inject constructor(
         _renameError.value = runCatching { people.save(name, tag) }.exceptionOrNull()?.message
     }
 
+    /**
+     * Copies your name onto the connected radio.
+     *
+     * The only name the protocol has is the node's, so this is the one way to
+     * be seen as yourself by people who are not running Firepit.
+     */
+    fun useAsNodeName() {
+        val person = people.person.value ?: return
+        renameNode(person.name, person.tag)
+    }
+
     fun renameNode(longName: String, shortName: String) {
         viewModelScope.launch {
             _renameError.value = runCatching { owners.rename(longName, shortName) }

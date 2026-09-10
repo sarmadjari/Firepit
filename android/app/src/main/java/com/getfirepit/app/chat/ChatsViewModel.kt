@@ -10,7 +10,9 @@ import com.getfirepit.core.database.markRead
 import com.getfirepit.core.database.observeMuted
 import com.getfirepit.core.database.setMuted
 import com.getfirepit.core.model.ChatMessage
+import com.getfirepit.app.settings.PersonStore
 import com.getfirepit.core.model.MeshNode
+import com.getfirepit.core.protocol.Person
 import com.getfirepit.core.model.RoomChannel
 import com.getfirepit.core.protocol.MeshConstants
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -45,6 +47,7 @@ data class ChatsUiState(
     val channelLoad: ChannelLoad? = null,
     /** Our own node, for the header's name and battery. */
     val myNode: MeshNode? = null,
+    val person: Person? = null,
     /** Newest message per channel, for the list previews. */
     val latest: Map<Int, ChatMessage> = emptyMap(),
     /** The person whose conversation is open, if it is a direct one. */
@@ -82,6 +85,7 @@ class ChatsViewModel @Inject constructor(
     private val repository: MeshRepository,
     private val channelState: ChannelStateDao,
     private val presence: ChatPresence,
+    private val people: PersonStore,
 ) : ViewModel() {
 
     private val selected = MutableStateFlow<Int?>(null)
@@ -134,32 +138,38 @@ class ChatsViewModel @Inject constructor(
         repository.channels,
         selected,
         messages,
-        combine(repository.observeNodes(), composing, readState) { nodes, composing, read ->
-            Triple(nodes, composing, read)
+        combine(
+            repository.observeNodes(),
+            composing,
+            readState,
+            people.person,
+        ) { nodes, composing, read, person ->
+            Self(nodes, composing, read, person)
         },
-    ) { connected, channels, selected, messages, (nodes, composing, read) ->
+    ) { connected, channels, selected, messages, self ->
         ChatsUiState(
             connected = connected,
             channels = channels,
             selected = selected,
             messages = messages,
-            nodes = nodes.associateBy(MeshNode::nodeNum),
-            myNode = nodes.firstOrNull { it.nodeNum == repository.myNodeNum.value },
-            latest = read.latest,
-            draft = composing.draft,
-            error = composing.error,
-            signingAvailable = composing.signingAvailable,
-            replyingTo = composing.replyingTo,
+            nodes = self.nodes.associateBy(MeshNode::nodeNum),
+            myNode = self.nodes.firstOrNull { it.nodeNum == repository.myNodeNum.value },
+            person = self.person,
+            latest = self.read.latest,
+            draft = self.composing.draft,
+            error = self.composing.error,
+            signingAvailable = self.composing.signingAvailable,
+            replyingTo = self.composing.replyingTo,
             // Re-read from the live list so status ticks keep updating while open.
-            inspecting = composing.inspecting?.let { open ->
+            inspecting = self.composing.inspecting?.let { open ->
                 messages.firstOrNull { it.id == open.id } ?: open
             },
-            unread = read.unread,
-            muted = read.muted,
-            query = read.query,
-            channelLoad = read.channelLoad,
-            directPeer = read.directPeer,
-            directLatest = read.directLatest,
+            unread = self.read.unread,
+            muted = self.read.muted,
+            query = self.read.query,
+            channelLoad = self.read.channelLoad,
+            directPeer = self.read.directPeer,
+            directLatest = self.read.directLatest,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatsUiState())
 
@@ -175,6 +185,14 @@ class ChatsViewModel @Inject constructor(
                 }
         }
     }
+
+    /** Combine takes five sources at most; these four travel together. */
+    private data class Self(
+        val nodes: List<MeshNode>,
+        val composing: Composing,
+        val read: ReadState,
+        val person: Person?,
+    )
 
     private data class Composing(
         val draft: String,

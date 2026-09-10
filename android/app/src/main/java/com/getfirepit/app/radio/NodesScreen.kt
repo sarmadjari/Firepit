@@ -32,6 +32,7 @@ import com.getfirepit.core.designsystem.component.IdentityAvatar
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 import com.getfirepit.core.model.MeshNode
+import com.getfirepit.core.protocol.KeyFingerprint
 import com.getfirepit.core.protocol.MeshConstants
 
 /** Everyone the mesh can currently see, and what is known about each of them. */
@@ -154,7 +155,7 @@ private fun NodeRow(
                 verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
             ) {
                 nodeFacts(node).forEach { (label, value) ->
-                    Field(label, value, monospace = label == "Node ID")
+                    Field(label, value, monospace = label in MONOSPACE)
                 }
             }
         }
@@ -182,6 +183,11 @@ private fun nodeFacts(node: MeshNode): List<Pair<String, String>> = buildList {
         node.groundTrack?.let { add("Heading" to "$it°") }
     }
     add("Encryption key" to if (node.publicKey.isNullOrBlank()) "Not shared" else "Shared")
+    // The only claim on a mesh that cannot be forged by typing a name.
+    KeyFingerprint.of(node.publicKey)?.let { add("Key fingerprint" to it) }
     if (node.isUnmessagable) add("Messages" to "Does not accept them")
     add("Last heard" to (node.lastHeard?.let { shortAge(it) } ?: "Not heard yet"))
 }
+
+/** Values meant to be compared character by character, not read as words. */
+private val MONOSPACE = setOf("Node ID", "Key fingerprint")

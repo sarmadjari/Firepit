@@ -95,6 +95,7 @@ import com.getfirepit.core.designsystem.theme.identityColorFor
 import com.getfirepit.core.model.ChannelRole
 import com.getfirepit.core.model.ChatMessage
 import com.getfirepit.core.model.MeshNode
+import com.getfirepit.core.protocol.Person
 import com.getfirepit.core.model.MessageStatus
 import com.getfirepit.core.model.RoomChannel
 import com.getfirepit.core.protocol.ChannelLoad
@@ -194,6 +195,7 @@ fun ChatsPane(
                     unread = state.unread,
                     muted = state.muted,
                     myNode = state.myNode,
+                    person = state.person,
                     myNodeNum = state.myNode?.nodeNum,
                     latest = state.latest,
                     directLatest = state.directLatest,
@@ -292,6 +294,7 @@ private fun ChannelList(
     unread: Map<Int, Int>,
     muted: Set<Int>,
     myNode: MeshNode?,
+    person: Person?,
     myNodeNum: Int?,
     latest: Map<Int, ChatMessage>,
     directLatest: List<ChatMessage>,
@@ -311,13 +314,13 @@ private fun ChannelList(
     Scaffold(
         topBar = {
             FirepitTopBar(
-                title = myNode?.displayName ?: "Firepit",
+                title = person?.name ?: myNode?.displayName ?: "Firepit",
                 leading = {
                     myNode?.let { node ->
                         IdentityAvatar(
                             nodeNum = node.nodeNum,
-                            tag = node.shortName,
-                            name = node.displayName,
+                            tag = person?.tag ?: node.shortName,
+                            name = person?.name ?: node.displayName,
                         )
                     }
                 },
