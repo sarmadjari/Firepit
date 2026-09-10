@@ -9,6 +9,8 @@ import com.getfirepit.core.protocol.MeshConstants
 import com.getfirepit.core.data.Owner
 import com.getfirepit.core.data.OwnerRepository
 import com.getfirepit.core.data.NodeAdminClient
+import com.getfirepit.core.protocol.BeaconRate
+import org.meshtastic.proto.Config
 import com.getfirepit.core.protocol.RelayReach
 import com.getfirepit.core.data.SessionStore
 import com.getfirepit.core.protocol.NodeRole
@@ -64,6 +66,8 @@ data class RadioUiState(
     val connectedTo: String? = null,
     /** Only known for the radio on the other end of the link. */
     val relayReach: RelayReach? = null,
+    val beaconRate: BeaconRate? = null,
+    val beaconWhenMoved: Boolean = false,
 )
 
 @HiltViewModel
@@ -109,6 +113,11 @@ class RadioViewModel @Inject constructor(
             relayReach = RelayReach.of(
                 (linkState as? LinkState.Ready)?.snapshot?.device?.rebroadcast_mode,
             ),
+            beaconRate = BeaconRate.of(
+                (linkState as? LinkState.Ready)?.snapshot?.position?.position_broadcast_secs,
+            ),
+            beaconWhenMoved =
+                (linkState as? LinkState.Ready)?.snapshot?.position?.position_broadcast_smart_enabled == true,
             // The radio actually on the other end of the link, which is not
             // necessarily the Personal one once Base stations are administered.
             connectedTo = (linkState as? LinkState.Ready)?.let { sessionStore.lastRadioId },
@@ -207,6 +216,23 @@ class RadioViewModel @Inject constructor(
 
     fun showOnMap(saved: SavedRadio, onMap: Boolean) =
         savedRadios.showOnMap(saved.identifier, onMap)
+
+    fun setBeaconRate(rate: BeaconRate) =
+        writePosition { it.copy(position_broadcast_secs = rate.seconds) }
+
+    fun setBeaconWhenMoved(enabled: Boolean) =
+        writePosition { it.copy(position_broadcast_smart_enabled = enabled) }
+
+    /** Built from what the radio reported, since the firmware replaces the section. */
+    private fun writePosition(change: (Config.PositionConfig) -> Config.PositionConfig) {
+        val position = (link.state.value as? LinkState.Ready)?.snapshot?.position ?: return
+        error.value = null
+        viewModelScope.launch {
+            runCatching { admin.setPositionConfig(change(position)) }
+                .exceptionOrNull()
+                ?.let { error.value = it.message }
+        }
+    }
 
     /**
      * Changes who the connected radio relays for.

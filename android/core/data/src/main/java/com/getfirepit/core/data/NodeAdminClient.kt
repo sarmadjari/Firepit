@@ -67,6 +67,11 @@ class NodeAdminClient @Inject constructor(
         send(AdminMessage(session_passkey = sessionPasskey(), set_config = Config(device = device)))
     }
 
+    /** Same whole-section replacement as [setDeviceConfig]. Expect a reboot. */
+    suspend fun setPositionConfig(position: Config.PositionConfig) {
+        send(AdminMessage(session_passkey = sessionPasskey(), set_config = Config(position = position)))
+    }
+
     /** Favourited nodes are never evicted from the radio's bounded NodeDB. */
     suspend fun setFavorite(nodeNum: Int) {
         send(AdminMessage(session_passkey = sessionPasskey(), set_favorite_node = nodeNum))
