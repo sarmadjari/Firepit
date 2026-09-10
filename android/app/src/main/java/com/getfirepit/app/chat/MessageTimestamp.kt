@@ -14,6 +14,17 @@ import java.time.format.DateTimeFormatter
  */
 object MessageTimestamp {
 
+    /**
+     * Bubble variant: the clock only.
+     *
+     * A day separator sits above every run of messages, so repeating the date
+     * in each bubble padded them out without telling the reader anything new.
+     */
+    fun bubbleFormat(epochMillis: Long, zone: ZoneId = ZoneId.systemDefault()): String {
+        val moment = Instant.ofEpochMilli(epochMillis).atZone(zone)
+        return "%02d:%02d".format(moment.hour, moment.minute)
+    }
+
     fun format(
         epochMillis: Long,
         today: LocalDate = LocalDate.now(),

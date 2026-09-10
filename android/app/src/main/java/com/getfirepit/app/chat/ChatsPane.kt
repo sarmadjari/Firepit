@@ -449,8 +449,14 @@ private fun ChannelRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            // A wash, not a slab: on a phone the row is left behind the moment
+            // it is tapped, so a strong highlight only flashes and distracts.
             .background(
-                if (selected) FirepitTheme.colors.bubbleOut else MaterialTheme.colorScheme.surface,
+                if (selected) {
+                    FirepitTheme.colors.bubbleOut.copy(alpha = 0.45f)
+                } else {
+                    MaterialTheme.colorScheme.surface
+                },
             )
             .combinedClickable(
                 onClick = onSelect,
@@ -559,9 +565,10 @@ private fun ChannelChat(
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
+                            modifier = Modifier.fillMaxWidth(),
                         ) {
                             RoomAvatar(RoomIcon.forRoomId(channel.id), size = 40.dp)
-                            Column {
+                            Column(Modifier.weight(1f)) {
                                 Text(
                                     text = channel.displayName,
                                     style = MaterialTheme.typography.titleLarge,
@@ -588,18 +595,27 @@ private fun ChannelChat(
                     onBack?.let { back -> BackButton(onClick = back) }
                 },
                 actions = {
-                    TextButton(
+                    IconButton(
                         onClick = {
                             searching = !searching
                             if (!searching) viewModel.updateQuery("")
                         },
-                    ) { Text(if (searching) "Done" else "Search") }
-                    if (!searching) {
-                        onShowMembers?.let { members ->
-                            TextButton(onClick = members) { Text("Members") }
-                        }
-                        onInvite?.let { invite ->
-                            TextButton(onClick = invite) { Text("Invite") }
+                    ) {
+                        Icon(
+                            painter = painterResource(
+                                if (searching) FirepitIcons.Close else FirepitIcons.Search,
+                            ),
+                            contentDescription = if (searching) "Close search" else "Search messages",
+                        )
+                    }
+                    // Room actions live in Room info, so the bar stays narrow
+                    // enough for the room's name and status to fit.
+                    if (!searching && onShowMembers != null) {
+                        IconButton(onClick = onShowMembers) {
+                            Icon(
+                                painter = painterResource(FirepitIcons.More),
+                                contentDescription = "Room info",
+                            )
                         }
                     }
                 },
@@ -638,7 +654,7 @@ private fun ChannelChat(
                             val parent = state.repliedTo(message)
                             MessageBubble(
                                 text = message.text,
-                                time = formatTime(message.rxTime ?: message.sentAt),
+                                time = MessageTimestamp.bubbleFormat(message.rxTime ?: message.sentAt),
                                 isOutgoing = message.isOutgoing,
                                 senderName = state.nodes[message.fromNodeNum]?.displayName,
                                 senderNodeNum = message.fromNodeNum,
@@ -831,9 +847,14 @@ private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
                 onClick = viewModel::send,
                 enabled = state.canSend,
                 shape = CircleShape,
+                modifier = Modifier.size(48.dp),
                 colors = IconButtonDefaults.filledIconButtonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
+                    // Dimmed rather than greyed: the send button should still
+                    // look like itself while the composer is empty.
+                    disabledContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.38f),
+                    disabledContentColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f),
                 ),
             ) {
                 Icon(

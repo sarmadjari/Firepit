@@ -122,36 +122,31 @@ fun MessageBubble(
 
             quoted?.let { QuotedBlock(it, dark, onQuoteClick) }
 
-            // Bottom-aligned so the timestamp sits on the last line of text
-            // rather than claiming a row of its own.
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+
+            // Its own line: sharing one with the text stretched short messages
+            // into a wide, cramped strip.
             Row(
-                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.align(Alignment.End),
             ) {
-                Text(
-                    text = text,
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(3.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(start = FirepitSpacing.s, bottom = 1.dp),
-                ) {
-                    footnote?.let {
-                        Text(
-                            text = it,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = FirepitTheme.colors.textSecondary,
-                        )
-                    }
+                footnote?.let {
                     Text(
-                        text = time,
+                        text = it,
                         style = MaterialTheme.typography.labelSmall,
                         color = FirepitTheme.colors.textSecondary,
                     )
-                    status?.let { StatusTick(it) }
                 }
+                Text(
+                    text = time,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = FirepitTheme.colors.textSecondary,
+                )
+                status?.let { StatusTick(it) }
             }
         }
     }
@@ -178,8 +173,9 @@ private fun QuotedBlock(quoted: QuotedMessage, dark: Boolean, onClick: (() -> Un
         modifier = Modifier
             .fillMaxWidth()
             .clip(QuoteShape)
-            // A wash of the sender's own colour, so the quote belongs to them.
-            .background(accent.copy(alpha = if (dark) 0.18f else 0.12f))
+            // Neutral wash, not the sender's hue: a full-strength identity
+            // colour behind the quote fought the bubble it sits inside.
+            .background(FirepitTheme.colors.textSecondary.copy(alpha = if (dark) 0.14f else 0.07f))
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .height(IntrinsicSize.Min),
     ) {

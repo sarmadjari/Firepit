@@ -2,8 +2,11 @@ package com.getfirepit.app.settings
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -27,6 +30,7 @@ import com.getfirepit.app.map.OfflineMapsScreen
 import com.getfirepit.app.map.PinsScreen
 import com.getfirepit.app.radio.RadioScreen
 import com.getfirepit.app.radio.RadioViewModel
+import com.getfirepit.core.designsystem.component.FirepitChip
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 import com.getfirepit.core.transport.LinkState
@@ -38,9 +42,11 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
     onImmersiveChange: (Boolean) -> Unit = {},
     radioViewModel: RadioViewModel = hiltViewModel(),
+    settingsViewModel: SettingsViewModel = hiltViewModel(),
 ) {
     var section by remember { mutableStateOf<SettingsSection?>(null) }
     val radioState by radioViewModel.uiState.collectAsStateWithLifecycle()
+    val theme by settingsViewModel.theme.collectAsStateWithLifecycle()
 
     // A sub-screen takes the whole display, same as an open chat does.
     LaunchedEffect(section) { onImmersiveChange(section != null) }
@@ -65,6 +71,8 @@ fun SettingsScreen(
         null -> SettingsList(
             modifier = modifier,
             nodeSummary = radioState.link.summary(),
+            theme = theme,
+            onChooseTheme = settingsViewModel::chooseTheme,
             onOpen = { section = it },
         )
     }
@@ -72,7 +80,13 @@ fun SettingsScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SettingsList(modifier: Modifier, nodeSummary: String, onOpen: (SettingsSection) -> Unit) {
+private fun SettingsList(
+    modifier: Modifier,
+    nodeSummary: String,
+    theme: ThemeChoice,
+    onChooseTheme: (ThemeChoice) -> Unit,
+    onOpen: (SettingsSection) -> Unit,
+) {
     Scaffold(
         modifier = modifier,
         topBar = { TopAppBar(title = { Text("Settings") }) },
@@ -103,6 +117,35 @@ private fun SettingsList(modifier: Modifier, nodeSummary: String, onOpen: (Setti
                 headlineContent = { Text("Dropped pins") },
                 supportingContent = { Text("Rename or delete the pins on your map") },
                 modifier = Modifier.clickable { onOpen(SettingsSection.PINS) },
+            )
+            HorizontalDivider()
+
+            SectionHeader("Appearance")
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        horizontal = FirepitSpacing.screenMargin,
+                        vertical = FirepitSpacing.s,
+                    ),
+                horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
+            ) {
+                ThemeChoice.entries.forEach { option ->
+                    FirepitChip(
+                        label = option.label,
+                        selected = theme == option,
+                        onClick = { onChooseTheme(option) },
+                    )
+                }
+            }
+            Text(
+                text = "Dark keeps a torch-lit camp readable and does not flare in your eyes at night.",
+                style = MaterialTheme.typography.bodySmall,
+                color = FirepitTheme.colors.textSecondary,
+                modifier = Modifier.padding(
+                    horizontal = FirepitSpacing.screenMargin,
+                    vertical = FirepitSpacing.xs,
+                ),
             )
             HorizontalDivider()
 

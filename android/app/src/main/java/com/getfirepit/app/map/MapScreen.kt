@@ -170,9 +170,15 @@ fun MapScreen(
 
             Column(
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(FirepitSpacing.m)
-                    .fillMaxWidth(),
+                    .align(Alignment.TopStart)
+                    .fillMaxWidth()
+                    // Stops short of the controls stacked in the top corner,
+                    // which were clipping the text.
+                    .padding(
+                        start = FirepitSpacing.m,
+                        top = FirepitSpacing.m,
+                        end = FirepitSpacing.m + CONTROL_SIZE + FirepitSpacing.s,
+                    ),
                 verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
             ) {
                 when {
