@@ -1,6 +1,5 @@
 package com.getfirepit.app.map
 
-import androidx.lifecycle.compose.LifecycleStartEffect
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
@@ -11,22 +10,33 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -41,11 +51,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.createBitmap
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.getfirepit.core.designsystem.component.BackButton
+import com.getfirepit.core.designsystem.component.FirepitIcons
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 import com.getfirepit.core.designsystem.theme.identityColorFor
@@ -64,6 +79,7 @@ import org.maplibre.android.plugins.annotation.SymbolOptions
 fun MapScreen(
     modifier: Modifier = Modifier,
     onBack: () -> Unit = {},
+    onOpenOfflineAreas: () -> Unit = {},
     viewModel: MapViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -132,19 +148,6 @@ fun MapScreen(
 
     Scaffold(
         modifier = modifier,
-        topBar = {
-            TopAppBar(
-                title = { Text("Map") },
-                navigationIcon = { BackButton(onClick = onBack) },
-            )
-        },
-        floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = { if (state.isSharing) viewModel.shareWith(null) else pickingRoom = true },
-                text = { Text(if (state.isSharing) "Stop sharing" else "Share location") },
-                icon = {},
-            )
-        },
     ) { padding ->
         Box(
             Modifier
@@ -196,6 +199,81 @@ fun MapScreen(
                 state.error?.let { MapNotice(it) }
                 if (state.markers.isNotEmpty() || state.pins.isNotEmpty()) {
                     MapNotice("Long-press the map to drop a pin.")
+                }
+            }
+
+            MapControl(
+                icon = FirepitIcons.Locate,
+                description = "Centre on everyone",
+                onClick = { markerLayer.frameAll(state.markers, force = true) },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(FirepitSpacing.m),
+            )
+            MapControl(
+                icon = FirepitIcons.Download,
+                description = "Offline areas",
+                onClick = onOpenOfflineAreas,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(
+                        top = FirepitSpacing.m + CONTROL_SIZE + FirepitSpacing.s,
+                        end = FirepitSpacing.m,
+                    ),
+            )
+
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
+            ) {
+                Button(
+                    onClick = {
+                        if (state.isSharing) viewModel.shareWith(null) else pickingRoom = true
+                    },
+                    shape = RoundedCornerShape(FirepitSpacing.cardCorner),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                    ),
+                    contentPadding = PaddingValues(
+                        horizontal = FirepitSpacing.xl,
+                        vertical = FirepitSpacing.m,
+                    ),
+                ) {
+                    Icon(
+                        painter = painterResource(FirepitIcons.Locate),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(FirepitSpacing.s))
+                    Text(
+                        text = if (state.isSharing) "Stop sharing" else "Share my location",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
+
+                Surface(
+                    color = FirepitTheme.colors.surface2,
+                    shape = RoundedCornerShape(
+                        topStart = FirepitSpacing.xl,
+                        topEnd = FirepitSpacing.xl,
+                        bottomStart = 0.dp,
+                        bottomEnd = 0.dp,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        text = mapTally(state),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = FirepitTheme.colors.textSecondary,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = FirepitSpacing.m),
+                    )
                 }
             }
         }
@@ -491,7 +569,7 @@ private class MarkerLayer {
     fun style(): Style? = map?.style
 
     /** Frames every marker once. Returns false when the map is not ready yet. */
-    fun frameAll(markers: List<MapMarker>): Boolean {
+    fun frameAll(markers: List<MapMarker>, force: Boolean = false): Boolean {
         val map = map ?: return false
         val points = markers.mapNotNull { marker ->
             val latitude = marker.node.latitude ?: return@mapNotNull null
@@ -508,6 +586,47 @@ private class MarkerLayer {
         return points.isNotEmpty()
     }
 }
+
+/** Round control that floats over the map, as on the mockup. */
+@Composable
+private fun MapControl(
+    @DrawableRes icon: Int,
+    description: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier.size(CONTROL_SIZE),
+        shape = CircleShape,
+        color = FirepitTheme.colors.surface2,
+        shadowElevation = 2.dp,
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                painter = painterResource(icon),
+                contentDescription = description,
+                tint = FirepitTheme.colors.textPrimary,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+    }
+}
+
+/** Counts what is actually on the map, so an empty map is not silently empty. */
+private fun mapTally(state: MapUiState): String {
+    val people = state.markers.count { !it.isSelf }
+    val live = state.markers.count { !it.isSelf && it.isLive }
+    return buildList {
+        add(if (people == 1) "1 person" else "$people people")
+        if (live > 0) add("$live live")
+        if (state.pins.isNotEmpty()) {
+            add(if (state.pins.size == 1) "1 pin" else "${state.pins.size} pins")
+        }
+    }.joinToString(" · ")
+}
+
+private val CONTROL_SIZE = 48.dp
 
 /**
  * A tag disc in the node's identity colour, ringed green while it is live, with

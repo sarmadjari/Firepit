@@ -150,6 +150,9 @@ fun ChatsPane(
                 roomName = current.roomName,
                 onBack = dismiss,
                 modifier = modifier,
+                muted = current.channelIndex in state.muted,
+                onInvite = { overlay = RoomsOverlay.Invite(current.roomId, current.roomName) },
+                onToggleMute = { viewModel.toggleMute(current.channelIndex) },
                 viewModel = roomsViewModel,
             )
         }
@@ -230,7 +233,7 @@ fun ChatsPane(
                             null
                         },
                         onShowMembers = if (channel.isRoom) {
-                            { overlay = RoomsOverlay.Members(channel.id, channel.displayName) }
+                            { overlay = RoomsOverlay.Members(channel.id, channel.displayName, channel.index) }
                         } else {
                             null
                         },
@@ -244,7 +247,7 @@ fun ChatsPane(
 /** Screens that take over the whole display rather than sitting in a pane. */
 private sealed interface RoomsOverlay {
     data class Invite(val roomId: Int, val roomName: String) : RoomsOverlay
-    data class Members(val roomId: Int, val roomName: String) : RoomsOverlay
+    data class Members(val roomId: Int, val roomName: String, val channelIndex: Int) : RoomsOverlay
     data object Join : RoomsOverlay
 }
 

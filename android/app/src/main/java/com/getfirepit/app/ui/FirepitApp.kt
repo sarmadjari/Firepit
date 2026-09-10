@@ -6,7 +6,10 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.material3.adaptive.navigationsuite.rememberNavigationSuiteScaffoldState
 import androidx.compose.runtime.Composable
@@ -21,6 +24,7 @@ import androidx.compose.ui.res.painterResource
 import com.getfirepit.app.chat.ChatsPane
 import com.getfirepit.app.map.MapScreen
 import com.getfirepit.app.settings.SettingsScreen
+import com.getfirepit.core.designsystem.theme.FirepitTheme
 
 /**
  * Top-level shell.
@@ -41,11 +45,10 @@ fun FirepitApp(modifier: Modifier = Modifier) {
     val keyboardOpen = WindowInsets.isImeVisible
     val suiteState = rememberNavigationSuiteScaffoldState()
 
-    // Reading and the map get the whole screen. Navigation would otherwise eat
-    // a strip of it, and while typing it would sit between the composer and the
-    // keyboard.
+    // Reading gets the whole screen. Navigation would otherwise eat a strip of
+    // it, and while typing it would sit between the composer and the keyboard.
+    // The map keeps the bar: it is a place you pass through, not one you read.
     val immersive = keyboardOpen ||
-        selected == TopLevelDestination.MAP ||
         (selected == TopLevelDestination.CHATS && chatOpen) ||
         (selected == TopLevelDestination.SETTINGS && settingsDetailOpen)
 
@@ -53,10 +56,15 @@ fun FirepitApp(modifier: Modifier = Modifier) {
         if (immersive) suiteState.hide() else suiteState.show()
     }
 
-    // Without the bar there is no visible way off the map, so back must work.
-    BackHandler(enabled = selected == TopLevelDestination.MAP) {
-        selected = TopLevelDestination.CHATS
-    }
+    val navigationColors = NavigationSuiteDefaults.itemColors(
+        navigationBarItemColors = NavigationBarItemDefaults.colors(
+            selectedIconColor = MaterialTheme.colorScheme.primary,
+            selectedTextColor = MaterialTheme.colorScheme.primary,
+            indicatorColor = FirepitTheme.colors.bubbleOut,
+            unselectedIconColor = FirepitTheme.colors.textSecondary,
+            unselectedTextColor = FirepitTheme.colors.textSecondary,
+        ),
+    )
 
     NavigationSuiteScaffold(
         // Lift the whole shell in one place. Padding for the keyboard deeper in
@@ -76,13 +84,17 @@ fun FirepitApp(modifier: Modifier = Modifier) {
                         )
                     },
                     label = { Text(destination.label) },
+                    colors = navigationColors,
                 )
             }
         },
     ) {
         when (selected) {
             TopLevelDestination.CHATS -> ChatsPane(onChatOpenChange = { chatOpen = it })
-            TopLevelDestination.MAP -> MapScreen(onBack = { selected = TopLevelDestination.CHATS })
+            TopLevelDestination.MAP -> MapScreen(
+                onBack = { selected = TopLevelDestination.CHATS },
+                onOpenOfflineAreas = { selected = TopLevelDestination.SETTINGS },
+            )
             TopLevelDestination.SETTINGS ->
                 SettingsScreen(onImmersiveChange = { settingsDetailOpen = it })
         }
