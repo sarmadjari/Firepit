@@ -2,6 +2,7 @@ package com.getfirepit.app.radio
 
 import android.content.Context
 import androidx.core.content.edit
+import com.getfirepit.core.protocol.DeviceTransport
 import com.getfirepit.core.protocol.NodeRole
 import com.getfirepit.core.protocol.SavedRadio
 import com.getfirepit.core.protocol.SavedRadios
@@ -31,8 +32,19 @@ class SavedRadioStore @Inject constructor(
 
     val personal: SavedRadio? get() = SavedRadios.personal(_radios.value)
 
-    fun assign(identifier: String, name: String, role: NodeRole) {
-        write(SavedRadios.assign(_radios.value, SavedRadio(identifier, name, role)))
+    fun assign(
+        identifier: String,
+        name: String,
+        role: NodeRole,
+        transport: DeviceTransport = DeviceTransport.BLUETOOTH,
+    ) {
+        val existing = _radios.value.firstOrNull { it.identifier == identifier }
+        write(
+            SavedRadios.assign(
+                _radios.value,
+                SavedRadio(identifier, name, role, existing?.transport ?: transport),
+            ),
+        )
     }
 
     fun forget(identifier: String) {
@@ -46,7 +58,8 @@ class SavedRadioStore @Inject constructor(
                 JSONObject()
                     .put(KEY_ID, radio.identifier)
                     .put(KEY_NAME, radio.name)
-                    .put(KEY_ROLE, radio.role.name),
+                    .put(KEY_ROLE, radio.role.name)
+                    .put(KEY_TRANSPORT, radio.transport.name),
             )
         }
         preferences.edit { putString(KEY_RADIOS, array.toString()) }
@@ -61,7 +74,11 @@ class SavedRadioStore @Inject constructor(
                 val item = array.getJSONObject(index)
                 val role = NodeRole.entries.firstOrNull { it.name == item.getString(KEY_ROLE) }
                     ?: return@mapNotNull null
-                SavedRadio(item.getString(KEY_ID), item.getString(KEY_NAME), role)
+                // Devices saved before transports were named were all Bluetooth.
+                val transport = DeviceTransport.entries
+                    .firstOrNull { it.name == item.optString(KEY_TRANSPORT) }
+                    ?: DeviceTransport.BLUETOOTH
+                SavedRadio(item.getString(KEY_ID), item.getString(KEY_NAME), role, transport)
             }
         }.getOrDefault(emptyList())
     }
@@ -71,5 +88,6 @@ class SavedRadioStore @Inject constructor(
         const val KEY_ID = "id"
         const val KEY_NAME = "name"
         const val KEY_ROLE = "role"
+        const val KEY_TRANSPORT = "transport"
     }
 }

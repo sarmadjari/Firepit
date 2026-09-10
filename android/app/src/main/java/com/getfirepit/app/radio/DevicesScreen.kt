@@ -30,6 +30,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Icon
+import androidx.compose.ui.res.painterResource
+import com.getfirepit.core.designsystem.component.FirepitIcons
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
@@ -46,14 +53,15 @@ import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 import com.getfirepit.core.model.MeshNode
 import com.getfirepit.core.protocol.MeshConstants
+import com.getfirepit.core.protocol.DeviceTransport
 import com.getfirepit.core.protocol.NodeRole
 import com.getfirepit.core.protocol.SavedRadio
 import com.getfirepit.core.transport.LinkState
 
-/** Connect a radio, and show what it and the mesh around it look like. */
+/** The Meshtastic devices this phone can talk to, and which one it is using. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RadioScreen(
+fun DevicesScreen(
     modifier: Modifier = Modifier,
     onBack: () -> Unit = {},
     viewModel: RadioViewModel = hiltViewModel(),
@@ -72,7 +80,7 @@ fun RadioScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            FirepitDetailBar(title = "Radio", onBack = onBack)
+            FirepitDetailBar(title = "Devices", onBack = onBack)
         },
     ) { padding ->
         Column(
@@ -96,7 +104,10 @@ fun RadioScreen(
             }
 
             val details = state.details
-            val savedSection: LazyListScope.() -> Unit = {
+            val nearby = state.found.filter { found ->
+                state.saved.none { it.identifier == found.identifier }
+            }
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s)) {
                 savedRadioSection(
                     saved = state.saved,
                     connectedTo = state.connectedTo,
@@ -104,63 +115,30 @@ fun RadioScreen(
                     onRole = viewModel::setRole,
                     onForget = viewModel::forget,
                 )
-            }
-            if (details == null) {
-                val nearby = state.found.filter { found ->
-                    state.saved.none { it.identifier == found.identifier }
+                if (nearby.isNotEmpty()) {
+                    item(key = "nearby-label") { SectionLabel("Nearby") }
                 }
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s)) {
-                    savedSection()
-                    if (nearby.isNotEmpty()) {
-                        item(key = "nearby-label") { SectionLabel("Nearby") }
-                    }
-                    items(nearby, key = { it.identifier }) { radio ->
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            onClick = { viewModel.connect(radio) },
-                        ) {
-                            Column(Modifier.padding(FirepitSpacing.m)) {
-                                Text(
-                                    text = radio.name ?: "(unnamed radio)",
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
-                                Text(
-                                    "${radio.identifier} · ${radio.rssi} dBm",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = FirepitTheme.colors.textSecondary,
-                                )
-                            }
+                items(nearby, key = { it.identifier }) { radio ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { viewModel.connect(radio) },
+                    ) {
+                        Column(Modifier.padding(FirepitSpacing.m)) {
+                            Text(
+                                text = radio.name ?: "(unnamed device)",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            Text(
+                                "${DeviceTransport.BLUETOOTH.label} · ${radio.identifier} · ${radio.rssi} dBm",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = FirepitTheme.colors.textSecondary,
+                            )
                         }
                     }
                 }
-            } else {
-                RadioDetailsView(
-                    details = details,
-                    state = state,
-                    onCheckPath = viewModel::checkPath,
-                    savedSection = savedSection,
-                )
+                if (details != null) connectedDeviceSection(details)
             }
         }
-    }
-
-    state.traceResult?.let { summary ->
-        AlertDialog(
-            onDismissRequest = viewModel::clearTrace,
-            title = { Text("Path check") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s)) {
-                    Text(summary, style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        "A path is not a delivery receipt. It shows the mesh could reach them " +
-                            "just now, not that anyone read anything.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = FirepitTheme.colors.textSecondary,
-                    )
-                }
-            },
-            confirmButton = { TextButton(onClick = viewModel::clearTrace) { Text("Close") } },
-        )
     }
 }
 
@@ -176,104 +154,38 @@ private fun LinkStatus(link: LinkState) {
     Text(label, color = color, style = MaterialTheme.typography.bodyMedium)
 }
 
-@Composable
-private fun RadioDetailsView(
-    details: RadioDetails,
-    state: RadioUiState,
-    onCheckPath: (MeshNode) -> Unit,
-    savedSection: LazyListScope.() -> Unit,
-) {
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
-        savedSection()
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
-                Field("Node", details.nodeId, monospace = true)
-                Field("Firmware", details.firmware)
-                Field("Hardware", prettyName(details.hardware))
-                Field("Region", details.region.replace('_', ' '))
-                Field("Encryption keys", if (details.capabilities.supportsPki) "Yes" else "No")
-                Field("Signed messages", if (details.capabilities.supportsSigning) "Yes" else "No")
-                HorizontalDivider(Modifier.padding(vertical = FirepitSpacing.s))
-                SectionLabel("Channels")
-            }
-        }
-        // Empty slots are the radio's business, not the reader's: six lines of
-        // DISABLED buried the two channels actually in use.
-        items(details.channels.filter { it.role != "DISABLED" }, key = { it.index }) { channel ->
-            Field(
-                "${channel.index}  ${channel.role.lowercase().replaceFirstChar(Char::uppercase)}",
-                channel.name,
-            )
-        }
-
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
-                HorizontalDivider(Modifier.padding(vertical = FirepitSpacing.s))
-                SectionLabel("Nodes (${state.nodes.size})")
-            }
-        }
-        items(state.nodes, key = { it.nodeNum }) { node ->
-            NodeRow(
-                node = node,
-                isSelf = node.nodeNum == state.myNodeNum,
-                tracing = state.tracing == node.nodeNum,
-                enabled = state.tracing == null,
-                onCheckPath = { onCheckPath(node) },
-            )
+private fun LazyListScope.connectedDeviceSection(details: RadioDetails) {
+    item(key = "connected-details") {
+        Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
+            SectionLabel("Connected device")
+            Field("Node", details.nodeId, monospace = true)
+            Field("Firmware", details.firmware)
+            Field("Hardware", prettyName(details.hardware))
+            Field("Region", details.region.replace('_', ' '))
+            Field("Encryption keys", if (details.capabilities.supportsPki) "Yes" else "No")
+            Field("Signed messages", if (details.capabilities.supportsSigning) "Yes" else "No")
+            HorizontalDivider(Modifier.padding(vertical = FirepitSpacing.s))
+            SectionLabel("Channels")
         }
     }
-}
-
-@Composable
-private fun NodeRow(
-    node: MeshNode,
-    isSelf: Boolean,
-    tracing: Boolean,
-    enabled: Boolean,
-    onCheckPath: () -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = FirepitSpacing.s),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
-    ) {
-        IdentityAvatar(
-            nodeNum = node.nodeNum,
-            tag = node.shortName,
-            name = node.displayName,
-            size = 36.dp,
+    // Empty slots are the radio's business, not the reader's: six lines of
+    // DISABLED buried the two channels actually in use.
+    items(details.channels.filter { it.role != "DISABLED" }, key = { it.index }) { channel ->
+        Field(
+            "${channel.index}  ${channel.role.lowercase().replaceFirstChar(Char::uppercase)}",
+            channel.name,
         )
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = if (isSelf) "${node.displayName} (this radio)" else node.displayName,
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = nodeDetail(node),
-                style = MaterialTheme.typography.bodySmall,
-                color = FirepitTheme.colors.textSecondary,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (!isSelf) {
-            TextButton(onClick = onCheckPath, enabled = enabled) {
-                Text(if (tracing) "…" else "Path")
-            }
-        }
     }
 }
 
 /** WISMESH_TAG reads as shouting; the radio's own name does not. */
-private fun prettyName(raw: String): String = raw
+fun prettyName(raw: String): String = raw
     .split('_')
     .filter { it.isNotBlank() }
     .joinToString(" ") { part -> part.lowercase().replaceFirstChar(Char::uppercase) }
 
 /** Nodes report their own last_heard and some have no clock, so an unheard node says so plainly. */
-private fun nodeDetail(node: MeshNode): String = buildList {
+fun nodeDetail(node: MeshNode): String = buildList {
     add(MeshConstants.formatNodeId(node.nodeNum))
     node.hopsAway?.let { add(if (it == 0) "direct" else "$it hops") }
     node.snr?.let { add("%.1f dB".format(it)) }
@@ -283,7 +195,7 @@ private fun nodeDetail(node: MeshNode): String = buildList {
 }.joinToString(" · ")
 
 /** Compact enough to sit on one line beside everything else. */
-private fun shortAge(epochMillis: Long): String {
+fun shortAge(epochMillis: Long): String {
     val minutes = (System.currentTimeMillis() - epochMillis) / 60_000
     return when {
         minutes < 1 -> "just now"
@@ -295,7 +207,7 @@ private fun shortAge(epochMillis: Long): String {
 }
 
 @Composable
-private fun Field(label: String, value: String, monospace: Boolean = false) {
+fun Field(label: String, value: String, monospace: Boolean = false) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -362,7 +274,11 @@ private fun SavedRadioRow(
     }
     Card(modifier = Modifier.fillMaxWidth(), onClick = onConnect) {
         Column(Modifier.padding(FirepitSpacing.m)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
+            ) {
+                RoleBadge(radio.role)
                 Text(
                     text = radio.name,
                     style = MaterialTheme.typography.titleMedium,
@@ -373,7 +289,11 @@ private fun SavedRadioRow(
                 TextButton(onClick = { confirming = true }) { Text("Forget") }
             }
             Text(
-                text = if (connected) "${radio.identifier} · Connected" else radio.identifier,
+                text = listOfNotNull(
+                    radio.transport.label,
+                    radio.identifier,
+                    "Connected".takeIf { connected },
+                ).joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall,
                 color = if (connected) {
                     FirepitTheme.colors.live
@@ -398,10 +318,10 @@ private fun SavedRadioRow(
 }
 
 /**
- * The radios this phone administers.
+ * The devices this phone administers.
  *
  * A [LazyListScope] extension rather than a composable so it can sit inside
- * either list, and stay visible while a radio is connected — roles are worth
+ * either list, and stay visible while a device is connected — roles are worth
  * changing most when you are standing next to the radio you just connected to.
  */
 private fun LazyListScope.savedRadioSection(
@@ -412,7 +332,7 @@ private fun LazyListScope.savedRadioSection(
     onForget: (SavedRadio) -> Unit,
 ) {
     if (saved.isEmpty()) return
-    item(key = "saved-label") { SectionLabel("Your radios") }
+    item(key = "saved-label") { SectionLabel("Your devices") }
     items(saved, key = { it.identifier }) { radio ->
         SavedRadioRow(
             radio = radio,
@@ -420,6 +340,35 @@ private fun LazyListScope.savedRadioSection(
             onConnect = { onConnect(radio) },
             onRole = { role -> onRole(radio, role) },
             onForget = { onForget(radio) },
+        )
+    }
+}
+
+/** What the device is for, at a glance, without reading all three chips. */
+@Composable
+private fun RoleBadge(role: NodeRole) {
+    val icon = when (role) {
+        NodeRole.PERSONAL -> FirepitIcons.RolePersonal
+        NodeRole.BASE -> FirepitIcons.RoleBase
+        NodeRole.ROUTER -> FirepitIcons.RoleRouter
+    }
+    // Infrastructure reads as infrastructure; the one you carry reads as you.
+    val tint = if (role == NodeRole.PERSONAL) {
+        FirepitTheme.colors.textPrimary
+    } else {
+        FirepitTheme.colors.infra
+    }
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .background(FirepitTheme.colors.surface2, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            painter = painterResource(icon),
+            contentDescription = role.label,
+            tint = tint,
+            modifier = Modifier.size(22.dp),
         )
     }
 }

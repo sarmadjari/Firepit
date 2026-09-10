@@ -723,8 +723,14 @@ private fun markerBitmap(marker: MapMarker, dark: Boolean): Bitmap {
             drawPath(path, arrow)
         }
     }
+    // Meshtastic allows four characters, and a tag cut to two makes SJ2 and SJ1
+    // the same node. Shrink to fit the disc instead of dropping what it says.
+    val tagText = marker.tag.uppercase()
+    val widest = radius * 1.55f
+    val measured = tag.measureText(tagText)
+    if (measured > widest) tag.textSize *= widest / measured
     canvas.drawText(
-        marker.tag.take(2).uppercase(),
+        tagText,
         centreX,
         centreY - (tag.descent() + tag.ascent()) / 2f,
         tag,

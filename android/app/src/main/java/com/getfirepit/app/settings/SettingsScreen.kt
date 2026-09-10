@@ -46,7 +46,8 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.getfirepit.app.map.OfflineMapsScreen
 import com.getfirepit.app.map.PinsScreen
-import com.getfirepit.app.radio.RadioScreen
+import com.getfirepit.app.radio.DevicesScreen
+import com.getfirepit.app.radio.NodesScreen
 import com.getfirepit.app.radio.RadioViewModel
 import com.getfirepit.core.data.Owner
 import com.getfirepit.core.designsystem.component.FirepitChip
@@ -62,7 +63,7 @@ import com.getfirepit.core.designsystem.theme.onIdentityColorFor
 import com.getfirepit.core.protocol.OwnerName
 import com.getfirepit.core.transport.LinkState
 
-private enum class SettingsSection { NODES, OFFLINE_MAPS, PINS }
+private enum class SettingsSection { DEVICES, NODES, OFFLINE_MAPS, PINS }
 
 @Composable
 fun SettingsScreen(
@@ -85,7 +86,13 @@ fun SettingsScreen(
     BackHandler(enabled = section != null) { section = null }
 
     when (section) {
-        SettingsSection.NODES -> RadioScreen(
+        SettingsSection.DEVICES -> DevicesScreen(
+            modifier = modifier.fillMaxSize(),
+            onBack = { section = null },
+            viewModel = radioViewModel,
+        )
+
+        SettingsSection.NODES -> NodesScreen(
             modifier = modifier.fillMaxSize(),
             onBack = { section = null },
             viewModel = radioViewModel,
@@ -103,7 +110,11 @@ fun SettingsScreen(
 
         null -> SettingsList(
             modifier = modifier,
-            nodeSummary = radioState.link.summary(),
+            deviceSummary = radioState.link.summary(),
+            nodeSummary = when {
+                radioState.nodes.isEmpty() -> "Nobody heard yet"
+                else -> "${radioState.nodes.size} heard on the mesh"
+            },
             theme = theme,
             owner = owner,
             connected = connected,
@@ -132,6 +143,7 @@ fun SettingsScreen(
 @Composable
 private fun SettingsList(
     modifier: Modifier,
+    deviceSummary: String,
     nodeSummary: String,
     theme: ThemeChoice,
     owner: Owner?,
@@ -165,6 +177,13 @@ private fun SettingsList(
             HorizontalDivider()
 
             SectionLabel("Radio")
+            ListItem(
+                headlineContent = { Text("Devices") },
+                supportingContent = { Text(deviceSummary) },
+                modifier = Modifier.clickable { onOpen(SettingsSection.DEVICES) },
+            )
+            HorizontalDivider()
+
             ListItem(
                 headlineContent = { Text("Nodes") },
                 supportingContent = { Text(nodeSummary) },

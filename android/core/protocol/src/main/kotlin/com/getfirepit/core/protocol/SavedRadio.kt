@@ -17,11 +17,25 @@ enum class NodeRole(val label: String) {
     ROUTER("Router"),
 }
 
+/**
+ * How the phone reaches a device.
+ *
+ * Meshtastic radios also speak over USB and over the network, but Firepit only
+ * carries a Bluetooth transport today; the others are named so a saved device
+ * survives the day one arrives.
+ */
+enum class DeviceTransport(val label: String) {
+    BLUETOOTH("Bluetooth"),
+    USB("USB"),
+    NETWORK("Wi-Fi"),
+}
+
 /** A radio this phone knows about. */
 data class SavedRadio(
     val identifier: String,
     val name: String,
     val role: NodeRole,
+    val transport: DeviceTransport = DeviceTransport.BLUETOOTH,
 )
 
 /**

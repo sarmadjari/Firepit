@@ -58,4 +58,10 @@ object FirepitIcons {
     @DrawableRes val Warning: Int = R.drawable.ic_warning
 
     @DrawableRes val Chevron: Int = R.drawable.ic_chevron
+
+    @DrawableRes val RolePersonal: Int = R.drawable.ic_role_personal
+
+    @DrawableRes val RoleBase: Int = R.drawable.ic_role_base
+
+    @DrawableRes val RoleRouter: Int = R.drawable.ic_role_router
 }
