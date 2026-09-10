@@ -1,36 +1,60 @@
 package com.getfirepit.core.designsystem.component
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
+import com.getfirepit.core.designsystem.theme.FirepitSpacing
 
 /**
  * The bar on a top-level tab: the name of the place, at headline size.
  *
- * Kept separate from [FirepitDetailBar] so the two read as different depths of
- * the same app rather than as two different apps.
+ * Takes an optional avatar and second line so a screen that is about a person
+ * can say who, in the same shape the chat header uses.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FirepitTopBar(
     title: String,
     modifier: Modifier = Modifier,
+    leading: @Composable (() -> Unit)? = null,
+    subtitle: @Composable (() -> Unit)? = null,
     actions: @Composable () -> Unit = {},
 ) {
     TopAppBar(
         modifier = modifier,
         title = {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.headlineLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                leading?.invoke()
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = title,
+                        // Smaller beside an avatar: the pair carries the weight
+                        // that the word alone had to carry by itself.
+                        style = if (leading == null) {
+                            MaterialTheme.typography.headlineLarge
+                        } else {
+                            MaterialTheme.typography.titleLarge
+                        },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    subtitle?.invoke()
+                }
+            }
         },
         actions = { actions() },
         colors = TopAppBarDefaults.topAppBarColors(

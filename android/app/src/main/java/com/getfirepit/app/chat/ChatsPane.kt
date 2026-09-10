@@ -307,7 +307,17 @@ private fun ChannelList(
     Scaffold(
         topBar = {
             FirepitTopBar(
-                title = "Firepit",
+                title = myNode?.displayName ?: "Firepit",
+                leading = {
+                    myNode?.let { node ->
+                        IdentityAvatar(
+                            nodeNum = node.nodeNum,
+                            tag = node.shortName,
+                            name = node.displayName,
+                        )
+                    }
+                },
+                subtitle = { NodeStatusLine(connected = connected, myNode = myNode) },
                 actions = {
                     IconButton(onClick = onSearch) {
                         Icon(painterResource(FirepitIcons.Search), contentDescription = "Search messages")
@@ -348,8 +358,6 @@ private fun ChannelList(
         },
     ) { padding ->
         Column(Modifier.padding(padding)) {
-            NodeStatusLine(connected = connected, myNode = myNode)
-
             Row(
                 modifier = Modifier.padding(
                     horizontal = FirepitSpacing.screenMargin,
@@ -521,31 +529,29 @@ private enum class ChannelFilter(val label: String) {
 @Composable
 private fun NodeStatusLine(connected: Boolean, myNode: MeshNode?) {
     Row(
-        modifier = Modifier.padding(horizontal = FirepitSpacing.screenMargin),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
+        horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
     ) {
         LiveRing(size = 8.dp, live = connected)
         Text(
             text = when {
                 !connected -> "Not connected — open Settings"
                 myNode == null -> "Connected"
-                // Who you are, then which radio is carrying you: the name is
-                // the person, the hardware is what they happen to be holding.
+                // The name above is the person; this says which radio is
+                // carrying them today.
                 else -> buildString {
-                    append(myNode.displayName)
-                    myNode.hwModel?.takeIf { it.isNotBlank() }?.let { model ->
-                        append("'s ")
-                        append(prettyHardware(model))
-                    }
+                    myNode.hwModel?.takeIf { it.isNotBlank() }?.let { append(prettyHardware(it)) }
                     myNode.batteryLevel?.let { level ->
-                        append(" · ")
+                        if (isNotEmpty()) append(" · ")
                         append(if (level > 100) "powered" else "$level%")
                     }
+                    if (isEmpty()) append("Connected")
                 }
             },
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodySmall,
             color = if (connected) FirepitTheme.colors.textSecondary else FirepitTheme.colors.stale,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
