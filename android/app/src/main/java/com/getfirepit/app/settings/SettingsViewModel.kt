@@ -22,12 +22,17 @@ class SettingsViewModel @Inject constructor(
     private val people: PersonStore,
     private val owners: OwnerRepository,
     private val retention: RetentionStore,
+    private val notifications: NotificationPreferences,
     mesh: MeshRepository,
 ) : ViewModel() {
 
     val theme: StateFlow<ThemeChoice> = themePreferences.choice
 
     val retentionChoice: StateFlow<MessageRetention> = retention.choice
+
+    val showMessageText: StateFlow<Boolean> = notifications.showText
+
+    fun setShowMessageText(show: Boolean) = notifications.setShowText(show)
 
     fun chooseRetention(choice: MessageRetention) {
         viewModelScope.launch { retention.choose(choice) }

@@ -49,6 +49,7 @@ import com.getfirepit.app.map.PinsScreen
 import com.getfirepit.app.radio.DevicesScreen
 import com.getfirepit.app.radio.NodesScreen
 import com.getfirepit.app.radio.RadioViewModel
+import androidx.compose.material3.Switch
 import com.getfirepit.core.designsystem.component.FirepitChip
 import com.getfirepit.core.designsystem.component.FirepitTopBar
 import com.getfirepit.core.designsystem.component.IdentityAvatar
@@ -79,6 +80,7 @@ fun SettingsScreen(
     val person by settingsViewModel.person.collectAsStateWithLifecycle()
     val connected by settingsViewModel.connected.collectAsStateWithLifecycle()
     val retention by settingsViewModel.retentionChoice.collectAsStateWithLifecycle()
+    val showMessageText by settingsViewModel.showMessageText.collectAsStateWithLifecycle()
     val renameError by settingsViewModel.renameError.collectAsStateWithLifecycle()
 
     // A sub-screen takes the whole display, same as an open chat does.
@@ -120,6 +122,8 @@ fun SettingsScreen(
             connected = connected,
             retention = retention,
             onChooseRetention = settingsViewModel::chooseRetention,
+            showMessageText = showMessageText,
+            onShowMessageText = settingsViewModel::setShowMessageText,
             onSavePerson = settingsViewModel::savePerson,
             onUseAsNodeName = settingsViewModel::useAsNodeName,
             onChooseIdentity = settingsViewModel::chooseIdentitySlot,
@@ -151,6 +155,8 @@ private fun SettingsList(
     connected: Boolean,
     retention: MessageRetention,
     onChooseRetention: (MessageRetention) -> Unit,
+    showMessageText: Boolean,
+    onShowMessageText: (Boolean) -> Unit,
     onSavePerson: (String, String) -> Unit,
     onUseAsNodeName: () -> Unit,
     onChooseIdentity: (Int?) -> Unit,
@@ -224,6 +230,23 @@ private fun SettingsList(
                             onClick = { onChooseRetention(choice) },
                         )
                     }
+                }
+                Row(
+                    modifier = Modifier.padding(top = FirepitSpacing.s).fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Show message text in notifications",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            text = "Off shows only who it is from",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = FirepitTheme.colors.textSecondary,
+                        )
+                    }
+                    Switch(checked = showMessageText, onCheckedChange = onShowMessageText)
                 }
                 Text(
                     text = "Older messages are always deleted from this phone — there is no " +

@@ -16,6 +16,7 @@ import androidx.core.content.getSystemService
 import com.getfirepit.app.MainActivity
 import com.getfirepit.app.R
 import com.getfirepit.core.data.ChatPresence
+import com.getfirepit.app.settings.NotificationPreferences
 import com.getfirepit.core.data.MeshRepository
 import com.getfirepit.core.database.ChannelStateDao
 import com.getfirepit.core.database.observeMuted
@@ -39,6 +40,7 @@ class MessageNotifier @Inject constructor(
     private val mesh: MeshRepository,
     private val channelState: ChannelStateDao,
     private val presence: ChatPresence,
+    private val notificationPreferences: NotificationPreferences,
     @param:com.getfirepit.core.data.ApplicationScope private val scope: CoroutineScope,
 ) {
 
@@ -68,11 +70,17 @@ class MessageNotifier @Inject constructor(
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
+        val showText = notificationPreferences.showText.value
+        val body = if (showText) message.text else "New message"
+
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_radio_notification)
             .setContentTitle(room?.let { "$name in $it" } ?: name)
-            .setContentText(message.text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(message.text))
+            .setContentText(body)
+            .apply { if (showText) setStyle(NotificationCompat.BigTextStyle().bigText(message.text)) }
+            // Even when the words are shown, they are held back from a locked
+            // screen: the phone's owner chose to show them, not a passer-by.
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setContentIntent(open)
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
