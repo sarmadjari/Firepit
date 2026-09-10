@@ -182,8 +182,9 @@ fun MapScreen(
                 verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
             ) {
                 when {
-                    // Ordered by what blocks the user soonest, so a fixable
-                    // problem is never hidden behind an informational one.
+                    // Only things the user can act on. Ordered by what blocks
+                    // them soonest, and at most one at a time: a map covered in
+                    // banners is a worse map, and a permanent tip is nagging.
                     locationDenied -> MapNotice(
                         "Location is off, so your own position cannot be shown. " +
                             "Turn it on in Android settings.",
@@ -195,17 +196,12 @@ fun MapScreen(
                             "Settings → Offline areas.",
                     )
 
-                    offlineOnly -> MapNotice("Offline maps only. Grey ground is not downloaded.")
-                    state.markers.none { it.isSelf } ->
-                        MapNotice("Waiting for a GPS fix for your own position.")
-
-                    state.markers.isEmpty() ->
-                        MapNotice("Nobody is sharing a position yet.")
+                    // Silence otherwise. Offline-only is a choice the user made
+                    // and the grey ground already shows it; a GPS fix arrives on
+                    // its own; and an empty map is described by the tally below.
+                    else -> Unit
                 }
                 state.error?.let { MapNotice(it) }
-                if (state.markers.isNotEmpty() || state.pins.isNotEmpty()) {
-                    MapNotice("Long-press the map to drop a pin.")
-                }
             }
 
             MapControl(
@@ -224,6 +220,18 @@ fun MapScreen(
                     .align(Alignment.TopEnd)
                     .padding(
                         top = FirepitSpacing.m + CONTROL_SIZE + FirepitSpacing.s,
+                        end = FirepitSpacing.m,
+                    ),
+            )
+
+            MapControl(
+                icon = FirepitIcons.Pin,
+                description = "Drop a pin here",
+                onClick = { markerLayer.centre()?.let { droppingAt = it } },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(
+                        top = FirepitSpacing.m + (CONTROL_SIZE + FirepitSpacing.s) * 2,
                         end = FirepitSpacing.m,
                     ),
             )
@@ -501,6 +509,9 @@ private class MarkerLayer {
     fun setOnPinClick(listener: (MapPin) -> Unit) {
         onPinClick = listener
     }
+
+    /** Where the camera is looking, for dropping a pin without a hidden gesture. */
+    fun centre(): LatLng? = map?.cameraPosition?.target
 
     fun attach(map: MapLibreMap, view: MapView) {
         val style: Style = map.style ?: return
