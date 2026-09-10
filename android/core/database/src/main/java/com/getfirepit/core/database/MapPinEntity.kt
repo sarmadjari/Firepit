@@ -19,6 +19,20 @@ data class MapPinEntity(
     val receivedAt: Long,
 )
 
+/**
+ * A pin we have deleted.
+ *
+ * The mesh has no delete, only expiry, and other nodes keep rebroadcasting what
+ * they hold. Without a record of what we removed, somebody else's copy would
+ * put the pin straight back on our map.
+ */
+@Entity(tableName = "deleted_pins")
+data class DeletedPinEntity(
+    @PrimaryKey val id: Int,
+    val channel: Int,
+    val deletedAt: Long,
+)
+
 internal fun MapPinEntity.toDomain() = MapPin(
     id = id,
     channel = channel,

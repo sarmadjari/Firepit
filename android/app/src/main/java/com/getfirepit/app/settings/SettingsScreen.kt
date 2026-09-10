@@ -24,13 +24,14 @@ import androidx.compose.ui.Modifier
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.getfirepit.app.map.OfflineMapsScreen
+import com.getfirepit.app.map.PinsScreen
 import com.getfirepit.app.radio.RadioScreen
 import com.getfirepit.app.radio.RadioViewModel
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 import com.getfirepit.core.transport.LinkState
 
-private enum class SettingsSection { NODES, OFFLINE_MAPS }
+private enum class SettingsSection { NODES, OFFLINE_MAPS, PINS }
 
 @Composable
 fun SettingsScreen(
@@ -52,6 +53,11 @@ fun SettingsScreen(
         )
 
         SettingsSection.OFFLINE_MAPS -> OfflineMapsScreen(
+            modifier = modifier,
+            onBack = { section = null },
+        )
+
+        SettingsSection.PINS -> PinsScreen(
             modifier = modifier,
             onBack = { section = null },
         )
@@ -90,6 +96,13 @@ private fun SettingsList(modifier: Modifier, nodeSummary: String, onOpen: (Setti
                 headlineContent = { Text("Offline areas") },
                 supportingContent = { Text("Download map tiles so the map works with no signal") },
                 modifier = Modifier.clickable { onOpen(SettingsSection.OFFLINE_MAPS) },
+            )
+            HorizontalDivider()
+
+            ListItem(
+                headlineContent = { Text("Dropped pins") },
+                supportingContent = { Text("Rename or delete the pins on your map") },
+                modifier = Modifier.clickable { onOpen(SettingsSection.PINS) },
             )
             HorizontalDivider()
 

@@ -1,6 +1,7 @@
 package com.getfirepit.core.data
 
 import android.util.Log
+import com.getfirepit.core.database.DeletedPinEntity
 import com.getfirepit.core.database.MapPinDao
 import com.getfirepit.core.database.observeLive
 import com.getfirepit.core.database.save
@@ -74,16 +75,47 @@ class WaypointRepository @Inject constructor(
     }
 
     /**
-     * Removes a pin everywhere by re-sending it already expired. Local state is
-     * cleared immediately so the map does not wait for our own broadcast.
+     * Renames a pin everywhere by re-broadcasting it under the same id.
+     *
+     * Other clients treat a waypoint with a known id as an edit, so this
+     * replaces rather than duplicates.
+     */
+    suspend fun rename(pin: MapPin, name: String) {
+        val myNodeNum = mesh.myNodeNum.value
+        require(pin.canEdit(myNodeNum)) { "This pin is locked to whoever placed it" }
+
+        val renamed = pin.copy(name = sanitizeMeshText(name).take(NAME_LIMIT))
+        pinDao.save(renamed)
+        broadcast(renamed.toWaypoint(), renamed.channel)
+        Log.i(TAG, "renamed pin ${pin.id}")
+    }
+
+    /**
+     * Removes a pin everywhere by re-sending it already expired.
+     *
+     * The broadcast goes first: deleting locally and then failing to send would
+     * leave the pin on every other device with no copy left here to expire it
+     * again. Sent more than once because a broadcast is unacknowledged, and
+     * this is the one message whose loss cannot be repaired later.
      */
     suspend fun remove(pin: MapPin) {
         val myNodeNum = mesh.myNodeNum.value
         require(pin.canEdit(myNodeNum)) { "This pin is locked to whoever placed it" }
 
+        val expired = pin.toWaypoint().copy(expire = EXPIRED)
+        broadcast(expired, pin.channel)
+
         pinDao.delete(pin.id)
-        broadcast(pin.toWaypoint().copy(expire = EXPIRED), pin.channel)
+        pinDao.remember(DeletedPinEntity(pin.id, pin.channel, System.currentTimeMillis()))
         Log.i(TAG, "removed pin ${pin.id}")
+
+        // Repeats run detached so the caller is not held for the pacer's sake.
+        scope.launch {
+            repeat(EXPIRY_REPEATS - 1) {
+                runCatching { broadcast(expired, pin.channel) }
+                    .onFailure { cause -> Log.w(TAG, "expiry repeat failed", cause) }
+            }
+        }
     }
 
     private suspend fun handleWaypoint(packet: MeshPacket) {
@@ -92,6 +124,18 @@ class WaypointRepository @Inject constructor(
         val latitude = waypoint.latitude_i ?: return
         val longitude = waypoint.longitude_i ?: return
         if (latitude == 0 && longitude == 0) return
+
+        // Somebody who missed our expiry is still holding this one. Take it off
+        // our map again and re-expire it, so the deletion keeps spreading.
+        if (pinDao.wasDeleted(waypoint.id)) {
+            Log.i(TAG, "ignoring resurrected pin ${waypoint.id} from ${packet.from}")
+            if (waypoint.expire.toLong() !in 1 until System.currentTimeMillis() / 1000L) {
+                scope.launch {
+                    runCatching { broadcast(waypoint.copy(expire = EXPIRED), packet.channel) }
+                }
+            }
+            return
+        }
 
         val pin = MapPin(
             id = waypoint.id,
@@ -117,16 +161,18 @@ class WaypointRepository @Inject constructor(
 
     private suspend fun broadcast(waypoint: Waypoint, channel: Int) {
         pacer.awaitSlot(PortNum.WAYPOINT_APP)
-        link.send(
-            ToRadio(
-                packet = MeshPacketBuilder.meshPacket(
-                    to = BROADCAST_NODE_NUM,
-                    channel = channel,
-                    portNum = PortNum.WAYPOINT_APP,
-                    payload = waypoint.encode().let(ByteString::of),
-                    wantAck = true,
-                ),
-            ),
+        val packet = MeshPacketBuilder.meshPacket(
+            to = BROADCAST_NODE_NUM,
+            channel = channel,
+            portNum = PortNum.WAYPOINT_APP,
+            payload = waypoint.encode().let(ByteString::of),
+            wantAck = true,
+        )
+        link.send(ToRadio(packet = packet))
+        Log.i(
+            TAG,
+            "sent waypoint ${waypoint.id} expire=${waypoint.expire} " +
+                "lockedTo=${waypoint.locked_to} channel=$channel packet=${packet.id}",
         )
     }
 
@@ -156,5 +202,8 @@ class WaypointRepository @Inject constructor(
 
         /** Epoch second 1: comfortably in the past, and not zero, which means "never". */
         const val EXPIRED = 1
+
+        /** Broadcasts are unacknowledged, so the deletion is simply said again. */
+        const val EXPIRY_REPEATS = 3
     }
 }

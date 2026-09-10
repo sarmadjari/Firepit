@@ -26,8 +26,9 @@ internal class Converters {
         RoomMemberEntity::class,
         ChannelStateEntity::class,
         MapPinEntity::class,
+        DeletedPinEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -140,9 +141,32 @@ abstract class FirepitDatabase : RoomDatabase() {
             }
         }
 
+        /** Remembers deleted pins so a rebroadcast cannot resurrect them. */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS deleted_pins (
+                        id INTEGER NOT NULL,
+                        channel INTEGER NOT NULL,
+                        deletedAt INTEGER NOT NULL,
+                        PRIMARY KEY(id)
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
         fun create(context: Context): FirepitDatabase =
             Room.databaseBuilder(context, FirepitDatabase::class.java, "firepit.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .addMigrations(
+                    MIGRATION_1_2,
+                    MIGRATION_2_3,
+                    MIGRATION_3_4,
+                    MIGRATION_4_5,
+                    MIGRATION_5_6,
+                    MIGRATION_6_7,
+                )
                 .build()
     }
 }

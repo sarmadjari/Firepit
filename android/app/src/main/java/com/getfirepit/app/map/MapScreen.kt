@@ -149,6 +149,7 @@ fun MapScreen(
                 modifier = Modifier.fillMaxSize(),
             ) { map, view ->
                 markerLayer.attach(map, view)
+                markerLayer.setOnPinClick { pin -> openPin = pin }
                 map.style?.let { coverageMask.apply(it, areas, offlineOnly) }
                 hasFramedMarkers = markerLayer.frameAll(state.markers)
                 map.addOnMapLongClickListener { point ->
@@ -299,7 +300,8 @@ private fun PinSheet(pin: MapPin, canRemove: Boolean, onRemove: () -> Unit, onDi
     }
 }
 
-private const val PIN_NAME_LIMIT = 30
+/** Proto limit on Waypoint.name. */
+internal const val PIN_NAME_LIMIT = 30
 
 private fun hasLocationPermission(context: Context): Boolean = listOf(
     Manifest.permission.ACCESS_FINE_LOCATION,
@@ -394,6 +396,14 @@ private class MarkerLayer {
     private var pins: List<MapPin> = emptyList()
     private var dark: Boolean = false
 
+    /** Symbol id to pin, so a tap on the map can be answered with the right one. */
+    private val pinsBySymbol = mutableMapOf<Long, MapPin>()
+    private var onPinClick: ((MapPin) -> Unit)? = null
+
+    fun setOnPinClick(listener: (MapPin) -> Unit) {
+        onPinClick = listener
+    }
+
     fun attach(map: MapLibreMap, view: MapView) {
         val style: Style = map.style ?: return
         this.map = map
@@ -404,6 +414,12 @@ private class MarkerLayer {
             // because the default stack has no glyphs on this style's server.
             iconAllowOverlap = true
             iconIgnorePlacement = true
+            addClickListener { symbol ->
+                pinsBySymbol[symbol.id]?.let { pin ->
+                    onPinClick?.invoke(pin)
+                    true
+                } ?: false
+            }
         }
         redraw()
     }
@@ -419,6 +435,7 @@ private class MarkerLayer {
         val manager = symbols ?: return
         val style = map?.style ?: return
         manager.deleteAll()
+        pinsBySymbol.clear()
 
         markers.forEach { marker ->
             val latitude = marker.node.latitude ?: return@forEach
@@ -438,7 +455,7 @@ private class MarkerLayer {
 
         pins.forEach { pin ->
             style.addImage(PIN_IMAGE, pinBitmap())
-            manager.create(
+            val symbol = manager.create(
                 SymbolOptions()
                     .withLatLng(LatLng(pin.latitude, pin.longitude))
                     .withIconImage(PIN_IMAGE)
@@ -447,6 +464,7 @@ private class MarkerLayer {
                     .withTextSize(11f)
                     .withTextFont(arrayOf(STYLE_FONT)),
             )
+            pinsBySymbol[symbol.id] = pin
         }
     }
 

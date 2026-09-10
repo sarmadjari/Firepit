@@ -111,6 +111,15 @@ interface MapPinDao {
 
     @Query("DELETE FROM map_pins WHERE id = :id")
     suspend fun delete(id: Int)
+
+    @Upsert
+    suspend fun remember(deleted: DeletedPinEntity)
+
+    @Query("SELECT EXISTS(SELECT 1 FROM deleted_pins WHERE id = :id)")
+    suspend fun wasDeleted(id: Int): Boolean
+
+    @Query("SELECT * FROM deleted_pins WHERE deletedAt > :since")
+    suspend fun recentlyDeleted(since: Long): List<DeletedPinEntity>
 }
 
 /** Expired pins are filtered in SQL so a stale one never reaches the map. */
