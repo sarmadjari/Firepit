@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.getfirepit.core.designsystem.component.BackButton
+import com.getfirepit.core.designsystem.component.FirepitDetailBar
 import com.getfirepit.core.designsystem.component.FirepitIcons
 import com.getfirepit.core.designsystem.component.IdentityAvatar
 import com.getfirepit.core.designsystem.component.RoomAvatar
@@ -70,10 +71,7 @@ fun RoomMembersScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            TopAppBar(
-                title = { Text("Room info") },
-                navigationIcon = { BackButton(onClick = onBack) },
-            )
+            FirepitDetailBar(title = "Room info", onBack = onBack)
         },
     ) { padding ->
         LazyColumn(

@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.getfirepit.core.designsystem.component.BackButton
+import com.getfirepit.core.designsystem.component.FirepitDetailBar
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 import java.text.DateFormat
@@ -62,10 +63,7 @@ fun OfflineMapsScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            TopAppBar(
-                title = { Text("Offline areas") },
-                navigationIcon = { BackButton(onClick = onBack) },
-            )
+            FirepitDetailBar(title = "Offline areas", onBack = onBack)
         },
     ) { padding ->
         Column(

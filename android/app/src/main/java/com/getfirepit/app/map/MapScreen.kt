@@ -605,7 +605,7 @@ private class MarkerLayer {
     }
 }
 
-/** Round control that floats over the map, as on the mockup. */
+/** Control that floats over the map, shaped like the app's other surfaces. */
 @Composable
 private fun MapControl(
     @DrawableRes icon: Int,
@@ -616,7 +616,7 @@ private fun MapControl(
     Surface(
         onClick = onClick,
         modifier = modifier.size(CONTROL_SIZE),
-        shape = CircleShape,
+        shape = RoundedCornerShape(FirepitSpacing.cardCorner),
         color = FirepitTheme.colors.surface2,
         shadowElevation = 2.dp,
     ) {

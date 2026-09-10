@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Upsert
+import com.getfirepit.core.model.BROADCAST_NODE_NUM
 import com.getfirepit.core.model.ChatMessage
 import com.getfirepit.core.model.MapPin
 import com.getfirepit.core.model.MeshNode
@@ -16,8 +17,27 @@ import kotlinx.coroutines.flow.map
 @Dao
 interface MessageDao {
 
-    @Query("SELECT * FROM messages WHERE channel = :channel ORDER BY sentAt ASC")
-    fun observeChannelEntities(channel: Int): Flow<List<MessageEntity>>
+    @Query(
+        "SELECT * FROM messages WHERE channel = :channel AND toNodeNum = :broadcast ORDER BY sentAt ASC",
+    )
+    fun observeChannelEntities(channel: Int, broadcast: Int): Flow<List<MessageEntity>>
+
+    /** One conversation with one person, whichever channel carried it. */
+    @Query(
+        "SELECT * FROM messages WHERE peerNodeNum = :peer AND toNodeNum != :broadcast ORDER BY sentAt ASC",
+    )
+    fun observeDirectEntities(peer: Int, broadcast: Int): Flow<List<MessageEntity>>
+
+    /** Newest message per person, for the Direct list. */
+    @Query(
+        """
+        SELECT * FROM messages WHERE id IN (
+            SELECT id FROM messages WHERE toNodeNum != :broadcast
+            GROUP BY peerNodeNum HAVING sentAt = MAX(sentAt)
+        )
+        """,
+    )
+    fun observeDirectLatest(broadcast: Int): Flow<List<MessageEntity>>
 
     @Query("SELECT * FROM messages WHERE id = :id")
     suspend fun findEntity(id: Int): MessageEntity?
@@ -44,17 +64,29 @@ interface MessageDao {
     @Query(
         """
         SELECT * FROM messages WHERE id IN (
-            SELECT id FROM messages GROUP BY channel HAVING sentAt = MAX(sentAt)
+            SELECT id FROM messages WHERE toNodeNum = :broadcast
+            GROUP BY channel HAVING sentAt = MAX(sentAt)
         )
         """,
     )
-    fun observeLatestPerChannel(): Flow<List<MessageEntity>>}
+    fun observeLatestPerChannel(broadcast: Int): Flow<List<MessageEntity>>}
 
+// A room shows what was said to the room. A message addressed to one person is
+// not part of it, and rendering it there would leak a private word into a group.
 fun MessageDao.observeChannel(channel: Int): Flow<List<ChatMessage>> =
-    observeChannelEntities(channel).map { entities -> entities.map(MessageEntity::toDomain) }
+    observeChannelEntities(channel, BROADCAST_NODE_NUM)
+        .map { entities -> entities.map(MessageEntity::toDomain) }
+
+fun MessageDao.observeDirect(peer: Int): Flow<List<ChatMessage>> =
+    observeDirectEntities(peer, BROADCAST_NODE_NUM)
+        .map { entities -> entities.map(MessageEntity::toDomain) }
+
+fun MessageDao.directLatest(): Flow<List<ChatMessage>> =
+    observeDirectLatest(BROADCAST_NODE_NUM)
+        .map { entities -> entities.map(MessageEntity::toDomain) }
 
 fun MessageDao.latestPerChannel(): Flow<List<ChatMessage>> =
-    observeLatestPerChannel().map { entities -> entities.map(MessageEntity::toDomain) }
+    observeLatestPerChannel(BROADCAST_NODE_NUM).map { entities -> entities.map(MessageEntity::toDomain) }
 
 @Dao
 interface NodeDao {

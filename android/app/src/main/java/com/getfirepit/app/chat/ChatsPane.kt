@@ -75,6 +75,8 @@ import com.getfirepit.core.designsystem.adaptive.foldAwarePaneDirective
 import com.getfirepit.core.designsystem.component.BackButton
 import com.getfirepit.core.designsystem.component.FirepitChip
 import com.getfirepit.core.designsystem.component.FirepitIcons
+import com.getfirepit.core.designsystem.component.FirepitTopBar
+import com.getfirepit.core.designsystem.component.IdentityAvatar
 import com.getfirepit.core.designsystem.component.LiveRing
 import com.getfirepit.core.designsystem.component.MessageBubble
 import com.getfirepit.core.designsystem.component.QuotedMessage
@@ -188,13 +190,20 @@ fun ChatsPane(
                     unread = state.unread,
                     muted = state.muted,
                     myNode = state.myNode,
+                    myNodeNum = state.myNode?.nodeNum,
                     latest = state.latest,
+                    directLatest = state.directLatest,
+                    directPeer = state.directPeer,
                     nodes = state.nodes,
                     onSelect = { index ->
                         viewModel.select(index)
                         scope.launch { navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, index) }
                     },
                     onToggleMute = viewModel::toggleMute,
+                    onOpenDirect = { peer ->
+                        viewModel.openDirect(peer)
+                        scope.launch { navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, peer) }
+                    },
                     onNewRoom = { showCreateDialog = true },
                     onJoinRoom = {
                         // A leftover "Created Camp" notice would otherwise close
@@ -215,18 +224,26 @@ fun ChatsPane(
         detailPane = {
             AnimatedPane {
                 val channel = state.selectedChannel
-                if (channel == null) {
-                    EmptyDetail()
+                val peer = state.directPeer
+                val back = if (chatCoversList) {
+                    { scope.launch { navigator.navigateBack() }; Unit }
                 } else {
-                    ChannelChat(
+                    null
+                }
+                when {
+                    peer != null -> DirectChat(
+                        state = state,
+                        peer = peer,
+                        viewModel = viewModel,
+                        onBack = back,
+                    )
+
+                    channel == null -> EmptyDetail()
+                    else -> ChannelChat(
                         state = state,
                         channel = channel,
                         viewModel = viewModel,
-                        onBack = if (chatCoversList) {
-                            { scope.launch { navigator.navigateBack() } }
-                        } else {
-                            null
-                        },
+                        onBack = back,
                         onInvite = if (channel.isRoom) {
                             { overlay = RoomsOverlay.Invite(channel.id, channel.displayName) }
                         } else {
@@ -271,9 +288,13 @@ private fun ChannelList(
     unread: Map<Int, Int>,
     muted: Set<Int>,
     myNode: MeshNode?,
+    myNodeNum: Int?,
     latest: Map<Int, ChatMessage>,
+    directLatest: List<ChatMessage>,
+    directPeer: Int?,
     nodes: Map<Int, MeshNode>,
     onSelect: (Int) -> Unit,
+    onOpenDirect: (Int) -> Unit,
     onToggleMute: (Int) -> Unit,
     onNewRoom: () -> Unit,
     onJoinRoom: () -> Unit,
@@ -285,8 +306,8 @@ private fun ChannelList(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Firepit", style = MaterialTheme.typography.headlineLarge) },
+            FirepitTopBar(
+                title = "Firepit",
                 actions = {
                     IconButton(onClick = onSearch) {
                         Icon(painterResource(FirepitIcons.Search), contentDescription = "Search messages")
@@ -314,9 +335,6 @@ private fun ChannelList(
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                ),
             )
         },
         floatingActionButton = {
@@ -367,47 +385,131 @@ private fun ChannelList(
 
             val visible = channels
                 .filter { it.role != ChannelRole.DISABLED }
-                .filter { filter == ChannelFilter.ALL || it.isRoom }
+                .filter { filter != ChannelFilter.ROOMS || it.isRoom }
+            val showRooms = filter != ChannelFilter.DIRECT
+            val showDirect = filter != ChannelFilter.ROOMS
 
-            if (visible.isEmpty()) {
+            if ((!showRooms || visible.isEmpty()) && (!showDirect || directLatest.isEmpty())) {
                 EmptyState(
-                    if (channels.none { it.role != ChannelRole.DISABLED }) {
-                        "No channels yet. Connect your node in Settings."
-                    } else {
-                        "No rooms yet. Create one with the + button."
+                    when {
+                        filter == ChannelFilter.DIRECT ->
+                            "No direct messages yet. Open a node from Settings → Radio to start one."
+                        channels.none { it.role != ChannelRole.DISABLED } ->
+                            "No channels yet. Connect your node in Settings."
+                        else -> "No rooms yet. Create one with the + button."
                     },
                 )
                 return@Column
             }
 
             LazyColumn {
-                items(visible, key = { it.index }) { channel ->
-                    ChannelRow(
-                        channel = channel,
-                        latest = latest[channel.index],
-                        senderName = latest[channel.index]?.let { message ->
-                            nodes[message.fromNodeNum]?.displayName
-                        },
-                        unread = unread[channel.index] ?: 0,
-                        muted = channel.index in muted,
-                        selected = channel.index == selected,
-                        onSelect = { onSelect(channel.index) },
-                        onToggleMute = { onToggleMute(channel.index) },
-                    )
-                    HorizontalDivider(
-                        color = FirepitTheme.colors.outline,
-                        modifier = Modifier.padding(start = 76.dp),
-                    )
+                if (showRooms) {
+                    items(visible, key = { "room-${it.index}" }) { channel ->
+                        ChannelRow(
+                            channel = channel,
+                            latest = latest[channel.index],
+                            senderName = latest[channel.index]?.let { message ->
+                                nodes[message.fromNodeNum]?.displayName
+                            },
+                            unread = unread[channel.index] ?: 0,
+                            muted = channel.index in muted,
+                            selected = channel.index == selected,
+                            onSelect = { onSelect(channel.index) },
+                            onToggleMute = { onToggleMute(channel.index) },
+                        )
+                        HorizontalDivider(
+                            color = FirepitTheme.colors.outline,
+                            modifier = Modifier.padding(start = 76.dp),
+                        )
+                    }
+                }
+
+                if (showDirect) {
+                    items(directLatest, key = { "direct-${it.peerOf(myNodeNum)}" }) { message ->
+                        val peer = message.peerOf(myNodeNum)
+                        DirectRow(
+                            peer = peer,
+                            node = nodes[peer],
+                            latest = message,
+                            selected = peer == directPeer,
+                            onSelect = { onOpenDirect(peer) },
+                        )
+                        HorizontalDivider(
+                            color = FirepitTheme.colors.outline,
+                            modifier = Modifier.padding(start = 76.dp),
+                        )
+                    }
                 }
             }
         }
     }
 }
 
-/** Rooms and the primary channel. Direct messages arrive in Stage 8. */
+/** Whoever is not us. Outgoing names the recipient, incoming names the sender. */
+private fun ChatMessage.peerOf(myNodeNum: Int?): Int =
+    if (isOutgoing || fromNodeNum == myNodeNum) toNodeNum else fromNodeNum
+
+@Composable
+private fun DirectRow(
+    peer: Int,
+    node: MeshNode?,
+    latest: ChatMessage,
+    selected: Boolean,
+    onSelect: () -> Unit,
+) {
+    val name = node?.displayName ?: MeshConstants.formatNodeId(peer)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                if (selected) {
+                    FirepitTheme.colors.bubbleOut.copy(alpha = 0.45f)
+                } else {
+                    MaterialTheme.colorScheme.surface
+                },
+            )
+            .clickable(onClick = onSelect)
+            .padding(horizontal = FirepitSpacing.screenMargin, vertical = FirepitSpacing.m),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
+    ) {
+        IdentityAvatar(nodeNum = peer, tag = node?.shortName, name = name)
+
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = name,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
+            ) {
+                if (latest.isOutgoing) StatusTick(latest.status)
+                Text(
+                    text = latest.text,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = FirepitTheme.colors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+
+        Text(
+            text = MessageTimestamp.listFormat(latest.sentAt),
+            style = MaterialTheme.typography.bodySmall,
+            color = FirepitTheme.colors.textSecondary,
+        )
+    }
+}
+
+/** Rooms, and one-to-one conversations. */
 private enum class ChannelFilter(val label: String) {
     ALL("All"),
     ROOMS("Rooms"),
+    DIRECT("Direct"),
 }
 
 /**
@@ -531,6 +633,122 @@ private fun ChannelRow(
                 // A muted room still counts unread; it just does not interrupt.
                 UnreadBadge(unread)
             }
+        }
+    }
+}
+
+/**
+ * One-to-one conversation.
+ *
+ * Shares the bubbles and composer with a room so a private word looks like a
+ * word, not a different product; the header names the person instead.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DirectChat(
+    state: ChatsUiState,
+    peer: Int,
+    viewModel: ChatsViewModel,
+    onBack: (() -> Unit)?,
+) {
+    val listState = rememberLazyListState()
+    val node = state.nodes[peer]
+    val name = node?.displayName ?: MeshConstants.formatNodeId(peer)
+
+    LaunchedEffect(state.messages.size) {
+        if (state.messages.isNotEmpty()) listState.animateScrollToItem(state.messages.lastIndex)
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        IdentityAvatar(
+                            nodeNum = peer,
+                            tag = node?.shortName,
+                            name = name,
+                            size = 40.dp,
+                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = name,
+                                style = MaterialTheme.typography.titleLarge,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = "Direct message",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = FirepitTheme.colors.textSecondary,
+                            )
+                        }
+                    }
+                },
+                navigationIcon = { onBack?.let { back -> BackButton(onClick = back) } },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
+            )
+        },
+    ) { padding ->
+        Column(
+            Modifier
+                .padding(padding)
+                .fillMaxSize(),
+        ) {
+            val items = remember(state.messages) { buildChatItems(state.messages) }
+
+            if (state.messages.isEmpty()) {
+                EmptyState("No messages with $name yet.")
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = FirepitSpacing.screenMargin),
+                ) {
+                    items(items, key = { it.key() }) { item ->
+                        when (item) {
+                            is ChatItem.Day -> SystemChip(
+                                text = item.label,
+                                modifier = Modifier.padding(vertical = FirepitSpacing.m),
+                            )
+                            is ChatItem.Bubble -> {
+                                val message = item.message
+                                MessageBubble(
+                                    text = message.text,
+                                    time = MessageTimestamp.bubbleFormat(message.rxTime ?: message.sentAt),
+                                    isOutgoing = message.isOutgoing,
+                                    senderName = null,
+                                    senderNodeNum = message.fromNodeNum,
+                                    status = message.status.takeIf { message.isOutgoing },
+                                    isFirstInGroup = item.isFirstInGroup,
+                                    isLastInGroup = item.isLastInGroup,
+                                    modifier = Modifier.padding(
+                                        top = if (item.isFirstInGroup) FirepitSpacing.s else 2.dp,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            state.error?.let { message ->
+                Text(
+                    text = message,
+                    color = FirepitTheme.colors.danger,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(horizontal = FirepitSpacing.screenMargin),
+                )
+            }
+
+            Composer(state = state, viewModel = viewModel)
         }
     }
 }

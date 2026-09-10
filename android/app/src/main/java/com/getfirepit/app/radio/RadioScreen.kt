@@ -34,7 +34,9 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.getfirepit.core.designsystem.component.BackButton
+import com.getfirepit.core.designsystem.component.FirepitDetailBar
 import com.getfirepit.core.designsystem.component.IdentityAvatar
+import com.getfirepit.core.designsystem.component.SectionLabel
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 import com.getfirepit.core.model.MeshNode
@@ -63,10 +65,7 @@ fun RadioScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            TopAppBar(
-                title = { Text("Radio") },
-                navigationIcon = { BackButton(onClick = onBack) },
-            )
+            FirepitDetailBar(title = "Radio", onBack = onBack)
         },
     ) { padding ->
         Column(
@@ -165,7 +164,7 @@ private fun RadioDetailsView(
                 Field("Encryption keys", if (details.capabilities.supportsPki) "Yes" else "No")
                 Field("Signed messages", if (details.capabilities.supportsSigning) "Yes" else "No")
                 HorizontalDivider(Modifier.padding(vertical = FirepitSpacing.s))
-                Text("Channels", style = MaterialTheme.typography.titleMedium)
+                SectionLabel("Channels")
             }
         }
         // Empty slots are the radio's business, not the reader's: six lines of
@@ -180,10 +179,7 @@ private fun RadioDetailsView(
         item {
             Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
                 HorizontalDivider(Modifier.padding(vertical = FirepitSpacing.s))
-                Text(
-                    "Nodes (${state.nodes.size})",
-                    style = MaterialTheme.typography.titleMedium,
-                )
+                SectionLabel("Nodes (${state.nodes.size})")
             }
         }
         items(state.nodes, key = { it.nodeNum }) { node ->

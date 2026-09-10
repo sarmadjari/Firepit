@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.getfirepit.core.designsystem.component.BackButton
+import com.getfirepit.core.designsystem.component.FirepitDetailBar
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 import com.getfirepit.core.model.MapPin
@@ -50,10 +51,7 @@ fun PinsScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            TopAppBar(
-                title = { Text("Dropped pins") },
-                navigationIcon = { BackButton(onClick = onBack) },
-            )
+            FirepitDetailBar(title = "Dropped pins", onBack = onBack)
         },
     ) { padding ->
         Column(

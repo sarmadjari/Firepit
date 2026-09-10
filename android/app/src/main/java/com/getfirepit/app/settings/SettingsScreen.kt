@@ -31,6 +31,8 @@ import com.getfirepit.app.map.PinsScreen
 import com.getfirepit.app.radio.RadioScreen
 import com.getfirepit.app.radio.RadioViewModel
 import com.getfirepit.core.designsystem.component.FirepitChip
+import com.getfirepit.core.designsystem.component.FirepitTopBar
+import com.getfirepit.core.designsystem.component.SectionLabel
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 import com.getfirepit.core.transport.LinkState
@@ -90,7 +92,7 @@ private fun SettingsList(
 ) {
     Scaffold(
         modifier = modifier,
-        topBar = { TopAppBar(title = { Text("Settings") }) },
+        topBar = { FirepitTopBar(title = "Settings") },
     ) { padding ->
         Column(
             Modifier
@@ -98,7 +100,7 @@ private fun SettingsList(
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState()),
         ) {
-            SectionHeader("Radio")
+            SectionLabel("Radio")
             ListItem(
                 headlineContent = { Text("Nodes") },
                 supportingContent = { Text(nodeSummary) },
@@ -106,7 +108,7 @@ private fun SettingsList(
             )
             HorizontalDivider()
 
-            SectionHeader("Map")
+            SectionLabel("Map")
             ListItem(
                 headlineContent = { Text("Offline areas") },
                 supportingContent = { Text("Download map tiles so the map works with no signal") },
@@ -121,7 +123,7 @@ private fun SettingsList(
             )
             HorizontalDivider()
 
-            SectionHeader("Appearance")
+            SectionLabel("Appearance")
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -150,27 +152,13 @@ private fun SettingsList(
             )
             HorizontalDivider()
 
-            SectionHeader("About")
+            SectionLabel("About")
             ListItem(
                 headlineContent = { Text("Firepit") },
                 supportingContent = { Text("Meshtastic chat, rooms and maps that work off-grid") },
             )
         }
     }
-}
-
-@Composable
-private fun SectionHeader(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelLarge,
-        color = FirepitTheme.colors.textSecondary,
-        modifier = Modifier.padding(
-            start = FirepitSpacing.screenMargin,
-            top = FirepitSpacing.l,
-            bottom = FirepitSpacing.xs,
-        ),
-    )
 }
 
 private fun LinkState.summary(): String = when (this) {

@@ -41,6 +41,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.getfirepit.core.crypto.InviteCodec
 import com.getfirepit.core.designsystem.component.BackButton
+import com.getfirepit.core.designsystem.component.FirepitDetailBar
 import com.getfirepit.core.designsystem.component.FirepitIcons
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
@@ -110,10 +111,7 @@ fun InviteScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            TopAppBar(
-                title = { Text("Invite to $roomName") },
-                navigationIcon = { BackButton(onClick = onBack) },
-            )
+            FirepitDetailBar(title = "Invite to $roomName", onBack = onBack)
         },
     ) { padding ->
         Column(
@@ -194,10 +192,7 @@ fun JoinRoomScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            TopAppBar(
-                title = { Text("Scan an invite") },
-                navigationIcon = { BackButton(onClick = onBack) },
-            )
+            FirepitDetailBar(title = "Scan an invite", onBack = onBack)
         },
     ) { padding ->
         Box(

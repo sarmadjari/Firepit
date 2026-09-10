@@ -1,18 +1,14 @@
 package com.getfirepit.core.data
 
-import com.getfirepit.core.database.latestPerChannel
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import org.meshtastic.proto.Telemetry
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.flatMapLatest
-import com.getfirepit.core.protocol.ChannelLoad
 import android.util.Log
 import com.getfirepit.core.database.MessageDao
 import com.getfirepit.core.database.NodeDao
+import com.getfirepit.core.database.directLatest
 import com.getfirepit.core.database.find
+import com.getfirepit.core.database.latestPerChannel
 import com.getfirepit.core.database.observeAll
 import com.getfirepit.core.database.observeChannel
+import com.getfirepit.core.database.observeDirect
 import com.getfirepit.core.database.save
 import com.getfirepit.core.database.saveIfNew
 import com.getfirepit.core.model.BROADCAST_NODE_NUM
@@ -21,6 +17,7 @@ import com.getfirepit.core.model.ChatMessage
 import com.getfirepit.core.model.MeshNode
 import com.getfirepit.core.model.MessageStatus
 import com.getfirepit.core.model.RoomChannel
+import com.getfirepit.core.protocol.ChannelLoad
 import com.getfirepit.core.protocol.MeshConstants
 import com.getfirepit.core.protocol.MeshPacketBuilder
 import com.getfirepit.core.protocol.MessageStatusRules
@@ -32,6 +29,7 @@ import com.getfirepit.core.transport.RadioLink
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -41,6 +39,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -57,6 +58,7 @@ import org.meshtastic.proto.PortNum
 import org.meshtastic.proto.Position
 import org.meshtastic.proto.QueueStatus
 import org.meshtastic.proto.Routing
+import org.meshtastic.proto.Telemetry
 import org.meshtastic.proto.ToRadio
 import org.meshtastic.proto.User
 
@@ -143,6 +145,12 @@ class MeshRepository @Inject constructor(
     /** Newest message per channel, for the chat list previews. */
     fun observeLatestPerChannel(): Flow<List<ChatMessage>> = messageDao.latestPerChannel()
 
+    /** One conversation with one person. */
+    fun observeDirect(peer: Int): Flow<List<ChatMessage>> = messageDao.observeDirect(peer)
+
+    /** Newest message per person, for the Direct list. */
+    fun observeDirectLatest(): Flow<List<ChatMessage>> = messageDao.directLatest()
+
     fun observeNodes(): Flow<List<MeshNode>> = nodeDao.observeAll()
 
     /** Starts the inbound pump. Safe to call once per process. */
@@ -180,7 +188,18 @@ class MeshRepository @Inject constructor(
         }
     }
 
-    suspend fun sendText(channel: Int, text: String, replyId: Int? = null) {
+    /**
+     * Sends text to a room, or to one person when [to] names them.
+     *
+     * A direct message still rides a channel: the index chooses the key the
+     * firmware encrypts it with, so it must be a channel both ends share.
+     */
+    suspend fun sendText(
+        channel: Int,
+        text: String,
+        replyId: Int? = null,
+        to: Int = BROADCAST_NODE_NUM,
+    ) {
         val myNodeNum = _myNodeNum.value ?: error("Not connected to a radio")
         val payload = text.encodeUtf8()
         require(payload.size <= MeshConstants.MAX_TEXT_BYTES) {
@@ -188,7 +207,7 @@ class MeshRepository @Inject constructor(
         }
 
         val packet = MeshPacketBuilder.meshPacket(
-            to = BROADCAST_NODE_NUM,
+            to = to,
             channel = channel,
             portNum = PortNum.TEXT_MESSAGE_APP,
             payload = payload,
@@ -204,7 +223,7 @@ class MeshRepository @Inject constructor(
                 id = packet.id,
                 channel = channel,
                 fromNodeNum = myNodeNum,
-                toNodeNum = BROADCAST_NODE_NUM,
+                toNodeNum = to,
                 text = text,
                 sentAt = System.currentTimeMillis(),
                 status = MessageStatus.QUEUED,

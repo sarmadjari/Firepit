@@ -47,6 +47,10 @@ data class ChatsUiState(
     val myNode: MeshNode? = null,
     /** Newest message per channel, for the list previews. */
     val latest: Map<Int, ChatMessage> = emptyMap(),
+    /** The person whose conversation is open, if it is a direct one. */
+    val directPeer: Int? = null,
+    /** Newest message per person, for the Direct list. */
+    val directLatest: List<ChatMessage> = emptyList(),
 ) {
     val selectedChannel: RoomChannel? get() = channels.firstOrNull { it.index == selected }
     val draftBytes: Int get() = draft.toByteArray(Charsets.UTF_8).size
@@ -81,15 +85,21 @@ class ChatsViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val selected = MutableStateFlow<Int?>(null)
+    private val directPeer = MutableStateFlow<Int?>(null)
     private val draft = MutableStateFlow("")
     private val error = MutableStateFlow<String?>(null)
     private val replyingTo = MutableStateFlow<ChatMessage?>(null)
     private val inspecting = MutableStateFlow<ChatMessage?>(null)
     private val query = MutableStateFlow("")
 
-    private val messages = selected.flatMapLatest { channel ->
-        if (channel == null) flowOf(emptyList()) else repository.observeChannel(channel)
-    }
+    private val messages = combine(selected, directPeer) { channel, peer -> channel to peer }
+        .flatMapLatest { (channel, peer) ->
+            when {
+                peer != null -> repository.observeDirect(peer)
+                channel != null -> repository.observeChannel(channel)
+                else -> flowOf(emptyList())
+            }
+        }
 
     // Grouped because combine only has typed overloads up to five flows; a
     // sixth silently degrades to Array<Any?>.
@@ -103,14 +113,19 @@ class ChatsViewModel @Inject constructor(
         channelState.observeMuted(),
         query,
         repository.channelLoad,
-        repository.observeLatestPerChannel(),
-    ) { unread, muted, query, load, latest ->
+        combine(repository.observeLatestPerChannel(), repository.observeDirectLatest(), directPeer) {
+                latest, direct, peer ->
+            Triple(latest, direct, peer)
+        },
+    ) { unread, muted, query, load, (latest, direct, peer) ->
         ReadState(
             unread = unread.associate { it.channel to it.count },
             muted = muted,
             query = query,
             channelLoad = load,
             latest = latest.associateBy { it.channel },
+            directLatest = direct.sortedByDescending { it.sentAt },
+            directPeer = peer,
         )
     }
 
@@ -143,6 +158,8 @@ class ChatsViewModel @Inject constructor(
             muted = read.muted,
             query = read.query,
             channelLoad = read.channelLoad,
+            directPeer = read.directPeer,
+            directLatest = read.directLatest,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatsUiState())
 
@@ -173,6 +190,8 @@ class ChatsViewModel @Inject constructor(
         val query: String,
         val channelLoad: ChannelLoad?,
         val latest: Map<Int, ChatMessage>,
+        val directLatest: List<ChatMessage>,
+        val directPeer: Int?,
     )
 
     fun updateQuery(text: String) {
@@ -187,11 +206,25 @@ class ChatsViewModel @Inject constructor(
 
     fun select(index: Int?) {
         selected.value = index
+        directPeer.value = null
+        clearComposing()
+        presence.setOpenChannel(index)
+    }
+
+    /** Opens the conversation with one person. */
+    fun openDirect(peer: Int) {
+        directPeer.value = peer
+        selected.value = null
+        clearComposing()
+        // Not a channel, so nothing to suppress notifications for by index.
+        presence.setOpenChannel(null)
+    }
+
+    private fun clearComposing() {
         error.value = null
         replyingTo.value = null
         inspecting.value = null
         query.value = ""
-        presence.setOpenChannel(index)
     }
 
     fun startReply(message: ChatMessage) {
@@ -214,15 +247,24 @@ class ChatsViewModel @Inject constructor(
     }
 
     fun send() {
-        val channel = selected.value ?: return
+        val peer = directPeer.value
+        val channel = selected.value
+        if (peer == null && channel == null) return
         val text = draft.value.trim()
         if (text.isEmpty()) return
         val replyId = replyingTo.value?.id
         draft.value = ""
         replyingTo.value = null
         viewModelScope.launch {
-            runCatching { repository.sendText(channel, text, replyId) }
-                .onFailure { cause -> error.value = cause.message ?: "Could not send" }
+            runCatching {
+                if (peer != null) {
+                    // The primary channel: the one every node on the mesh shares,
+                    // so a direct message can be decrypted at the far end.
+                    repository.sendText(channel = 0, text = text, replyId = replyId, to = peer)
+                } else {
+                    repository.sendText(channel = channel!!, text = text, replyId = replyId)
+                }
+            }.onFailure { cause -> error.value = cause.message ?: "Could not send" }
         }
     }
 }
