@@ -55,7 +55,9 @@ import com.getfirepit.core.designsystem.component.SectionLabel
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 import com.getfirepit.core.designsystem.theme.IDENTITY_CHOICES
+import com.getfirepit.core.designsystem.theme.identityColorFor
 import com.getfirepit.core.designsystem.theme.identityColorForSlot
+import com.getfirepit.core.designsystem.theme.onIdentityColorFor
 import com.getfirepit.core.protocol.OwnerName
 import com.getfirepit.core.transport.LinkState
 
@@ -155,12 +157,9 @@ private fun SettingsList(
                 owner = owner,
                 connected = connected,
                 onSave = onRename,
-            )
-            IdentityColourPicker(
                 nodeNum = myNodeNum,
-                tag = owner?.shortName,
-                chosen = identitySlot,
-                onChoose = onChooseIdentity,
+                identitySlot = identitySlot,
+                onChooseIdentity = onChooseIdentity,
             )
             HorizontalDivider()
 
@@ -236,7 +235,12 @@ private fun OwnerFields(
     owner: Owner?,
     connected: Boolean,
     onSave: (String, String) -> Unit,
+    nodeNum: Int?,
+    identitySlot: Int?,
+    onChooseIdentity: (Int?) -> Unit,
 ) {
+    val dark = FirepitTheme.colors.isDark
+    var pickingColour by remember { mutableStateOf(false) }
     var longName by rememberSaveable(owner) { mutableStateOf(owner?.longName.orEmpty()) }
     var shortName by rememberSaveable(owner) { mutableStateOf(owner?.shortName.orEmpty()) }
 
@@ -276,28 +280,51 @@ private fun OwnerFields(
             modifier = Modifier.fillMaxWidth(),
         )
 
-        OutlinedTextField(
-            value = shortName,
-            onValueChange = { shortName = it },
-            label = { Text("Short tag") },
-            singleLine = true,
-            enabled = connected,
-            supportingText = {
+        Row(
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
+        ) {
+            OutlinedTextField(
+                value = shortName,
+                onValueChange = { shortName = it },
+                label = { Text("Short tag") },
+                singleLine = true,
+                enabled = connected,
+                supportingText = {
+                    Text(
+                        text = if (shortBytes > OwnerName.MAX_SHORT_BYTES) {
+                            "The radio allows ${OwnerName.MAX_SHORT_BYTES} bytes"
+                        } else {
+                            "Up to ${OwnerName.MAX_SHORT_BYTES} characters, for avatars and map pins"
+                        },
+                        color = if (shortBytes > OwnerName.MAX_SHORT_BYTES) {
+                            FirepitTheme.colors.danger
+                        } else {
+                            FirepitTheme.colors.textSecondary
+                        },
+                    )
+                },
+                modifier = Modifier.weight(1f),
+            )
+
+            // Beside the tag because the two make one thing: the avatar.
+            Box(
+                modifier = Modifier
+                    .padding(top = FirepitSpacing.s)
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(identityColorFor(nodeNum ?: 0, dark, identitySlot))
+                    .clickable { pickingColour = true }
+                    .semantics { contentDescription = "Change your colour" },
+                contentAlignment = Alignment.Center,
+            ) {
                 Text(
-                    text = if (shortBytes > OwnerName.MAX_SHORT_BYTES) {
-                        "The radio allows ${OwnerName.MAX_SHORT_BYTES} bytes"
-                    } else {
-                        "Up to ${OwnerName.MAX_SHORT_BYTES} characters, for avatars and map pins"
-                    },
-                    color = if (shortBytes > OwnerName.MAX_SHORT_BYTES) {
-                        FirepitTheme.colors.danger
-                    } else {
-                        FirepitTheme.colors.textSecondary
-                    },
+                    text = shortName.take(2).ifBlank { "?" },
+                    color = onIdentityColorFor(nodeNum ?: 0, dark, identitySlot),
+                    style = MaterialTheme.typography.titleMedium,
                 )
-            },
-            modifier = Modifier.fillMaxWidth(),
-        )
+            }
+        }
 
         Row(horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s)) {
             Button(
@@ -321,6 +348,15 @@ private fun OwnerFields(
             )
         }
     }
+
+    if (pickingColour) {
+        IdentityColourDialog(
+            tag = shortName,
+            chosen = identitySlot,
+            onChoose = onChooseIdentity,
+            onDismiss = { pickingColour = false },
+        )
+    }
 }
 
 /**
@@ -329,77 +365,77 @@ private fun OwnerFields(
  * Only on this phone: the hue everyone else draws you in comes from your node
  * number, which is how every device agrees without asking each other.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun IdentityColourPicker(
-    nodeNum: Int?,
+private fun IdentityColourDialog(
     tag: String?,
     chosen: Int?,
     onChoose: (Int?) -> Unit,
+    onDismiss: () -> Unit,
 ) {
     val dark = FirepitTheme.colors.isDark
 
-    Column(
-        modifier = Modifier.padding(
-            horizontal = FirepitSpacing.screenMargin,
-            vertical = FirepitSpacing.s,
-        ),
-        verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
-    ) {
-        Text(
-            text = "Your colour",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
-            verticalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
-        ) {
-            IDENTITY_CHOICES.forEach { slot ->
-                val selected = slot == chosen
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(identityColorForSlot(slot, dark))
-                        .then(
-                            if (selected) {
-                                Modifier.border(3.dp, FirepitTheme.colors.textPrimary, CircleShape)
-                            } else {
-                                Modifier
-                            },
-                        )
-                        .clickable { onChoose(slot) }
-                        .semantics { contentDescription = "Colour ${slot + 1}" },
-                    contentAlignment = Alignment.Center,
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Your colour") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.m)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
+                    verticalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
                 ) {
-                    Text(
-                        text = tag?.take(2).orEmpty(),
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelMedium,
-                    )
+                    IDENTITY_CHOICES.forEach { slot ->
+                        val selected = slot == chosen
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(identityColorForSlot(slot, dark))
+                                .then(
+                                    if (selected) {
+                                        Modifier.border(3.dp, FirepitTheme.colors.textPrimary, CircleShape)
+                                    } else {
+                                        Modifier
+                                    },
+                                )
+                                .clickable {
+                                    onChoose(slot)
+                                    onDismiss()
+                                }
+                                .semantics { contentDescription = "Colour ${slot + 1}" },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = tag?.take(2).orEmpty(),
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        }
+                    }
+                }
+
+                Text(
+                    text = "Only you see this. Everyone else draws you in the colour from your " +
+                        "node number, which is how every device agrees without asking.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FirepitTheme.colors.textSecondary,
+                )
+            }
+        },
+        confirmButton = {
+            if (chosen != null) {
+                TextButton(
+                    onClick = {
+                        onChoose(null)
+                        onDismiss()
+                    },
+                ) {
+                    Text("Use my node's colour")
                 }
             }
-        }
-
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
-        ) {
-            Text(
-                text = if (chosen == null) {
-                    "Chosen from your node number"
-                } else {
-                    "Only you see this — others use the colour from your node number"
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = FirepitTheme.colors.textSecondary,
-                modifier = Modifier.weight(1f),
-            )
-            if (chosen != null && nodeNum != null) {
-                TextButton(onClick = { onChoose(null) }) { Text("Reset") }
-            }
-        }
-    }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
 }
 
 private fun LinkState.summary(): String = when (this) {
