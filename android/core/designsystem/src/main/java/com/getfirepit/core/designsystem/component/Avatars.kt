@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
+import com.getfirepit.core.designsystem.theme.LocalIdentitySlots
 import com.getfirepit.core.designsystem.theme.identityColorFor
 import com.getfirepit.core.designsystem.theme.onIdentityColorFor
 
@@ -36,20 +37,21 @@ fun IdentityAvatar(
     size: Dp = FirepitSpacing.avatarSize,
 ) {
     val dark = FirepitTheme.colors.isDark
+    val slot = LocalIdentitySlots.current[nodeNum]
     val label = tag?.takeIf { it.isNotBlank() } ?: "?"
 
     Box(
         modifier = modifier
             .size(size)
             .clip(CircleShape)
-            .background(identityColorFor(nodeNum, dark))
+            .background(identityColorFor(nodeNum, dark, slot))
             // The name is already read out by the row, so the tag would be noise.
             .clearAndSetSemantics { },
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
-            color = onIdentityColorFor(nodeNum, dark),
+            color = onIdentityColorFor(nodeNum, dark, slot),
             fontWeight = FontWeight.SemiBold,
             // Tags from other clients can be 3-4 characters; shrink rather than truncate.
             fontSize = if (label.length > 2) (size.value * 0.30f).sp else (size.value * 0.36f).sp,

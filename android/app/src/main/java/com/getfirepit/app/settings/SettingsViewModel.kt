@@ -17,13 +17,20 @@ import kotlinx.coroutines.launch
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val themePreferences: ThemePreferences,
+    private val identityPreferences: IdentityPreferences,
     private val owners: OwnerRepository,
     mesh: MeshRepository,
 ) : ViewModel() {
 
     val theme: StateFlow<ThemeChoice> = themePreferences.choice
 
+    val identitySlot: StateFlow<Int?> = identityPreferences.slot
+
+    val myNodeNum: StateFlow<Int?> = mesh.myNodeNum
+
     val connected: StateFlow<Boolean> = mesh.isConnected
+
+    fun chooseIdentitySlot(slot: Int?) = identityPreferences.choose(slot)
 
     val owner: StateFlow<Owner?> =
         owners.owner.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)

@@ -1,14 +1,21 @@
 package com.getfirepit.app.settings
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -28,7 +35,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.getfirepit.app.map.OfflineMapsScreen
@@ -41,6 +54,8 @@ import com.getfirepit.core.designsystem.component.FirepitTopBar
 import com.getfirepit.core.designsystem.component.SectionLabel
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
+import com.getfirepit.core.designsystem.theme.IDENTITY_CHOICES
+import com.getfirepit.core.designsystem.theme.identityColorForSlot
 import com.getfirepit.core.protocol.OwnerName
 import com.getfirepit.core.transport.LinkState
 
@@ -56,6 +71,8 @@ fun SettingsScreen(
     var section by remember { mutableStateOf<SettingsSection?>(null) }
     val radioState by radioViewModel.uiState.collectAsStateWithLifecycle()
     val theme by settingsViewModel.theme.collectAsStateWithLifecycle()
+    val identitySlot by settingsViewModel.identitySlot.collectAsStateWithLifecycle()
+    val myNodeNum by settingsViewModel.myNodeNum.collectAsStateWithLifecycle()
     val owner by settingsViewModel.owner.collectAsStateWithLifecycle()
     val connected by settingsViewModel.connected.collectAsStateWithLifecycle()
     val renameError by settingsViewModel.renameError.collectAsStateWithLifecycle()
@@ -88,6 +105,9 @@ fun SettingsScreen(
             owner = owner,
             connected = connected,
             onRename = settingsViewModel::rename,
+            identitySlot = identitySlot,
+            myNodeNum = myNodeNum,
+            onChooseIdentity = settingsViewModel::chooseIdentitySlot,
             onChooseTheme = settingsViewModel::chooseTheme,
             onOpen = { section = it },
         )
@@ -114,6 +134,9 @@ private fun SettingsList(
     owner: Owner?,
     connected: Boolean,
     onRename: (String, String) -> Unit,
+    identitySlot: Int?,
+    myNodeNum: Int?,
+    onChooseIdentity: (Int?) -> Unit,
     onChooseTheme: (ThemeChoice) -> Unit,
     onOpen: (SettingsSection) -> Unit,
 ) {
@@ -132,6 +155,12 @@ private fun SettingsList(
                 owner = owner,
                 connected = connected,
                 onSave = onRename,
+            )
+            IdentityColourPicker(
+                nodeNum = myNodeNum,
+                tag = owner?.shortName,
+                chosen = identitySlot,
+                onChoose = onChooseIdentity,
             )
             HorizontalDivider()
 
@@ -290,6 +319,85 @@ private fun OwnerFields(
                 style = MaterialTheme.typography.bodySmall,
                 color = FirepitTheme.colors.textSecondary,
             )
+        }
+    }
+}
+
+/**
+ * Your colour.
+ *
+ * Only on this phone: the hue everyone else draws you in comes from your node
+ * number, which is how every device agrees without asking each other.
+ */
+@Composable
+private fun IdentityColourPicker(
+    nodeNum: Int?,
+    tag: String?,
+    chosen: Int?,
+    onChoose: (Int?) -> Unit,
+) {
+    val dark = FirepitTheme.colors.isDark
+
+    Column(
+        modifier = Modifier.padding(
+            horizontal = FirepitSpacing.screenMargin,
+            vertical = FirepitSpacing.s,
+        ),
+        verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
+    ) {
+        Text(
+            text = "Your colour",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
+            verticalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
+        ) {
+            IDENTITY_CHOICES.forEach { slot ->
+                val selected = slot == chosen
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(identityColorForSlot(slot, dark))
+                        .then(
+                            if (selected) {
+                                Modifier.border(3.dp, FirepitTheme.colors.textPrimary, CircleShape)
+                            } else {
+                                Modifier
+                            },
+                        )
+                        .clickable { onChoose(slot) }
+                        .semantics { contentDescription = "Colour ${slot + 1}" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = tag?.take(2).orEmpty(),
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+            }
+        }
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
+        ) {
+            Text(
+                text = if (chosen == null) {
+                    "Chosen from your node number"
+                } else {
+                    "Only you see this — others use the colour from your node number"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = FirepitTheme.colors.textSecondary,
+                modifier = Modifier.weight(1f),
+            )
+            if (chosen != null && nodeNum != null) {
+                TextButton(onClick = { onChoose(null) }) { Text("Reset") }
+            }
         }
     }
 }
