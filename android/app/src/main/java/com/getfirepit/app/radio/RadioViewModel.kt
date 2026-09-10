@@ -10,6 +10,7 @@ import com.getfirepit.core.data.Owner
 import com.getfirepit.core.data.OwnerRepository
 import com.getfirepit.core.data.NodeAdminClient
 import com.getfirepit.core.protocol.BeaconRate
+import com.getfirepit.core.protocol.ChannelKey
 import org.meshtastic.proto.Config
 import com.getfirepit.core.protocol.RelayReach
 import com.getfirepit.core.data.SessionStore
@@ -36,7 +37,13 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
-data class ChannelRow(val index: Int, val role: String, val name: String, val precision: Int)
+data class ChannelRow(
+    val index: Int,
+    val role: String,
+    val name: String,
+    val precision: Int,
+    val key: ChannelKey,
+)
 
 data class RadioDetails(
     val nodeId: String,
@@ -286,6 +293,7 @@ private fun com.getfirepit.core.protocol.phoneapi.RadioSnapshot.toDetails() = Ra
             // the radio will actually use.
             name = channel.settings?.name?.ifBlank { "Default preset" } ?: "",
             precision = channel.settings?.module_settings?.position_precision ?: 0,
+            key = ChannelKey.of(channel.settings?.psk?.toByteArray()),
         )
     },
     knownNodes = nodes.size,

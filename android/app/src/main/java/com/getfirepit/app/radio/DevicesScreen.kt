@@ -578,6 +578,7 @@ private fun DeviceDetail(
                         )
                         RelayFields(
                             reach = state.relayReach,
+                            channels = details.channels,
                             onReach = viewModel::setRelayReach,
                         )
                         SectionLabel("About this device")
@@ -599,7 +600,7 @@ private fun DeviceDetail(
                 items(details.channels.filter { it.role != "DISABLED" }, key = { it.index }) { channel ->
                     Field(
                         "${channel.index}  ${channel.role.lowercase().replaceFirstChar(Char::uppercase)}",
-                        channel.name,
+                        "${channel.name} · ${channel.key.label}",
                     )
                 }
             }
@@ -609,7 +610,13 @@ private fun DeviceDetail(
 
 /** Who this radio will pass traffic on for. */
 @Composable
-private fun RelayFields(reach: RelayReach?, onReach: (RelayReach) -> Unit) {
+private fun RelayFields(
+    reach: RelayReach?,
+    channels: List<ChannelRow>,
+    onReach: (RelayReach) -> Unit,
+) {
+    val live = channels.filter { it.role != "DISABLED" }
+    val open = live.filterNot { it.key.isPrivate }
     Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
         SectionLabel("Relays for")
         Row(horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
@@ -625,16 +632,27 @@ private fun RelayFields(reach: RelayReach?, onReach: (RelayReach) -> Unit) {
             text = when (reach) {
                 null -> "Set to something Firepit does not offer. Either choice replaces it"
                 RelayReach.GROUP ->
-                    "Passes on only what it can decrypt, so strangers' traffic is ignored"
+                    "Your group is whoever holds the keys to this radio's channels"
                 RelayReach.EVERYONE -> "Carries traffic for any mesh on the same frequency"
             },
             style = MaterialTheme.typography.bodySmall,
             color = FirepitTheme.colors.textSecondary,
         )
+        // "My group only" filters by what the radio can decrypt, so a channel
+        // anyone can decrypt puts everyone inside the group.
+        if (reach == RelayReach.GROUP && open.isNotEmpty()) {
+            Text(
+                text = open.joinToString(", ") { it.name.ifBlank { "Channel ${it.index}" } } +
+                    if (open.size == 1) " is not private, so its traffic still counts as yours." else
+                        " are not private, so their traffic still counts as yours.",
+                style = MaterialTheme.typography.bodySmall,
+                color = FirepitTheme.colors.warn,
+            )
+        }
         Text(
             text = "Changing this restarts the radio.",
             style = MaterialTheme.typography.bodySmall,
-            color = FirepitTheme.colors.warn,
+            color = FirepitTheme.colors.textSecondary,
         )
         HorizontalDivider(Modifier.padding(vertical = FirepitSpacing.s))
     }
