@@ -36,6 +36,10 @@ data class MeshNode(
     val positionTime: Long? = null,
     /** Bits the sender truncated to; below 32 the point is an area, not a place. */
     val positionPrecision: Int? = null,
+    /** km/h, absent when the radio did not report movement. */
+    val groundSpeed: Int? = null,
+    /** True North course in hundredths of a degree. */
+    val groundTrack: Int? = null,
 ) {
     /** Display form used by every Meshtastic client. */
     val displayId: String get() = userId ?: "!%08x".format(nodeNum)

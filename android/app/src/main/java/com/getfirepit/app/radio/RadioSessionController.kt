@@ -35,7 +35,13 @@ class RadioSessionController @Inject constructor(
         sessionStore.lastRadioId = radio.identifier
         // Started first: the service must reach startForeground quickly, and
         // waiting on the connection would risk the system's start timeout.
-        RadioService.start(context)
+        //
+        // Android refuses a foreground service started from the background, and
+        // the reconnect scan can outlive the screen the user opened. Losing the
+        // service costs the link once the app is swiped away; crashing costs
+        // everything, so the connection goes ahead either way.
+        runCatching { RadioService.start(context) }
+            .onFailure { cause -> Log.w(TAG, "connected without the background service", cause) }
         link.connect(radio)
     }
 

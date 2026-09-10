@@ -103,7 +103,8 @@ interface NodeDao {
     @Query(
         """
         UPDATE nodes SET latitudeI = :latitudeI, longitudeI = :longitudeI, altitude = :altitude,
-        positionTime = :positionTime, positionPrecision = :positionPrecision
+        positionTime = :positionTime, positionPrecision = :positionPrecision,
+        groundSpeed = :groundSpeed, groundTrack = :groundTrack
         WHERE nodeNum = :nodeNum
         """,
     )
@@ -114,6 +115,8 @@ interface NodeDao {
         altitude: Int?,
         positionTime: Long?,
         positionPrecision: Int?,
+        groundSpeed: Int?,
+        groundTrack: Int?,
     )
 
     /**

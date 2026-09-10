@@ -7,6 +7,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Typeface
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -56,6 +57,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.createBitmap
+import androidx.core.graphics.withRotation
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -146,20 +148,15 @@ fun MapScreen(
         markerLayer.style()?.let { coverageMask.apply(it, areas, offlineOnly) }
     }
 
-    Scaffold(
-        modifier = modifier,
-    ) { padding ->
-        Box(
-            Modifier
-                .padding(padding)
-                .fillMaxSize(),
-        ) {
-            MapLibreView(
-                styleUrl = OPEN_FREE_MAP_STYLE,
-                modifier = Modifier.fillMaxSize(),
-            ) { map, view ->
-                markerLayer.attach(map, view)
-                markerLayer.setOnPinClick { pin -> openPin = pin }
+    // No Scaffold: the shell already inset this screen, and a second one added
+    // the status and navigation bars again, costing roughly 180dp of map.
+    Box(modifier.fillMaxSize()) {
+        MapLibreView(
+            styleUrl = OPEN_FREE_MAP_STYLE,
+            modifier = Modifier.fillMaxSize(),
+        ) { map, view ->
+            markerLayer.attach(map, view)
+            markerLayer.setOnPinClick { pin -> openPin = pin }
                 map.style?.let { coverageMask.apply(it, areas, offlineOnly) }
                 hasFramedMarkers = markerLayer.frameAll(state.markers)
                 map.addOnMapLongClickListener { point ->
@@ -292,7 +289,6 @@ fun MapScreen(
                 }
             }
         }
-    }
 
     if (pickingRoom) {
         ShareRoomDialog(
@@ -555,16 +551,7 @@ private class MarkerLayer {
             manager.create(
                 SymbolOptions()
                     .withLatLng(LatLng(latitude, longitude))
-                    .withIconImage(imageId)
-                    // The name is drawn into the bitmap, so no text layer here.
-                    .apply {
-                        if (marker.isSelf) {
-                            withTextField("You")
-                                .withTextOffset(arrayOf(0f, 1.6f))
-                                .withTextSize(11f)
-                                .withTextFont(arrayOf(STYLE_FONT))
-                        }
-                    },
+                    .withIconImage(imageId),
             )
         }
 
@@ -659,8 +646,6 @@ private val CONTROL_SIZE = 48.dp
  * is not findable at a glance.
  */
 private fun markerBitmap(marker: MapMarker, dark: Boolean): Bitmap {
-    if (marker.isSelf) return selfBitmap()
-
     val disc = 96
     val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = if (marker.isLive) {
@@ -694,9 +679,15 @@ private fun markerBitmap(marker: MapMarker, dark: Boolean): Bitmap {
         alpha = if (marker.isApproximate) 150 else 255
     }
     val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = if (marker.isLive) LIVE_RING else STALE_RING
+        // Your own disc is ringed blue, the colour every map uses for you, so it
+        // stays findable among a dozen discs that all look like this one.
+        color = when {
+            marker.isSelf -> SELF_RING
+            marker.isLive -> LIVE_RING
+            else -> STALE_RING
+        }
         style = Paint.Style.STROKE
-        strokeWidth = 7f
+        strokeWidth = if (marker.isSelf) 10f else 7f
     }
     val tag = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
@@ -708,6 +699,25 @@ private fun markerBitmap(marker: MapMarker, dark: Boolean): Bitmap {
     val radius = disc / 2f - 8f
     canvas.drawCircle(centreX, centreY, radius, fill)
     canvas.drawCircle(centreX, centreY, radius, ring)
+
+    // Which way they are going, when they are actually going somewhere. A
+    // parked node's last course is a memory, not a direction.
+    marker.course?.let { course ->
+        val arrow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = if (marker.isLive) LIVE_RING else STALE_RING
+            style = Paint.Style.FILL
+        }
+        canvas.withRotation(course, centreX, centreY) {
+            val tip = centreY - radius - 14f
+            val path = Path().apply {
+                moveTo(centreX, tip)
+                lineTo(centreX - 13f, tip + 20f)
+                lineTo(centreX + 13f, tip + 20f)
+                close()
+            }
+            drawPath(path, arrow)
+        }
+    }
     canvas.drawText(
         marker.tag.take(2).uppercase(),
         centreX,
@@ -739,6 +749,7 @@ private fun markerBitmap(marker: MapMarker, dark: Boolean): Bitmap {
 
 /** A stale marker names its age, because a position with no time is a guess presented as a fact. */
 private fun markerLabel(marker: MapMarker): String {
+    if (marker.isSelf) return "You"
     val name = marker.node.displayName
     if (marker.isLive) return name
     val heard = marker.node.lastHeard ?: return name
@@ -749,26 +760,6 @@ private fun markerLabel(marker: MapMarker): String {
         minutes < 60 * 24 -> "$name · ${minutes / 60}h"
         else -> "$name · ${minutes / (60 * 24)}d"
     }
-}
-
-/** The conventional you-are-here dot: solid fill, white collar, soft halo. */
-private fun selfBitmap(): Bitmap {
-    val size = 96
-    val bitmap = createBitmap(size, size)
-    val canvas = Canvas(bitmap)
-    val centre = size / 2f
-
-    val halo = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = SELF_COLOR
-        alpha = 60
-    }
-    val collar = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
-    val core = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = SELF_COLOR }
-
-    canvas.drawCircle(centre, centre, centre - 4f, halo)
-    canvas.drawCircle(centre, centre, centre * 0.52f, collar)
-    canvas.drawCircle(centre, centre, centre * 0.40f, core)
-    return bitmap
 }
 
 /** A teardrop in the warn colour, distinct from the round node discs. */
@@ -798,6 +789,7 @@ private fun pinBitmap(): Bitmap {
 internal const val OPEN_FREE_MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty"
 private const val LIVE_RING = 0xFF4ADE80.toInt()
 private const val STALE_RING = 0xFF8A8A8A.toInt()
+private const val SELF_RING = 0xFF1B73E8.toInt()
 
 // Ember surface-2 and text tokens, as ARGB for the Canvas that draws the pills.
 private const val LABEL_PILL_LIGHT = 0xFFFFFFFF.toInt()

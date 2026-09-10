@@ -107,6 +107,9 @@ class MeshRepository @Inject constructor(
             altitude = altitude,
             positionTime = timeMillis,
             positionPrecision = PositionPrecision.FULL,
+            // Our own fix comes from the phone, which reports neither.
+            groundSpeed = null,
+            groundTrack = null,
         )
     }
 
@@ -327,6 +330,8 @@ class MeshRepository @Inject constructor(
             altitude = position.altitude,
             positionTime = position.time.toLong().times(1_000).takeIf { position.time != 0 },
             positionPrecision = position.precision_bits.takeIf { it != 0 },
+            groundSpeed = position.ground_speed,
+            groundTrack = position.ground_track,
         )
     }
 

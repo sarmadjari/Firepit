@@ -29,6 +29,22 @@ data class MapMarker(
 
     /** Below 32 bits the sender truncated their fix, so this is an area. */
     val isApproximate: Boolean get() = (node.positionPrecision ?: 32) < 32
+
+    /**
+     * Degrees clockwise from north, or null when they are not going anywhere.
+     *
+     * Walking pace is about 5 km/h; below the threshold a GPS course is mostly
+     * the receiver wandering while still, which would spin the arrow.
+     */
+    val course: Float?
+        get() = node.groundTrack
+            ?.takeIf { (node.groundSpeed ?: 0) >= MOVING_KMH }
+            ?.let { it / 100f }
+            ?.takeIf { it in 0f..360f }
+
+    private companion object {
+        const val MOVING_KMH = 3
+    }
 }
 
 data class MapUiState(

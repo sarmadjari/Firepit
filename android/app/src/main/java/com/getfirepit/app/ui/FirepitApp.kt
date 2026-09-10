@@ -1,19 +1,27 @@
 package com.getfirepit.app.ui
 
-import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.NavigationItemColors
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationRailItemDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ShortNavigationBar
+import androidx.compose.material3.ShortNavigationBarItem
 import androidx.compose.material3.Text
-import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteDefaults
-import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
-import androidx.compose.material3.adaptive.navigationsuite.rememberNavigationSuiteScaffoldState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -21,17 +29,21 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
+import androidx.window.core.layout.WindowSizeClass
 import com.getfirepit.app.chat.ChatsPane
 import com.getfirepit.app.map.MapScreen
 import com.getfirepit.app.settings.SettingsScreen
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfoV2
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 
 /**
  * Top-level shell.
  *
- * The navigation suite picks a bottom bar, rail or drawer from the window size
- * on its own, so folding the device relocates the navigation without any screen
- * being aware of it.
+ * Chooses a bottom bar or a rail from the window width, so folding the device
+ * relocates the navigation without any screen being aware of it. The bar is
+ * Material's short one: the tall variant spends 80dp of a phone screen on three
+ * words.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -43,7 +55,6 @@ fun FirepitApp(modifier: Modifier = Modifier) {
     var settingsDetailOpen by remember { mutableStateOf(false) }
 
     val keyboardOpen = WindowInsets.isImeVisible
-    val suiteState = rememberNavigationSuiteScaffoldState()
 
     // Reading gets the whole screen. Navigation would otherwise eat a strip of
     // it, and while typing it would sit between the composer and the keyboard.
@@ -52,43 +63,20 @@ fun FirepitApp(modifier: Modifier = Modifier) {
         (selected == TopLevelDestination.CHATS && chatOpen) ||
         (selected == TopLevelDestination.SETTINGS && settingsDetailOpen)
 
-    LaunchedEffect(immersive) {
-        if (immersive) suiteState.hide() else suiteState.show()
-    }
+    val wideEnoughForRail = currentWindowAdaptiveInfoV2().windowSizeClass
+        .isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND)
 
-    val navigationColors = NavigationSuiteDefaults.itemColors(
-        navigationBarItemColors = NavigationBarItemDefaults.colors(
-            selectedIconColor = MaterialTheme.colorScheme.primary,
-            selectedTextColor = MaterialTheme.colorScheme.primary,
-            indicatorColor = FirepitTheme.colors.bubbleOut,
-            unselectedIconColor = FirepitTheme.colors.textSecondary,
-            unselectedTextColor = FirepitTheme.colors.textSecondary,
-        ),
+    val itemColors = NavigationItemColors(
+        selectedIconColor = MaterialTheme.colorScheme.primary,
+        selectedTextColor = MaterialTheme.colorScheme.primary,
+        selectedIndicatorColor = FirepitTheme.colors.bubbleOut,
+        unselectedIconColor = FirepitTheme.colors.textSecondary,
+        unselectedTextColor = FirepitTheme.colors.textSecondary,
+        disabledIconColor = FirepitTheme.colors.stale,
+        disabledTextColor = FirepitTheme.colors.stale,
     )
 
-    NavigationSuiteScaffold(
-        // Lift the whole shell in one place. Padding for the keyboard deeper in
-        // the tree would stack with the space the navigation bar reserves.
-        modifier = modifier.imePadding(),
-        state = suiteState,
-        navigationSuiteItems = {
-            TopLevelDestination.entries.forEach { destination ->
-                item(
-                    selected = selected == destination,
-                    onClick = { selected = destination },
-                    icon = {
-                        Icon(
-                            painter = painterResource(destination.icon),
-                            // The item's own label already announces it.
-                            contentDescription = null,
-                        )
-                    },
-                    label = { Text(destination.label) },
-                    colors = navigationColors,
-                )
-            }
-        },
-    ) {
+    val screen: @Composable () -> Unit = {
         when (selected) {
             TopLevelDestination.CHATS -> ChatsPane(onChatOpenChange = { chatOpen = it })
             TopLevelDestination.MAP -> MapScreen(
@@ -99,4 +87,67 @@ fun FirepitApp(modifier: Modifier = Modifier) {
                 SettingsScreen(onImmersiveChange = { settingsDetailOpen = it })
         }
     }
+
+    if (wideEnoughForRail) {
+        Row(modifier.imePadding()) {
+            if (!immersive) {
+                NavigationRail(containerColor = MaterialTheme.colorScheme.surface) {
+                    TopLevelDestination.entries.forEach { destination ->
+                        NavigationRailItem(
+                            selected = selected == destination,
+                            onClick = { selected = destination },
+                            icon = { DestinationIcon(destination) },
+                            label = { Text(destination.label) },
+                            colors = NavigationRailItemDefaults.colors(
+                                selectedIconColor = MaterialTheme.colorScheme.primary,
+                                selectedTextColor = MaterialTheme.colorScheme.primary,
+                                indicatorColor = FirepitTheme.colors.bubbleOut,
+                                unselectedIconColor = FirepitTheme.colors.textSecondary,
+                                unselectedTextColor = FirepitTheme.colors.textSecondary,
+                            ),
+                        )
+                    }
+                }
+            }
+            Box(Modifier.weight(1f)) { screen() }
+        }
+    } else {
+        Scaffold(
+            // Lift the whole shell in one place. Padding for the keyboard deeper
+            // in the tree would stack with the space the bar reserves.
+            modifier = modifier.imePadding(),
+            containerColor = MaterialTheme.colorScheme.surface,
+            bottomBar = {
+                AnimatedVisibility(
+                    visible = !immersive,
+                    enter = expandVertically(),
+                    exit = shrinkVertically(),
+                ) {
+                    ShortNavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                        TopLevelDestination.entries.forEach { destination ->
+                            ShortNavigationBarItem(
+                                selected = selected == destination,
+                                onClick = { selected = destination },
+                                icon = { DestinationIcon(destination) },
+                                label = { Text(destination.label) },
+                                colors = itemColors,
+                            )
+                        }
+                    }
+                }
+            },
+        ) { padding ->
+            Box(Modifier.padding(padding)) { screen() }
+        }
+    }
+}
+
+@Composable
+private fun DestinationIcon(destination: TopLevelDestination) {
+    Icon(
+        painter = painterResource(destination.icon),
+        // The item's own label already announces it.
+        contentDescription = null,
+        modifier = Modifier.size(22.dp),
+    )
 }

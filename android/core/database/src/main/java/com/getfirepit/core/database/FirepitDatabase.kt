@@ -28,7 +28,7 @@ internal class Converters {
         MapPinEntity::class,
         DeletedPinEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -142,6 +142,13 @@ abstract class FirepitDatabase : RoomDatabase() {
         }
 
         /** Remembers deleted pins so a rebroadcast cannot resurrect them. */
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL("ALTER TABLE nodes ADD COLUMN groundSpeed INTEGER")
+                connection.execSQL("ALTER TABLE nodes ADD COLUMN groundTrack INTEGER")
+            }
+        }
+
         private val MIGRATION_6_7 = object : Migration(6, 7) {
             override fun migrate(connection: SQLiteConnection) {
                 connection.execSQL(
@@ -166,6 +173,7 @@ abstract class FirepitDatabase : RoomDatabase() {
                     MIGRATION_4_5,
                     MIGRATION_5_6,
                     MIGRATION_6_7,
+                    MIGRATION_7_8,
                 )
                 .build()
     }
