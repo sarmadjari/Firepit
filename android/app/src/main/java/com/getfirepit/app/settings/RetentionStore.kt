@@ -36,8 +36,7 @@ class RetentionStore @Inject constructor(
 
     /** Runs at launch and on change, so a phone left closed still catches up. */
     suspend fun sweep(nowMillis: Long = System.currentTimeMillis()) {
-        val cutoff = _choice.value.cutoff(nowMillis) ?: return
-        val deleted = messageDao.deleteOlderThan(cutoff)
+        val deleted = messageDao.deleteOlderThan(_choice.value.cutoff(nowMillis))
         if (deleted > 0) Log.i(TAG, "deleted $deleted messages past the retention window")
     }
 

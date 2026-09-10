@@ -226,8 +226,9 @@ private fun SettingsList(
                     }
                 }
                 Text(
-                    text = "Older messages are deleted from this phone. Everyone else " +
-                        "keeps their own copy, and nothing on a mesh can delete theirs.",
+                    text = "Older messages are always deleted from this phone — there is no " +
+                        "keeping them. Everyone else holds their own copy, and nothing on " +
+                        "a mesh can delete theirs.",
                     style = MaterialTheme.typography.bodySmall,
                     color = FirepitTheme.colors.textSecondary,
                 )
