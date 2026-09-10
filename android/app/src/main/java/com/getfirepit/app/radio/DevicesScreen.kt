@@ -41,6 +41,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.saveable.rememberSaveable
 import com.getfirepit.core.data.Owner
 import com.getfirepit.core.protocol.OwnerName
+import androidx.compose.material3.Switch
+import com.getfirepit.core.protocol.RelayReach
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
@@ -115,8 +117,11 @@ fun DevicesScreen(
                 savedRadioSection(
                     saved = state.saved,
                     connectedTo = state.connectedTo,
+                    relayReach = state.relayReach,
                     onConnect = viewModel::connectSaved,
                     onRole = viewModel::setRole,
+                    onShowOnMap = viewModel::showOnMap,
+                    onRelayReach = viewModel::setRelayReach,
                     onForget = viewModel::forget,
                 )
                 if (nearby.isNotEmpty()) {
@@ -262,8 +267,11 @@ private fun blePermissions(): Array<String> = buildList {
 private fun SavedRadioRow(
     radio: SavedRadio,
     connected: Boolean,
+    relayReach: RelayReach?,
     onConnect: () -> Unit,
     onRole: (NodeRole) -> Unit,
+    onShowOnMap: (Boolean) -> Unit,
+    onRelayReach: (RelayReach) -> Unit,
     onForget: () -> Unit,
 ) {
     // Forgetting is irreversible and sits a thumb's width from the row you tap
@@ -328,6 +336,86 @@ private fun SavedRadioRow(
                     )
                 }
             }
+
+            // Only infrastructure: the radio in your pocket is you, and hiding
+            // yourself from your own map helps nobody.
+            if (radio.role != NodeRole.PERSONAL) {
+                InfrastructureOptions(
+                    radio = radio,
+                    connected = connected,
+                    relayReach = relayReach,
+                    onShowOnMap = onShowOnMap,
+                    onRelayReach = onRelayReach,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun InfrastructureOptions(
+    radio: SavedRadio,
+    connected: Boolean,
+    relayReach: RelayReach?,
+    onShowOnMap: (Boolean) -> Unit,
+    onRelayReach: (RelayReach) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
+        Row(
+            modifier = Modifier.padding(top = FirepitSpacing.s).fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Show on the map", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    text = if (radio.nodeNum == null) {
+                        "Connect it once so Firepit knows which marker is this device"
+                    } else {
+                        "Off keeps it out of the way while it goes on relaying"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FirepitTheme.colors.textSecondary,
+                )
+            }
+            Switch(
+                checked = radio.onMap,
+                onCheckedChange = onShowOnMap,
+                enabled = radio.nodeNum != null,
+            )
+        }
+
+        Text(
+            text = "Relays for",
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(top = FirepitSpacing.s),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
+            RelayReach.entries.forEach { reach ->
+                FirepitChip(
+                    label = reach.label,
+                    selected = relayReach == reach,
+                    onClick = { onRelayReach(reach) },
+                    enabled = connected,
+                )
+            }
+        }
+        Text(
+            text = when {
+                !connected -> "Connect this device to see or change what it relays"
+                relayReach == null -> "Set to something Firepit does not offer. Either choice replaces it"
+                relayReach == RelayReach.GROUP ->
+                    "Passes on only what it can decrypt, so strangers' traffic is ignored"
+                else -> "Carries traffic for any mesh on the same frequency"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = FirepitTheme.colors.textSecondary,
+        )
+        if (connected) {
+            Text(
+                text = "Changing this restarts the radio.",
+                style = MaterialTheme.typography.bodySmall,
+                color = FirepitTheme.colors.warn,
+            )
         }
     }
 }
@@ -342,18 +430,25 @@ private fun SavedRadioRow(
 private fun LazyListScope.savedRadioSection(
     saved: List<SavedRadio>,
     connectedTo: String?,
+    relayReach: RelayReach?,
     onConnect: (SavedRadio) -> Unit,
     onRole: (SavedRadio, NodeRole) -> Unit,
+    onShowOnMap: (SavedRadio, Boolean) -> Unit,
+    onRelayReach: (RelayReach) -> Unit,
     onForget: (SavedRadio) -> Unit,
 ) {
     if (saved.isEmpty()) return
     item(key = "saved-label") { SectionLabel("Your devices") }
     items(saved, key = { it.identifier }) { radio ->
+        val connected = connectedTo == radio.identifier
         SavedRadioRow(
             radio = radio,
-            connected = connectedTo == radio.identifier,
+            connected = connected,
+            relayReach = relayReach.takeIf { connected },
             onConnect = { onConnect(radio) },
             onRole = { role -> onRole(radio, role) },
+            onShowOnMap = { onMap -> onShowOnMap(radio, onMap) },
+            onRelayReach = onRelayReach,
             onForget = { onForget(radio) },
         )
     }

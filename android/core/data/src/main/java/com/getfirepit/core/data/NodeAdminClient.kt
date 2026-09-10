@@ -17,6 +17,7 @@ import org.meshtastic.proto.AdminMessage
 import org.meshtastic.proto.Channel
 import org.meshtastic.proto.PortNum
 import org.meshtastic.proto.ToRadio
+import org.meshtastic.proto.Config
 import org.meshtastic.proto.User
 
 /**
@@ -53,6 +54,17 @@ class NodeAdminClient @Inject constructor(
 
     suspend fun setOwner(user: User) {
         send(AdminMessage(session_passkey = sessionPasskey(), set_owner = user))
+    }
+
+    /**
+     * Writes the device config back whole.
+     *
+     * The firmware replaces the section rather than merging it, so this takes a
+     * copy of what the radio already reported: sending a config built from one
+     * changed field would reset every other one to its default. Expect a reboot.
+     */
+    suspend fun setDeviceConfig(device: Config.DeviceConfig) {
+        send(AdminMessage(session_passkey = sessionPasskey(), set_config = Config(device = device)))
     }
 
     /** Favourited nodes are never evicted from the radio's bounded NodeDB. */

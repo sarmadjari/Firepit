@@ -11,6 +11,9 @@ import com.getfirepit.core.model.RoomChannel
 import com.getfirepit.core.protocol.ChannelSlotManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import com.getfirepit.app.radio.SavedRadioStore
+import com.getfirepit.core.protocol.SavedRadio
+import com.getfirepit.core.protocol.SavedRadios
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -66,6 +69,7 @@ class MapViewModel @Inject constructor(
     private val waypoints: WaypointRepository,
     private val mesh: MeshRepository,
     private val offlineMaps: OfflineMapRepository,
+    private val savedRadios: SavedRadioStore,
     mapPreferences: MapPreferences,
 ) : ViewModel() {
 
@@ -86,23 +90,29 @@ class MapViewModel @Inject constructor(
         location.observePositions(),
         mesh.channels,
         mesh.myNodeNum,
-        combine(busy, error, waypoints.observePins()) { busy, error, pins -> Triple(busy, error, pins) },
-    ) { connected, nodes, channels, myNodeNum, (busy, error, pins) ->
+        combine(
+            busy,
+            error,
+            waypoints.observePins(),
+            savedRadios.radios,
+        ) { busy, error, pins, radios -> Aside(busy, error, pins, radios) },
+    ) { connected, nodes, channels, myNodeNum, aside ->
+        val hidden = SavedRadios.hiddenNodes(aside.radios)
         MapUiState(
             connected = connected,
-            markers = nodes.map { node ->
+            markers = nodes.filterNot { it.nodeNum in hidden }.map { node ->
                 MapMarker(
                     node = node,
                     isLive = location.isLive(node),
                     isSelf = node.nodeNum == myNodeNum,
                 )
             },
-            pins = pins,
+            pins = aside.pins,
             rooms = ChannelSlotManager.rooms(channels),
             sharingRoomId = location.sharingRoomId(),
             myNodeNum = myNodeNum,
-            busy = busy,
-            error = error,
+            busy = aside.busy,
+            error = aside.error,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MapUiState())
 
@@ -139,3 +149,11 @@ class MapViewModel @Inject constructor(
         }
     }
 }
+
+/** Combine takes five sources at most; these four travel together. */
+private data class Aside(
+    val busy: Boolean,
+    val error: String?,
+    val pins: List<MapPin>,
+    val radios: List<SavedRadio>,
+)

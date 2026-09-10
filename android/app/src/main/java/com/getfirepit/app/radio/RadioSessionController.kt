@@ -13,6 +13,7 @@ import com.getfirepit.core.data.ApplicationScope
 import android.util.Log
 import android.content.Context
 import com.getfirepit.core.transport.DiscoveredRadio
+import com.getfirepit.core.transport.LinkState
 import com.getfirepit.core.transport.RadioLink
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -33,6 +34,17 @@ class RadioSessionController @Inject constructor(
     private val savedRadios: SavedRadioStore,
     @param:ApplicationScope private val scope: CoroutineScope,
 ) {
+    init {
+        // A device is only tied to its mesh identity once it says who it is,
+        // which is what lets the map know which markers are your own hardware.
+        scope.launch {
+            link.state.collect { state ->
+                val nodeNum = (state as? LinkState.Ready)?.snapshot?.myNodeNum ?: return@collect
+                sessionStore.lastRadioId?.let { savedRadios.rememberNode(it, nodeNum) }
+            }
+        }
+    }
+
     fun connect(radio: DiscoveredRadio) {
         sessionStore.lastRadioId = radio.identifier
         // Registered here rather than at the button, so a radio reconnected on

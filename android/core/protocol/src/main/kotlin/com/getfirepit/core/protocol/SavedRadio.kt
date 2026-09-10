@@ -30,12 +30,19 @@ enum class DeviceTransport(val label: String) {
     NETWORK("Wi-Fi"),
 }
 
-/** A radio this phone knows about. */
+/**
+ * A radio this phone knows about.
+ *
+ * [nodeNum] is learned the first time the radio is connected, and is what ties
+ * a device you administer to the marker the mesh draws for it.
+ */
 data class SavedRadio(
     val identifier: String,
     val name: String,
     val role: NodeRole,
     val transport: DeviceTransport = DeviceTransport.BLUETOOTH,
+    val nodeNum: Int? = null,
+    val onMap: Boolean = true,
 )
 
 /**
@@ -72,4 +79,13 @@ object SavedRadios {
 
     fun forget(radios: List<SavedRadio>, identifier: String): List<SavedRadio> =
         radios.filterNot { it.identifier == identifier }
+
+    /**
+     * Node numbers of radios deliberately kept off the map.
+     *
+     * Infrastructure sits still and says little, so drawn on the map it is
+     * clutter standing between you and the people you are looking for.
+     */
+    fun hiddenNodes(radios: List<SavedRadio>): Set<Int> =
+        radios.filter { !it.onMap }.mapNotNull { it.nodeNum }.toSet()
 }

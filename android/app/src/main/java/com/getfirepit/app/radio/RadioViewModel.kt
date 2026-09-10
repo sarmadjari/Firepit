@@ -8,6 +8,8 @@ import com.getfirepit.core.model.MeshNode
 import com.getfirepit.core.protocol.MeshConstants
 import com.getfirepit.core.data.Owner
 import com.getfirepit.core.data.OwnerRepository
+import com.getfirepit.core.data.NodeAdminClient
+import com.getfirepit.core.protocol.RelayReach
 import com.getfirepit.core.data.SessionStore
 import com.getfirepit.core.protocol.NodeRole
 import com.getfirepit.core.protocol.RadioCapabilities
@@ -60,6 +62,8 @@ data class RadioUiState(
     val owner: Owner? = null,
     /** Which saved radio this session is talking to, if any. */
     val connectedTo: String? = null,
+    /** Only known for the radio on the other end of the link. */
+    val relayReach: RelayReach? = null,
 )
 
 @HiltViewModel
@@ -70,6 +74,7 @@ class RadioViewModel @Inject constructor(
     private val savedRadios: SavedRadioStore,
     private val sessionStore: SessionStore,
     private val owners: OwnerRepository,
+    private val admin: NodeAdminClient,
     private val mesh: MeshRepository,
     private val traceroute: TracerouteClient,
 ) : ViewModel() {
@@ -101,6 +106,9 @@ class RadioViewModel @Inject constructor(
         base.copy(
             saved = extras.saved,
             owner = extras.owner,
+            relayReach = RelayReach.of(
+                (linkState as? LinkState.Ready)?.snapshot?.device?.rebroadcast_mode,
+            ),
             // The radio actually on the other end of the link, which is not
             // necessarily the Personal one once Base stations are administered.
             connectedTo = (linkState as? LinkState.Ready)?.let { sessionStore.lastRadioId },
@@ -196,6 +204,25 @@ class RadioViewModel @Inject constructor(
         savedRadios.assign(saved.identifier, saved.name, role)
 
     fun forget(saved: SavedRadio) = savedRadios.forget(saved.identifier)
+
+    fun showOnMap(saved: SavedRadio, onMap: Boolean) =
+        savedRadios.showOnMap(saved.identifier, onMap)
+
+    /**
+     * Changes who the connected radio relays for.
+     *
+     * Built from the config the radio reported, because the firmware replaces
+     * the section rather than merging it.
+     */
+    fun setRelayReach(reach: RelayReach) {
+        val device = (link.state.value as? LinkState.Ready)?.snapshot?.device ?: return
+        error.value = null
+        viewModelScope.launch {
+            runCatching { admin.setDeviceConfig(device.copy(rebroadcast_mode = reach.mode)) }
+                .exceptionOrNull()
+                ?.let { error.value = it.message }
+        }
+    }
 
     /** Renames the radio itself, which is what non-Firepit apps display. */
     fun renameNode(longName: String, shortName: String) {

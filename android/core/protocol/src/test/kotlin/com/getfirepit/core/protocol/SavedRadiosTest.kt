@@ -70,4 +70,22 @@ class SavedRadiosTest {
 
         assertNull(SavedRadios.personal(after))
     }
+
+    @Test
+    fun `radios kept off the map are reported by node number`() {
+        val radios = listOf(
+            SavedRadio("a", "Pocket", NodeRole.PERSONAL, nodeNum = 1),
+            SavedRadio("b", "Camp", NodeRole.BASE, nodeNum = 2, onMap = false),
+            SavedRadio("c", "Hilltop", NodeRole.ROUTER, nodeNum = 3, onMap = false),
+        )
+
+        assertEquals(setOf(2, 3), SavedRadios.hiddenNodes(radios))
+    }
+
+    @Test
+    fun `a radio never connected cannot be hidden, having no node to hide`() {
+        val radios = listOf(SavedRadio("b", "Camp", NodeRole.BASE, onMap = false))
+
+        assertEquals(emptySet<Int>(), SavedRadios.hiddenNodes(radios))
+    }
 }

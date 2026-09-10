@@ -42,9 +42,28 @@ class SavedRadioStore @Inject constructor(
         write(
             SavedRadios.assign(
                 _radios.value,
-                SavedRadio(identifier, name, role, existing?.transport ?: transport),
+                SavedRadio(
+                    identifier = identifier,
+                    name = name,
+                    role = role,
+                    transport = existing?.transport ?: transport,
+                    nodeNum = existing?.nodeNum,
+                    onMap = existing?.onMap != false,
+                ),
             ),
         )
+    }
+
+    /** Learned once the radio says who it is, and kept for when it is away. */
+    fun rememberNode(identifier: String, nodeNum: Int) {
+        val existing = _radios.value.firstOrNull { it.identifier == identifier } ?: return
+        if (existing.nodeNum == nodeNum) return
+        write(SavedRadios.assign(_radios.value, existing.copy(nodeNum = nodeNum)))
+    }
+
+    fun showOnMap(identifier: String, onMap: Boolean) {
+        val existing = _radios.value.firstOrNull { it.identifier == identifier } ?: return
+        write(SavedRadios.assign(_radios.value, existing.copy(onMap = onMap)))
     }
 
     fun forget(identifier: String) {
@@ -59,7 +78,9 @@ class SavedRadioStore @Inject constructor(
                     .put(KEY_ID, radio.identifier)
                     .put(KEY_NAME, radio.name)
                     .put(KEY_ROLE, radio.role.name)
-                    .put(KEY_TRANSPORT, radio.transport.name),
+                    .put(KEY_TRANSPORT, radio.transport.name)
+                    .put(KEY_NODE, radio.nodeNum ?: JSONObject.NULL)
+                    .put(KEY_ON_MAP, radio.onMap),
             )
         }
         preferences.edit { putString(KEY_RADIOS, array.toString()) }
@@ -78,7 +99,14 @@ class SavedRadioStore @Inject constructor(
                 val transport = DeviceTransport.entries
                     .firstOrNull { it.name == item.optString(KEY_TRANSPORT) }
                     ?: DeviceTransport.BLUETOOTH
-                SavedRadio(item.getString(KEY_ID), item.getString(KEY_NAME), role, transport)
+                SavedRadio(
+                    identifier = item.getString(KEY_ID),
+                    name = item.getString(KEY_NAME),
+                    role = role,
+                    transport = transport,
+                    nodeNum = item.opt(KEY_NODE)?.takeIf { it != JSONObject.NULL } as? Int,
+                    onMap = item.optBoolean(KEY_ON_MAP, true),
+                )
             }
         }.getOrDefault(emptyList())
     }
@@ -89,5 +117,7 @@ class SavedRadioStore @Inject constructor(
         const val KEY_NAME = "name"
         const val KEY_ROLE = "role"
         const val KEY_TRANSPORT = "transport"
+        const val KEY_NODE = "node"
+        const val KEY_ON_MAP = "onMap"
     }
 }
