@@ -530,8 +530,14 @@ private fun NodeStatusLine(connected: Boolean, myNode: MeshNode?) {
             text = when {
                 !connected -> "Not connected — open Settings"
                 myNode == null -> "Connected"
+                // Who you are, then which radio is carrying you: the name is
+                // the person, the hardware is what they happen to be holding.
                 else -> buildString {
                     append(myNode.displayName)
+                    myNode.hwModel?.takeIf { it.isNotBlank() }?.let { model ->
+                        append("'s ")
+                        append(prettyHardware(model))
+                    }
                     myNode.batteryLevel?.let { level ->
                         append(" · ")
                         append(if (level > 100) "powered" else "$level%")
@@ -543,6 +549,12 @@ private fun NodeStatusLine(connected: Boolean, myNode: MeshNode?) {
         )
     }
 }
+
+/** WISMESH_TAG reads as shouting; the radio's own name does not. */
+private fun prettyHardware(model: String): String = model
+    .split('_')
+    .filter { it.isNotBlank() }
+    .joinToString(" ") { part -> part.lowercase().replaceFirstChar(Char::uppercase) }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
