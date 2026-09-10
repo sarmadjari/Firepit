@@ -49,7 +49,6 @@ import com.getfirepit.app.map.PinsScreen
 import com.getfirepit.app.radio.DevicesScreen
 import com.getfirepit.app.radio.NodesScreen
 import com.getfirepit.app.radio.RadioViewModel
-import com.getfirepit.core.data.Owner
 import com.getfirepit.core.designsystem.component.FirepitChip
 import com.getfirepit.core.designsystem.component.FirepitTopBar
 import com.getfirepit.core.designsystem.component.IdentityAvatar
@@ -61,6 +60,7 @@ import com.getfirepit.core.designsystem.theme.identityColorFor
 import com.getfirepit.core.designsystem.theme.identityColorForSlot
 import com.getfirepit.core.designsystem.theme.onIdentityColorFor
 import com.getfirepit.core.protocol.OwnerName
+import com.getfirepit.core.protocol.Person
 import com.getfirepit.core.transport.LinkState
 
 private enum class SettingsSection { DEVICES, NODES, OFFLINE_MAPS, PINS }
@@ -75,10 +75,7 @@ fun SettingsScreen(
     var section by remember { mutableStateOf<SettingsSection?>(null) }
     val radioState by radioViewModel.uiState.collectAsStateWithLifecycle()
     val theme by settingsViewModel.theme.collectAsStateWithLifecycle()
-    val identitySlot by settingsViewModel.identitySlot.collectAsStateWithLifecycle()
-    val myNodeNum by settingsViewModel.myNodeNum.collectAsStateWithLifecycle()
-    val owner by settingsViewModel.owner.collectAsStateWithLifecycle()
-    val connected by settingsViewModel.connected.collectAsStateWithLifecycle()
+    val person by settingsViewModel.person.collectAsStateWithLifecycle()
     val renameError by settingsViewModel.renameError.collectAsStateWithLifecycle()
 
     // A sub-screen takes the whole display, same as an open chat does.
@@ -116,11 +113,8 @@ fun SettingsScreen(
                 else -> "${radioState.nodes.size} heard on the mesh"
             },
             theme = theme,
-            owner = owner,
-            connected = connected,
-            onRename = settingsViewModel::rename,
-            identitySlot = identitySlot,
-            myNodeNum = myNodeNum,
+            person = person,
+            onSavePerson = settingsViewModel::savePerson,
             onChooseIdentity = settingsViewModel::chooseIdentitySlot,
             onChooseTheme = settingsViewModel::chooseTheme,
             onOpen = { section = it },
@@ -146,11 +140,8 @@ private fun SettingsList(
     deviceSummary: String,
     nodeSummary: String,
     theme: ThemeChoice,
-    owner: Owner?,
-    connected: Boolean,
-    onRename: (String, String) -> Unit,
-    identitySlot: Int?,
-    myNodeNum: Int?,
+    person: Person?,
+    onSavePerson: (String, String) -> Unit,
     onChooseIdentity: (Int?) -> Unit,
     onChooseTheme: (ThemeChoice) -> Unit,
     onOpen: (SettingsSection) -> Unit,
@@ -166,12 +157,9 @@ private fun SettingsList(
                 .verticalScroll(rememberScrollState()),
         ) {
             SectionLabel("You")
-            OwnerFields(
-                owner = owner,
-                connected = connected,
-                onSave = onRename,
-                nodeNum = myNodeNum,
-                identitySlot = identitySlot,
+            PersonFields(
+                person = person,
+                onSave = onSavePerson,
                 onChooseIdentity = onChooseIdentity,
             )
             HorizontalDivider()
@@ -245,30 +233,33 @@ private fun SettingsList(
 }
 
 /**
- * Your name, as the rest of the mesh sees it.
+ * You.
  *
- * Stored on the radio rather than the phone, so it travels with the node and
- * appears in other people's chats and maps.
+ * Only on this phone, and deliberately so: a name here costs nothing, needs no
+ * radio, and cannot be truncated by one. The node keeps its own name.
  */
 @Composable
-private fun OwnerFields(
-    owner: Owner?,
-    connected: Boolean,
+private fun PersonFields(
+    person: Person?,
     onSave: (String, String) -> Unit,
-    nodeNum: Int?,
-    identitySlot: Int?,
     onChooseIdentity: (Int?) -> Unit,
 ) {
-    val dark = FirepitTheme.colors.isDark
     var pickingColour by remember { mutableStateOf(false) }
-    var longName by rememberSaveable(owner) { mutableStateOf(owner?.longName.orEmpty()) }
-    var shortName by rememberSaveable(owner) { mutableStateOf(owner?.shortName.orEmpty()) }
+    var name by rememberSaveable(person) { mutableStateOf(person?.name.orEmpty()) }
+    var tag by rememberSaveable(person) { mutableStateOf(person?.tag.orEmpty()) }
+    // Nothing records whether a stored tag was typed or derived, so ask the
+    // rule: initials it would not have produced were chosen deliberately.
+    var tagChosen by rememberSaveable(person) {
+        mutableStateOf(person != null && person.tag != Person.initialsFor(person.name))
+    }
 
-    val changed = owner != null &&
-        (longName.trim() != owner.longName || shortName.trim() != owner.shortName)
-    val longBytes = longName.toByteArray(Charsets.UTF_8).size
-    val shortBytes = shortName.toByteArray(Charsets.UTF_8).size
-    val tooLong = longBytes > OwnerName.MAX_LONG_BYTES || shortBytes > OwnerName.MAX_SHORT_BYTES
+    // An emptied field falls back to the name rather than being rewritten as
+    // you delete, which would move the cursor out from under you.
+    val effectiveTag = tag.ifBlank { Person.initialsFor(name) }
+    val changed = name.trim() != person?.name.orEmpty() || effectiveTag != person?.tag.orEmpty()
+    val nameBytes = name.toByteArray(Charsets.UTF_8).size
+    val tagBytes = tag.toByteArray(Charsets.UTF_8).size
+    val tooLong = nameBytes > OwnerName.MAX_LONG_BYTES || tagBytes > OwnerName.MAX_SHORT_BYTES
 
     Column(
         modifier = Modifier.padding(
@@ -278,19 +269,21 @@ private fun OwnerFields(
         verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
     ) {
         OutlinedTextField(
-            value = longName,
-            onValueChange = { longName = it },
-            label = { Text("Name") },
+            value = name,
+            onValueChange = {
+                name = it
+                if (!tagChosen) tag = Person.initialsFor(it)
+            },
+            label = { Text("Your name") },
             singleLine = true,
-            enabled = connected,
             supportingText = {
                 Text(
-                    text = if (longBytes > OwnerName.MAX_LONG_BYTES) {
-                        "Too long for the radio by ${longBytes - OwnerName.MAX_LONG_BYTES} bytes"
+                    text = if (nameBytes > OwnerName.MAX_LONG_BYTES) {
+                        "Longer than a mesh packet can carry by ${nameBytes - OwnerName.MAX_LONG_BYTES} bytes"
                     } else {
-                        "Shown wherever you appear"
+                        "What you are called in chats and on the map"
                     },
-                    color = if (longBytes > OwnerName.MAX_LONG_BYTES) {
+                    color = if (nameBytes > OwnerName.MAX_LONG_BYTES) {
                         FirepitTheme.colors.danger
                     } else {
                         FirepitTheme.colors.textSecondary
@@ -305,19 +298,25 @@ private fun OwnerFields(
             horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
         ) {
             OutlinedTextField(
-                value = shortName,
-                onValueChange = { shortName = it },
-                label = { Text("Short tag") },
+                value = tag,
+                onValueChange = {
+                    tag = it
+                    tagChosen = it.isNotBlank()
+                },
+                label = { Text("Initials") },
                 singleLine = true,
-                enabled = connected,
                 supportingText = {
                     Text(
-                        text = if (shortBytes > OwnerName.MAX_SHORT_BYTES) {
-                            "The radio allows ${OwnerName.MAX_SHORT_BYTES} bytes"
+                        text = if (tagBytes > OwnerName.MAX_SHORT_BYTES) {
+                            "Up to ${OwnerName.MAX_SHORT_BYTES} characters"
+                        } else if (tag.isBlank()) {
+                            "Empty follows your name: $effectiveTag"
+                        } else if (tagChosen) {
+                            "Yours. Clear it to follow your name again"
                         } else {
-                            "Up to ${OwnerName.MAX_SHORT_BYTES} characters, for avatars and map pins"
+                            "Follows your name. Type your own if you prefer"
                         },
-                        color = if (shortBytes > OwnerName.MAX_SHORT_BYTES) {
+                        color = if (tagBytes > OwnerName.MAX_SHORT_BYTES) {
                             FirepitTheme.colors.danger
                         } else {
                             FirepitTheme.colors.textSecondary
@@ -327,7 +326,7 @@ private fun OwnerFields(
                 modifier = Modifier.weight(1f),
             )
 
-            // Beside the tag because the two make one thing: the avatar.
+            // Beside the initials because the two make one thing: the dot.
             Box(
                 modifier = Modifier
                     .padding(top = FirepitSpacing.s)
@@ -336,43 +335,31 @@ private fun OwnerFields(
                     .semantics { contentDescription = "Change your colour" },
             ) {
                 IdentityAvatar(
-                    nodeNum = nodeNum ?: 0,
-                    tag = shortName,
-                    name = longName,
+                    nodeNum = person?.id ?: 0,
+                    tag = effectiveTag,
+                    name = name,
                     size = 56.dp,
+                    slot = person?.colourSlot,
                 )
             }
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s)) {
             Button(
-                onClick = { onSave(longName, shortName) },
-                enabled = connected && changed && !tooLong && longName.isNotBlank(),
+                onClick = { onSave(name, effectiveTag) },
+                enabled = changed && !tooLong && name.isNotBlank(),
             ) {
                 Text("Save")
             }
-            if (shortName.isBlank() && longName.isNotBlank()) {
-                TextButton(onClick = { shortName = OwnerName.suggestShort(longName) }) {
-                    Text("Suggest tag")
-                }
-            }
-        }
-
-        if (!connected) {
-            Text(
-                text = "Connect your node to change this — the name lives on the radio.",
-                style = MaterialTheme.typography.bodySmall,
-                color = FirepitTheme.colors.textSecondary,
-            )
         }
     }
 
     if (pickingColour) {
         IdentityColourDialog(
-            nodeNum = nodeNum ?: 0,
-            tag = shortName,
-            name = longName,
-            chosen = identitySlot,
+            nodeNum = person?.id ?: 0,
+            tag = tag,
+            name = name,
+            chosen = person?.colourSlot,
             onChoose = onChooseIdentity,
             onDismiss = { pickingColour = false },
         )

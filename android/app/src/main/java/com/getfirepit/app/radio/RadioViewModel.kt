@@ -6,6 +6,8 @@ import com.getfirepit.core.data.MeshRepository
 import com.getfirepit.core.data.TracerouteClient
 import com.getfirepit.core.model.MeshNode
 import com.getfirepit.core.protocol.MeshConstants
+import com.getfirepit.core.data.Owner
+import com.getfirepit.core.data.OwnerRepository
 import com.getfirepit.core.data.SessionStore
 import com.getfirepit.core.protocol.NodeRole
 import com.getfirepit.core.protocol.RadioCapabilities
@@ -55,6 +57,7 @@ data class RadioUiState(
     val tracing: Int? = null,
     val traceResult: String? = null,
     val saved: List<SavedRadio> = emptyList(),
+    val owner: Owner? = null,
     /** Which saved radio this session is talking to, if any. */
     val connectedTo: String? = null,
 )
@@ -66,6 +69,7 @@ class RadioViewModel @Inject constructor(
     private val session: RadioSessionController,
     private val savedRadios: SavedRadioStore,
     private val sessionStore: SessionStore,
+    private val owners: OwnerRepository,
     private val mesh: MeshRepository,
     private val traceroute: TracerouteClient,
 ) : ViewModel() {
@@ -89,13 +93,14 @@ class RadioViewModel @Inject constructor(
         },
         mesh.observeNodes(),
         mesh.myNodeNum,
-        combine(tracing, traceResult, savedRadios.radios) { tracing, result, saved ->
-            Triple(tracing, result, saved)
+        combine(tracing, traceResult, savedRadios.radios, owners.owner) { tracing, result, saved, owner ->
+            Extras(tracing, result, saved, owner)
         },
         link.state,
-    ) { base, nodes, me, (tracing, result, saved), linkState ->
+    ) { base, nodes, me, extras, linkState ->
         base.copy(
-            saved = saved,
+            saved = extras.saved,
+            owner = extras.owner,
             // The radio actually on the other end of the link, which is not
             // necessarily the Personal one once Base stations are administered.
             connectedTo = (linkState as? LinkState.Ready)?.let { sessionStore.lastRadioId },
@@ -108,8 +113,8 @@ class RadioViewModel @Inject constructor(
                     .thenByDescending { it.lastHeard ?: 0L },
             ),
             myNodeNum = me,
-            tracing = tracing,
-            traceResult = result,
+            tracing = extras.tracing,
+            traceResult = extras.result,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RadioUiState())
 
@@ -192,6 +197,16 @@ class RadioViewModel @Inject constructor(
 
     fun forget(saved: SavedRadio) = savedRadios.forget(saved.identifier)
 
+    /** Renames the radio itself, which is what non-Firepit apps display. */
+    fun renameNode(longName: String, shortName: String) {
+        error.value = null
+        viewModelScope.launch {
+            runCatching { owners.rename(longName, shortName) }
+                .exceptionOrNull()
+                ?.let { error.value = it.message }
+        }
+    }
+
     private companion object {
         /** Long enough for a radio in the room, short enough not to hang the screen. */
         val SAVED_SCAN_WINDOW = 20.seconds
@@ -221,4 +236,12 @@ private fun com.getfirepit.core.protocol.phoneapi.RadioSnapshot.toDetails() = Ra
         )
     },
     knownNodes = nodes.size,
+)
+
+/** Combine takes five sources at most; these four travel together. */
+private data class Extras(
+    val tracing: Int?,
+    val result: String?,
+    val saved: List<SavedRadio>,
+    val owner: Owner?,
 )

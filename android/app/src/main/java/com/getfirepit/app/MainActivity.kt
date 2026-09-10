@@ -10,7 +10,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.getfirepit.app.settings.IdentityPreferences
+import com.getfirepit.app.settings.PersonStore
 import com.getfirepit.app.settings.ThemeChoice
 import com.getfirepit.app.settings.ThemePreferences
 import com.getfirepit.app.ui.FirepitApp
@@ -25,7 +25,7 @@ class MainActivity : ComponentActivity() {
 
     @Inject lateinit var themePreferences: ThemePreferences
 
-    @Inject lateinit var identityPreferences: IdentityPreferences
+    @Inject lateinit var people: PersonStore
 
     @Inject lateinit var meshRepository: MeshRepository
 
@@ -34,7 +34,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val choice by themePreferences.choice.collectAsStateWithLifecycle()
-            val slot by identityPreferences.slot.collectAsStateWithLifecycle()
+            val person by people.person.collectAsStateWithLifecycle()
             val myNodeNum by meshRepository.myNodeNum.collectAsStateWithLifecycle()
             FirepitTheme(
                 darkTheme = when (choice) {
@@ -44,9 +44,11 @@ class MainActivity : ComponentActivity() {
                 },
             ) {
                 CompositionLocalProvider(
+                    // Your colour follows you onto whichever radio you are
+                    // holding, rather than belonging to the radio.
                     LocalIdentitySlots provides buildMap {
                         val node = myNodeNum
-                        val chosen = slot
+                        val chosen = person?.colourSlot
                         if (node != null && chosen != null) put(node, chosen)
                     },
                 ) {

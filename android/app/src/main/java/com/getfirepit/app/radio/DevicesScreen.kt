@@ -37,6 +37,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.ui.res.painterResource
 import com.getfirepit.core.designsystem.component.FirepitIcons
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.getfirepit.core.data.Owner
+import com.getfirepit.core.protocol.OwnerName
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
@@ -136,7 +140,13 @@ fun DevicesScreen(
                         }
                     }
                 }
-                if (details != null) connectedDeviceSection(details)
+                if (details != null) {
+                    connectedDeviceSection(
+                        details = details,
+                        owner = state.owner,
+                        onRename = viewModel::renameNode,
+                    )
+                }
             }
         }
     }
@@ -154,10 +164,15 @@ private fun LinkStatus(link: LinkState) {
     Text(label, color = color, style = MaterialTheme.typography.bodyMedium)
 }
 
-private fun LazyListScope.connectedDeviceSection(details: RadioDetails) {
+private fun LazyListScope.connectedDeviceSection(
+    details: RadioDetails,
+    owner: Owner?,
+    onRename: (String, String) -> Unit,
+) {
     item(key = "connected-details") {
         Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
             SectionLabel("Connected device")
+            NodeNameFields(owner = owner, onRename = onRename)
             Field("Node", details.nodeId, monospace = true)
             Field("Firmware", details.firmware)
             Field("Hardware", prettyName(details.hardware))
@@ -370,5 +385,63 @@ private fun RoleBadge(role: NodeRole) {
             tint = tint,
             modifier = Modifier.size(22.dp),
         )
+    }
+}
+
+/**
+ * What this radio calls itself.
+ *
+ * Device configuration, not personal identity: it is what people running the
+ * official app see, since nothing outside Firepit knows a person from a radio.
+ */
+@Composable
+private fun NodeNameFields(owner: Owner?, onRename: (String, String) -> Unit) {
+    var longName by rememberSaveable(owner) { mutableStateOf(owner?.longName.orEmpty()) }
+    var shortName by rememberSaveable(owner) { mutableStateOf(owner?.shortName.orEmpty()) }
+
+    val changed = owner != null &&
+        (longName.trim() != owner.longName || shortName.trim() != owner.shortName)
+    val tooLong = !OwnerName.fits(longName.trim(), shortName.trim())
+
+    Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s)) {
+        OutlinedTextField(
+            value = longName,
+            onValueChange = { longName = it },
+            label = { Text("Node name") },
+            singleLine = true,
+            isError = tooLong,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = shortName,
+            onValueChange = { shortName = it },
+            label = { Text("Node tag") },
+            singleLine = true,
+            isError = tooLong,
+            supportingText = {
+                Text(
+                    text = if (tooLong) {
+                        "The radio allows ${OwnerName.MAX_LONG_BYTES} and " +
+                            "${OwnerName.MAX_SHORT_BYTES} bytes"
+                    } else {
+                        "Stored on the radio, and seen by apps that are not Firepit"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (tooLong) {
+                        FirepitTheme.colors.danger
+                    } else {
+                        FirepitTheme.colors.textSecondary
+                    },
+                )
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            onClick = { onRename(longName, shortName) },
+            enabled = changed && !tooLong && longName.isNotBlank(),
+        ) {
+            Text("Rename device")
+        }
+        HorizontalDivider(Modifier.padding(vertical = FirepitSpacing.s))
     }
 }
