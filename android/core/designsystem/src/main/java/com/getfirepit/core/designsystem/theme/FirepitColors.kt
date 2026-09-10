@@ -18,6 +18,10 @@ data class FirepitColors(
     val bubbleIn: Color,
     val textPrimary: Color,
     val textSecondary: Color,
+    /** Cards and raised rows, against the page [surface]. */
+    val surface2: Color,
+    /** Hairlines and unselected chip borders. */
+    val outline: Color,
     /** Live position markers and the connected node dot. */
     val live: Color,
     /** Stale positions and unknown state. Never the only signal — always paired with an age label. */
@@ -40,6 +44,8 @@ val EmberLightColors = FirepitColors(
     bubbleIn = Color(0xFFFFFFFF),
     textPrimary = Color(0xFF1A1614),
     textSecondary = Color(0xFF6B625C),
+    surface2 = Color(0xFFFFFFFF),
+    outline = Color(0xFFE8E0D9),
     live = Color(0xFF2BB673),
     stale = Color(0xFFA39E98),
     warn = Color(0xFF9A6B00),
@@ -57,6 +63,8 @@ val EmberDarkColors = FirepitColors(
     bubbleIn = Color(0xFF24211E),
     textPrimary = Color(0xFFF1ECE7),
     textSecondary = Color(0xFFA39C95),
+    surface2 = Color(0xFF1E1B18),
+    outline = Color(0xFF2E2926),
     live = Color(0xFF4ED69A),
     stale = Color(0xFF6F6963),
     warn = Color(0xFFF2C94C),

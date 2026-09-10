@@ -460,10 +460,15 @@ private class MarkerLayer {
                 SymbolOptions()
                     .withLatLng(LatLng(latitude, longitude))
                     .withIconImage(imageId)
-                    .withTextField(if (marker.isSelf) "You" else marker.node.displayName)
-                    .withTextOffset(arrayOf(0f, 1.6f))
-                    .withTextSize(11f)
-                    .withTextFont(arrayOf(STYLE_FONT)),
+                    // The name is drawn into the bitmap, so no text layer here.
+                    .apply {
+                        if (marker.isSelf) {
+                            withTextField("You")
+                                .withTextOffset(arrayOf(0f, 1.6f))
+                                .withTextSize(11f)
+                                .withTextFont(arrayOf(STYLE_FONT))
+                        }
+                    },
             )
         }
 
@@ -505,7 +510,12 @@ private class MarkerLayer {
 }
 
 /**
- * A tag disc in the node's identity colour, ringed green while it is live.
+ * A tag disc in the node's identity colour, ringed green while it is live, with
+ * the name on a pill beneath it.
+ *
+ * The label is drawn into the same bitmap rather than left to the style's text
+ * layer so it keeps its pill on any basemap; the disc stays at the bitmap's
+ * centre so the icon still lands on the coordinate.
  *
  * Your own position is drawn as a plain blue dot instead: it is the one marker
  * people look for first, and a tag reading your own initials among five others
@@ -514,9 +524,32 @@ private class MarkerLayer {
 private fun markerBitmap(marker: MapMarker, dark: Boolean): Bitmap {
     if (marker.isSelf) return selfBitmap()
 
-    val size = 96
-    val bitmap = createBitmap(size, size)
+    val disc = 96
+    val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = if (marker.isLive) {
+            if (dark) LABEL_TEXT_DARK else LABEL_TEXT_LIGHT
+        } else {
+            if (dark) LABEL_MUTED_DARK else LABEL_MUTED_LIGHT
+        }
+        textAlign = Paint.Align.CENTER
+        textSize = 30f
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+    }
+
+    val text = markerLabel(marker)
+    val textWidth = label.measureText(text)
+    val pillHeight = 46f
+    val pillWidth = textWidth + 32f
+    val gap = 8f
+    // Padded equally above so the disc, not the whole bitmap, sits on the fix.
+    val extra = (gap + pillHeight) * 2
+    val width = maxOf(disc.toFloat(), pillWidth).toInt()
+    val height = (disc + extra).toInt()
+
+    val bitmap = createBitmap(width, height)
     val canvas = Canvas(bitmap)
+    val centreX = width / 2f
+    val centreY = height / 2f
 
     val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = identityColorFor(marker.node.nodeNum, dark).toArgb()
@@ -528,23 +561,57 @@ private fun markerBitmap(marker: MapMarker, dark: Boolean): Bitmap {
         style = Paint.Style.STROKE
         strokeWidth = 7f
     }
-    val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    val tag = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
         textAlign = Paint.Align.CENTER
         textSize = 34f
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     }
 
-    val radius = size / 2f - 8f
-    canvas.drawCircle(size / 2f, size / 2f, radius, fill)
-    canvas.drawCircle(size / 2f, size / 2f, radius, ring)
+    val radius = disc / 2f - 8f
+    canvas.drawCircle(centreX, centreY, radius, fill)
+    canvas.drawCircle(centreX, centreY, radius, ring)
     canvas.drawText(
         marker.tag.take(2).uppercase(),
-        size / 2f,
-        size / 2f - (label.descent() + label.ascent()) / 2f,
+        centreX,
+        centreY - (tag.descent() + tag.ascent()) / 2f,
+        tag,
+    )
+
+    val pillTop = centreY + radius + gap
+    val pill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = if (dark) LABEL_PILL_DARK else LABEL_PILL_LIGHT
+    }
+    canvas.drawRoundRect(
+        centreX - pillWidth / 2f,
+        pillTop,
+        centreX + pillWidth / 2f,
+        pillTop + pillHeight,
+        12f,
+        12f,
+        pill,
+    )
+    canvas.drawText(
+        text,
+        centreX,
+        pillTop + pillHeight / 2f - (label.descent() + label.ascent()) / 2f,
         label,
     )
     return bitmap
+}
+
+/** A stale marker names its age, because a position with no time is a guess presented as a fact. */
+private fun markerLabel(marker: MapMarker): String {
+    val name = marker.node.displayName
+    if (marker.isLive) return name
+    val heard = marker.node.lastHeard ?: return name
+    val minutes = (System.currentTimeMillis() - heard) / 60_000
+    return when {
+        minutes < 1 -> name
+        minutes < 60 -> "$name · ${minutes}m"
+        minutes < 60 * 24 -> "$name · ${minutes / 60}h"
+        else -> "$name · ${minutes / (60 * 24)}d"
+    }
 }
 
 /** The conventional you-are-here dot: solid fill, white collar, soft halo. */
@@ -594,6 +661,14 @@ private fun pinBitmap(): Bitmap {
 internal const val OPEN_FREE_MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty"
 private const val LIVE_RING = 0xFF4ADE80.toInt()
 private const val STALE_RING = 0xFF8A8A8A.toInt()
+
+// Ember surface-2 and text tokens, as ARGB for the Canvas that draws the pills.
+private const val LABEL_PILL_LIGHT = 0xFFFFFFFF.toInt()
+private const val LABEL_PILL_DARK = 0xFF1E1B18.toInt()
+private const val LABEL_TEXT_LIGHT = 0xFF1A1614.toInt()
+private const val LABEL_TEXT_DARK = 0xFFF1ECE7.toInt()
+private const val LABEL_MUTED_LIGHT = 0xFF6B625C.toInt()
+private const val LABEL_MUTED_DARK = 0xFFA39C95.toInt()
 private const val PIN_IMAGE = "map-pin"
 private const val PIN_COLOR = 0xFFF59E0B.toInt()
 private const val SELF_COLOR = 0xFF2563EB.toInt()

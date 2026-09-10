@@ -39,10 +39,22 @@ interface MessageDao {
 
     @Query("SELECT * FROM messages WHERE isOutgoing = 1 AND status IN (:pending)")
     suspend fun pendingOutgoing(pending: List<MessageStatus>): List<MessageEntity>
-}
+
+    /** The newest message in each channel, for the list previews. */
+    @Query(
+        """
+        SELECT * FROM messages WHERE id IN (
+            SELECT id FROM messages GROUP BY channel HAVING sentAt = MAX(sentAt)
+        )
+        """,
+    )
+    fun observeLatestPerChannel(): Flow<List<MessageEntity>>}
 
 fun MessageDao.observeChannel(channel: Int): Flow<List<ChatMessage>> =
     observeChannelEntities(channel).map { entities -> entities.map(MessageEntity::toDomain) }
+
+fun MessageDao.latestPerChannel(): Flow<List<ChatMessage>> =
+    observeLatestPerChannel().map { entities -> entities.map(MessageEntity::toDomain) }
 
 @Dao
 interface NodeDao {

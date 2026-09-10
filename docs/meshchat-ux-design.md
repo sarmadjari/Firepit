@@ -627,6 +627,33 @@ System fonts (SF Pro / Roboto), Dynamic Type and font scaling honoured.
 - RTL mirrored layouts; byte counters count UTF-8 bytes, so non-Latin names show the real remaining budget.
 - Screen readers announce node status changes politely (no interruptions).
 
+### 9.6 One design language, two native dialects (iOS ↔ Android)
+
+The tokens (§9.1), type ramp (§9.2), icon set, copy (§10) and every flow are identical on both platforms. What differs is the *component vocabulary*: iOS follows the Human Interface Guidelines, Android follows Material 3. Never port one platform's controls to the other. Reference renders: `design/Firepit iOS UI.pdf` (Figma) and `design/Firepit Android UI.pdf` (rendered from Compose screens on an emulator; page order tokens, chats, room chat, room info, invite, join, map, share location — light then dark).
+
+| Element | iOS (HIG) | Android (Material 3) |
+|---|---|---|
+| Tabs | Tab bar, SF Symbols, active tint `primary` | Navigation bar with pill indicator (`primaryContainer` pill, `primary` icon/label) |
+| Screen title | Large title collapsing into the nav bar | Top app bar; large title only on Chats (`headlineMedium` bold) |
+| Back | Chevron + previous title, edge swipe | Arrow-left icon button, system back gesture; no "Back" label |
+| Primary action on a list | "＋" bar button / bottom pill | Floating action button (bottom-end); extended FAB for "Share my location" on the map |
+| Filters (All · Rooms · Direct) | Segmented-style pills | Material filter chips (`primary` when selected) |
+| Lists | Grouped inset lists, chevron disclosure | Cards with `ListItem` rows, `HorizontalDivider`, chevron only for navigation rows |
+| Toggles | UISwitch | Material `Switch` (`primary` track) |
+| Modal sheets (Join, Share location) | Sheet with grabber, 24 pt corners | Modal bottom sheet with drag handle, 28 dp corners, scrim 45 % |
+| Dialog-level confirmations | Alert | Material dialog |
+| Buttons | Filled (14 pt radius) · bordered · plain | Filled · outlined · text (M3 full-radius) |
+| Text field / composer | Rounded field, send button in tint | Same pill field; send = `FilledIconButton`; ＋ and ⚡ as icon buttons |
+| Status bar / home indicator | System | System (edge-to-edge, gesture nav) |
+| Fonts | SF Pro (Dynamic Type) | Roboto / system (sp scaling) |
+| Haptics | UIFeedbackGenerator light on send | `HapticFeedbackType` light on send |
+| Icons | Same Firepit stroke set (24 pt grid) | Same set as `ImageVector`s |
+| Ripple / highlight | Highlight on press | Material ripple (do not disable) |
+| Map controls | Pill + round buttons over the map | Assist chip + small FABs; extended FAB for sharing; sheet peek with drag handle |
+| Large screens / foldables | iPad split view later | Window size classes + hinge posture: list-detail panes for Chats, map + sheet side-by-side (build-plan "adaptive" thread) |
+
+Rules: platform-native navigation and gestures always win over visual parity; colour, spacing scale, radii for our own components (bubbles 18, cards 12), copy and behaviour never diverge. Bubble shapes: iOS 16 pt uniform; Android 18 dp with a 4 dp "tail" corner on the sender side — both acceptable expressions of the same message row. M3 gotcha: never map `surfaceVariant` to a colour also used as a container, or `contentColorFor` silently returns `onSurfaceVariant` (grey text); set `contentColor` explicitly on surface-2 containers.
+
 ---
 
 ## 10. Microcopy guide (honesty rules)
@@ -726,7 +753,7 @@ System fonts (SF Pro / Roboto), Dynamic Type and font scaling honoured.
 
 ## 12. Next steps
 
-Figma file: https://www.figma.com/design/KhCa85jKBBx88JYrMs2wlX — one page with two rows. **Light** (y = 0): `00 Tokens`, `01 Chats`, `02 Room chat`, `03 Room info (full scroll)`, `04 Invite`, `05 Join room`, `06 Map`, `07 Share location`. **Dark** (y = 1300): the same eight frames suffixed `· Dark`. Light frames bind to the `MeshChat/Colors` variable collection, dark frames to `MeshChat/Colors · Dark` (two collections rather than two modes because the Starter plan allows one mode per collection; merge into modes on a Pro plan). Inter stands in for SF Pro/Roboto.
+Reference renders: iOS — `design/Firepit iOS UI.pdf` (Figma, https://www.figma.com/design/KhCa85jKBBx88JYrMs2wlX, one page with two rows). Android — `design/Firepit Android UI.pdf` (Compose renders, `design/android-screens/*.png`). Platform mapping in §9.6. Figma layout: one page with two rows. **Light** (y = 0): `00 Tokens`, `01 Chats`, `02 Room chat`, `03 Room info (full scroll)`, `04 Invite`, `05 Join room`, `06 Map`, `07 Share location`. **Dark** (y = 1300): the same eight frames suffixed `· Dark`. Light frames bind to the `MeshChat/Colors` variable collection, dark frames to `MeshChat/Colors · Dark` (two collections rather than two modes because the Starter plan allows one mode per collection; merge into modes on a Pro plan). Inter stands in for SF Pro/Roboto.
 
 Local exports: `design/MeshChat UI.pdf` (16 pages, exported from Figma: light 00–07 then dark 00–07) and per-frame PNGs at 2× in `design/figma-exports/` (rendered from that PDF). Re-export after design changes with Figma → File → Export frames to PDF, then `pdftoppm -png -r 144` (see git history for the rename script). **File → Save local copy…** gives a `.fig` backup. The Starter plan's MCP call quota limits how many operations the agent can run per period; `design/MeshChat fix/` is a local Figma development plugin (Plugins → Development → MeshChat fix) used to apply scripted fixes when the quota is exhausted — put new Plugin-API scripts in its `code.js` and run it. Lesson recorded there: variable-bound fills with opacity < 1 flatten to grey on PDF export; use solid literal tints for translucent surfaces in mockups.
 

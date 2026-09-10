@@ -1,6 +1,5 @@
 package com.getfirepit.app.chat
 
-import com.getfirepit.core.protocol.ChannelLoad
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -12,16 +11,19 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Badge
 import androidx.compose.material3.DropdownMenu
@@ -30,15 +32,19 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.layout.AnimatedPane
 import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldRole
@@ -55,6 +61,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -66,18 +73,25 @@ import com.getfirepit.app.rooms.RoomMembersScreen
 import com.getfirepit.app.rooms.RoomsViewModel
 import com.getfirepit.core.designsystem.adaptive.foldAwarePaneDirective
 import com.getfirepit.core.designsystem.component.BackButton
+import com.getfirepit.core.designsystem.component.FirepitChip
+import com.getfirepit.core.designsystem.component.FirepitIcons
+import com.getfirepit.core.designsystem.component.LiveRing
 import com.getfirepit.core.designsystem.component.MessageBubble
 import com.getfirepit.core.designsystem.component.QuotedMessage
 import com.getfirepit.core.designsystem.component.RoomAvatar
 import com.getfirepit.core.designsystem.component.RoomIcon
+import com.getfirepit.core.designsystem.component.StatusTick
 import com.getfirepit.core.designsystem.component.SystemChip
+import com.getfirepit.core.designsystem.component.UnreadBadge
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 import com.getfirepit.core.designsystem.theme.identityColorFor
 import com.getfirepit.core.model.ChannelRole
 import com.getfirepit.core.model.ChatMessage
+import com.getfirepit.core.model.MeshNode
 import com.getfirepit.core.model.MessageStatus
 import com.getfirepit.core.model.RoomChannel
+import com.getfirepit.core.protocol.ChannelLoad
 import com.getfirepit.core.protocol.MeshConstants
 import kotlinx.coroutines.launch
 
@@ -170,6 +184,9 @@ fun ChatsPane(
                     roomsMessage = roomsState.error ?: roomsState.joinedRoomName,
                     unread = state.unread,
                     muted = state.muted,
+                    myNode = state.myNode,
+                    latest = state.latest,
+                    nodes = state.nodes,
                     onSelect = { index ->
                         viewModel.select(index)
                         scope.launch { navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, index) }
@@ -183,6 +200,12 @@ fun ChatsPane(
                         overlay = RoomsOverlay.Join
                     },
                     onDismissMessage = roomsViewModel::clearMessages,
+                    onSearch = {
+                        // Search reads the open conversation, so it needs one open.
+                        state.selected?.let { index ->
+                            scope.launch { navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, index) }
+                        }
+                    },
                 )
             }
         },
@@ -236,48 +259,83 @@ private fun ChannelList(
     roomsMessage: String?,
     unread: Map<Int, Int>,
     muted: Set<Int>,
+    myNode: MeshNode?,
+    latest: Map<Int, ChatMessage>,
+    nodes: Map<Int, MeshNode>,
     onSelect: (Int) -> Unit,
     onToggleMute: (Int) -> Unit,
     onNewRoom: () -> Unit,
     onJoinRoom: () -> Unit,
+    onSearch: () -> Unit,
     onDismissMessage: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    var filter by rememberSaveable { mutableStateOf(ChannelFilter.ALL) }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Firepit") }) },
+        topBar = {
+            TopAppBar(
+                title = { Text("Firepit", style = MaterialTheme.typography.headlineLarge) },
+                actions = {
+                    IconButton(onClick = onSearch) {
+                        Icon(painterResource(FirepitIcons.Search), contentDescription = "Search messages")
+                    }
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(painterResource(FirepitIcons.More), contentDescription = "More")
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text(if (roomsFull) "New room — no free slots" else "New room") },
+                            // The radio has eight slots. Leaving a room frees one.
+                            enabled = connected && !roomsFull && !roomsBusy,
+                            onClick = {
+                                menuOpen = false
+                                onNewRoom()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (roomsFull) "Scan invite — no free slots" else "Scan invite") },
+                            enabled = connected && !roomsFull && !roomsBusy,
+                            onClick = {
+                                menuOpen = false
+                                onJoinRoom()
+                            },
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
+            )
+        },
         floatingActionButton = {
-            Box {
-                FloatingActionButton(onClick = { menuOpen = true }) { Text("+") }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text(if (roomsFull) "New room — no free slots" else "New room") },
-                        // The radio has eight slots. Leaving a room frees one.
-                        enabled = connected && !roomsFull && !roomsBusy,
-                        onClick = {
-                            menuOpen = false
-                            onNewRoom()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(if (roomsFull) "Scan invite — no free slots" else "Scan invite") },
-                        enabled = connected && !roomsFull && !roomsBusy,
-                        onClick = {
-                            menuOpen = false
-                            onJoinRoom()
-                        },
-                    )
-                }
+            FloatingActionButton(
+                onClick = { if (connected && !roomsFull && !roomsBusy) onNewRoom() },
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+            ) {
+                Icon(painterResource(FirepitIcons.Add), contentDescription = "New room")
             }
         },
     ) { padding ->
         Column(Modifier.padding(padding)) {
-            Text(
-                text = if (connected) "Connected to your node" else "Not connected — open Settings",
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (connected) FirepitTheme.colors.live else FirepitTheme.colors.stale,
-                modifier = Modifier.padding(horizontal = FirepitSpacing.screenMargin),
-            )
+            NodeStatusLine(connected = connected, myNode = myNode)
+
+            Row(
+                modifier = Modifier.padding(
+                    horizontal = FirepitSpacing.screenMargin,
+                    vertical = FirepitSpacing.m,
+                ),
+                horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
+            ) {
+                ChannelFilter.entries.forEach { option ->
+                    FirepitChip(
+                        label = option.label,
+                        selected = filter == option,
+                        onClick = { filter = option },
+                    )
+                }
+            }
 
             roomsMessage?.let { message ->
                 Row(
@@ -296,53 +354,165 @@ private fun ChannelList(
                 }
             }
 
-            if (channels.isEmpty()) {
-                EmptyState("No channels yet. Connect your node in Settings.")
+            val visible = channels
+                .filter { it.role != ChannelRole.DISABLED }
+                .filter { filter == ChannelFilter.ALL || it.isRoom }
+
+            if (visible.isEmpty()) {
+                EmptyState(
+                    if (channels.none { it.role != ChannelRole.DISABLED }) {
+                        "No channels yet. Connect your node in Settings."
+                    } else {
+                        "No rooms yet. Create one with the + button."
+                    },
+                )
                 return@Column
             }
 
             LazyColumn {
-                items(channels.filter { it.role != ChannelRole.DISABLED }, key = { it.index }) { channel ->
-                    ListItem(
-                        headlineContent = { Text(channel.displayName) },
-                        supportingContent = {
-                            Text(if (channel.isRoom) "Room · slot ${channel.index}" else "Primary channel")
+                items(visible, key = { it.index }) { channel ->
+                    ChannelRow(
+                        channel = channel,
+                        latest = latest[channel.index],
+                        senderName = latest[channel.index]?.let { message ->
+                            nodes[message.fromNodeNum]?.displayName
                         },
-                        leadingContent = { RoomAvatar(RoomIcon.forRoomId(channel.id)) },
-                        trailingContent = {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
-                            ) {
-                                if (channel.index in muted) {
-                                    Text(
-                                        text = "🔕",
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
-                                }
-                                // A muted room still counts unread; it just does
-                                // not interrupt.
-                                unread[channel.index]?.takeIf { it > 0 }?.let { count ->
-                                    Badge { Text(if (count > 99) "99+" else "$count") }
-                                }
-                            }
-                        },
-                        modifier = Modifier
-                            .combinedClickable(
-                                onClick = { onSelect(channel.index) },
-                                onLongClick = { onToggleMute(channel.index) },
-                                onLongClickLabel = if (channel.index in muted) "Unmute" else "Mute",
-                            )
-                            .then(
-                                if (channel.index == selected) {
-                                    Modifier.fillMaxWidth()
-                                } else {
-                                    Modifier
-                                },
-                            ),
+                        unread = unread[channel.index] ?: 0,
+                        muted = channel.index in muted,
+                        selected = channel.index == selected,
+                        onSelect = { onSelect(channel.index) },
+                        onToggleMute = { onToggleMute(channel.index) },
                     )
-                    HorizontalDivider()
+                    HorizontalDivider(
+                        color = FirepitTheme.colors.outline,
+                        modifier = Modifier.padding(start = 76.dp),
+                    )
                 }
+            }
+        }
+    }
+}
+
+/** Rooms and the primary channel. Direct messages arrive in Stage 8. */
+private enum class ChannelFilter(val label: String) {
+    ALL("All"),
+    ROOMS("Rooms"),
+}
+
+/**
+ * Which node we are speaking through, and how much charge it has left.
+ *
+ * The radio is a separate object that can be left behind or run flat, so its
+ * name and battery belong on the first screen rather than buried in settings.
+ */
+@Composable
+private fun NodeStatusLine(connected: Boolean, myNode: MeshNode?) {
+    Row(
+        modifier = Modifier.padding(horizontal = FirepitSpacing.screenMargin),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
+    ) {
+        LiveRing(size = 8.dp, live = connected)
+        Text(
+            text = when {
+                !connected -> "Not connected — open Settings"
+                myNode == null -> "Connected"
+                else -> buildString {
+                    append(myNode.displayName)
+                    myNode.batteryLevel?.let { level ->
+                        append(" · ")
+                        append(if (level > 100) "powered" else "$level%")
+                    }
+                }
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (connected) FirepitTheme.colors.textSecondary else FirepitTheme.colors.stale,
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ChannelRow(
+    channel: RoomChannel,
+    latest: ChatMessage?,
+    senderName: String?,
+    unread: Int,
+    muted: Boolean,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    onToggleMute: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                if (selected) FirepitTheme.colors.bubbleOut else MaterialTheme.colorScheme.surface,
+            )
+            .combinedClickable(
+                onClick = onSelect,
+                onLongClick = onToggleMute,
+                onLongClickLabel = if (muted) "Unmute" else "Mute",
+            )
+            .padding(horizontal = FirepitSpacing.screenMargin, vertical = FirepitSpacing.m),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
+    ) {
+        RoomAvatar(RoomIcon.forRoomId(channel.id))
+
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = channel.displayName,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
+            ) {
+                if (latest?.isOutgoing == true) StatusTick(latest.status)
+                Text(
+                    text = when {
+                        latest == null && channel.isRoom -> "Room · slot ${channel.index}"
+                        latest == null -> "Primary channel"
+                        latest.isOutgoing -> latest.text
+                        senderName != null -> "$senderName: ${latest.text}"
+                        else -> latest.text
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = FirepitTheme.colors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                text = latest?.let { MessageTimestamp.listFormat(it.sentAt) }.orEmpty(),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (unread > 0) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    FirepitTheme.colors.textSecondary
+                },
+            )
+            Spacer(Modifier.height(FirepitSpacing.xs))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
+            ) {
+                if (muted) {
+                    Icon(
+                        painter = painterResource(FirepitIcons.Mute),
+                        contentDescription = "Muted",
+                        tint = FirepitTheme.colors.textSecondary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+                // A muted room still counts unread; it just does not interrupt.
+                UnreadBadge(unread)
             }
         }
     }
@@ -383,7 +553,31 @@ private fun ChannelChat(
                             singleLine = true,
                         )
                     } else {
-                        Text(channel.displayName)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
+                        ) {
+                            RoomAvatar(RoomIcon.forRoomId(channel.id), size = 40.dp)
+                            Column {
+                                Text(
+                                    text = channel.displayName,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
+                                ) {
+                                    LiveRing(size = 8.dp, live = state.connected)
+                                    Text(
+                                        text = if (state.connected) "connected" else "not connected",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = FirepitTheme.colors.textSecondary,
+                                    )
+                                }
+                            }
+                        }
                     }
                 },
                 navigationIcon = {
@@ -569,7 +763,12 @@ private fun ReplyBanner(state: ChatsUiState, parent: ChatMessage, onCancel: () -
             )
         }
         IconButton(onClick = onCancel) {
-            Text("✕", style = MaterialTheme.typography.bodyLarge, color = FirepitTheme.colors.textSecondary)
+            Icon(
+                painter = painterResource(FirepitIcons.Close),
+                contentDescription = "Cancel reply",
+                tint = FirepitTheme.colors.textSecondary,
+                modifier = Modifier.size(18.dp),
+            )
         }
     }
 }
@@ -617,9 +816,28 @@ private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
                     }
                 },
                 maxLines = 4,
+                shape = RoundedCornerShape(24.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = FirepitTheme.colors.surface2,
+                    unfocusedContainerColor = FirepitTheme.colors.surface2,
+                    focusedBorderColor = FirepitTheme.colors.outline,
+                    unfocusedBorderColor = FirepitTheme.colors.outline,
+                ),
             )
-            FilledIconButton(onClick = viewModel::send, enabled = state.canSend) {
-                Text("↑", style = MaterialTheme.typography.titleLarge)
+            FilledIconButton(
+                onClick = viewModel::send,
+                enabled = state.canSend,
+                shape = CircleShape,
+                colors = IconButtonDefaults.filledIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                ),
+            ) {
+                Icon(
+                    painter = painterResource(FirepitIcons.Send),
+                    contentDescription = "Send",
+                    modifier = Modifier.size(20.dp),
+                )
             }
         }
     }

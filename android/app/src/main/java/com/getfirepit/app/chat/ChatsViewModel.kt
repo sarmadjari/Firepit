@@ -43,6 +43,10 @@ data class ChatsUiState(
     val query: String = "",
     /** Null until our radio reports; absent telemetry is not a clear channel. */
     val channelLoad: ChannelLoad? = null,
+    /** Our own node, for the header's name and battery. */
+    val myNode: MeshNode? = null,
+    /** Newest message per channel, for the list previews. */
+    val latest: Map<Int, ChatMessage> = emptyMap(),
 ) {
     val selectedChannel: RoomChannel? get() = channels.firstOrNull { it.index == selected }
     val draftBytes: Int get() = draft.toByteArray(Charsets.UTF_8).size
@@ -99,8 +103,15 @@ class ChatsViewModel @Inject constructor(
         channelState.observeMuted(),
         query,
         repository.channelLoad,
-    ) { unread, muted, query, load ->
-        ReadState(unread.associate { it.channel to it.count }, muted, query, load)
+        repository.observeLatestPerChannel(),
+    ) { unread, muted, query, load, latest ->
+        ReadState(
+            unread = unread.associate { it.channel to it.count },
+            muted = muted,
+            query = query,
+            channelLoad = load,
+            latest = latest.associateBy { it.channel },
+        )
     }
 
     val uiState: StateFlow<ChatsUiState> = combine(
@@ -118,6 +129,8 @@ class ChatsViewModel @Inject constructor(
             selected = selected,
             messages = messages,
             nodes = nodes.associateBy(MeshNode::nodeNum),
+            myNode = nodes.firstOrNull { it.nodeNum == repository.myNodeNum.value },
+            latest = read.latest,
             draft = composing.draft,
             error = composing.error,
             signingAvailable = composing.signingAvailable,
@@ -159,6 +172,7 @@ class ChatsViewModel @Inject constructor(
         val muted: Set<Int>,
         val query: String,
         val channelLoad: ChannelLoad?,
+        val latest: Map<Int, ChatMessage>,
     )
 
     fun updateQuery(text: String) {

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -92,11 +93,22 @@ fun MessageBubble(
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             if (isAlert) {
-                Text(
-                    text = "🔔 ALERT",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = FirepitTheme.colors.warn,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
+                ) {
+                    androidx.compose.material3.Icon(
+                        painter = androidx.compose.ui.res.painterResource(FirepitIcons.Bell),
+                        contentDescription = null,
+                        tint = FirepitTheme.colors.warn,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text(
+                        text = "ALERT",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = FirepitTheme.colors.warn,
+                    )
+                }
             }
             if (senderName != null && !isOutgoing && isFirstInGroup) {
                 Text(

@@ -71,10 +71,11 @@ fun RoomAvatar(
             .background(FirepitTheme.colors.bubbleOut),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = icon.glyph,
-            color = MaterialTheme.colorScheme.primary,
-            fontSize = (size.value * 0.42f).sp,
+        androidx.compose.material3.Icon(
+            painter = androidx.compose.ui.res.painterResource(icon.res),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(size * 0.5f),
         )
     }
 }
@@ -89,10 +90,13 @@ fun InfraAvatar(isRouter: Boolean, modifier: Modifier = Modifier, size: Dp = Fir
             .background(FirepitTheme.colors.infra),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = if (isRouter) "▲" else "⌂",
-            color = Color.White,
-            fontSize = (size.value * 0.40f).sp,
+        androidx.compose.material3.Icon(
+            painter = androidx.compose.ui.res.painterResource(
+                if (isRouter) RoomIcon.FLAG.res else RoomIcon.HOUSE.res,
+            ),
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.size(size * 0.5f),
         )
     }
 }

@@ -81,7 +81,7 @@ Product name **Firepit**; internal protocol name **MeshChat** (primary channel n
 - [ ] Create the repository and `CLAUDE.md`; copy the three docs + this file into `docs/`.
 - [ ] Write `protos/meshchat.proto`; vendor Meshtastic protobufs at tag v2.8.0; set up Wire / SwiftProtobuf generation; commit generated code or generate in CI.
 - [ ] Generate and commit the app-wide primary key (§4.5).
-- [ ] Implement design tokens (Ember light/dark) as theme files first (UX doc §9.1).
+- [x] Implement design tokens (Ember light/dark) as theme files first (UX doc §9.1). Android reference renders: `design/Firepit Android UI.pdf` (2026-09-10).
 - [ ] Flash test nodes: two on 2.7.26 stable, one on the current 2.8 release; note their node ids.
 - [ ] Vertical slice: pair → config download → send/receive one room message with honest ticks (guide §4, §6.2). Everything else builds on this.
 

@@ -32,6 +32,26 @@ object MessageTimestamp {
         }
     }
 
+    /**
+     * Chat-list variant: one short column, so it names the day or the date but
+     * never both, and drops the clock once a conversation is older than today.
+     */
+    fun listFormat(
+        epochMillis: Long,
+        today: LocalDate = LocalDate.now(),
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): String {
+        val moment = Instant.ofEpochMilli(epochMillis).atZone(zone)
+        val date = moment.toLocalDate()
+
+        return when {
+            date == today -> "%02d:%02d".format(moment.hour, moment.minute)
+            date == today.minusDays(1) -> "Yesterday"
+            date.year == today.year -> date.format(DAY_AND_MONTH)
+            else -> date.format(DAY_MONTH_YEAR)
+        }
+    }
+
     private val DAY_AND_MONTH = DateTimeFormatter.ofPattern("d MMM")
     private val DAY_MONTH_YEAR = DateTimeFormatter.ofPattern("d MMM yyyy")
 }

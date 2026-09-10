@@ -1,5 +1,6 @@
 package com.getfirepit.core.data
 
+import com.getfirepit.core.database.latestPerChannel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import org.meshtastic.proto.Telemetry
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -138,6 +139,9 @@ class MeshRepository @Inject constructor(
         .stateIn(scope, SharingStarted.Eagerly, null)
 
     fun observeChannel(channel: Int): Flow<List<ChatMessage>> = messageDao.observeChannel(channel)
+
+    /** Newest message per channel, for the chat list previews. */
+    fun observeLatestPerChannel(): Flow<List<ChatMessage>> = messageDao.latestPerChannel()
 
     fun observeNodes(): Flow<List<MeshNode>> = nodeDao.observeAll()
 

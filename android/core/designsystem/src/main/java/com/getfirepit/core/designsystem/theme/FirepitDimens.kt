@@ -24,6 +24,9 @@ object FirepitSpacing {
     val listRowHeight = 68.dp
     val avatarSize = 48.dp
 
+    val chipCorner = 10.dp
+    val cardCorner = 14.dp
+
     val bubblePaddingVertical = 10.dp
     val bubblePaddingHorizontal = 14.dp
 
