@@ -80,7 +80,7 @@ fun PinsScreen(
 
             if (state.pins.isEmpty()) {
                 Text(
-                    text = "No pins yet. Long-press the map to drop one.",
+                    text = "No pins yet. Use the pin button on the map, or long-press it.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = FirepitTheme.colors.textSecondary,
                     modifier = Modifier.padding(FirepitSpacing.screenMargin),

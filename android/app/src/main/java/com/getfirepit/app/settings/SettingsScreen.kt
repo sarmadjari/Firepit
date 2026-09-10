@@ -55,6 +55,7 @@ fun SettingsScreen(
     when (section) {
         SettingsSection.NODES -> RadioScreen(
             modifier = modifier.fillMaxSize(),
+            onBack = { section = null },
             viewModel = radioViewModel,
         )
 

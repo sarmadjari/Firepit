@@ -675,9 +675,12 @@ private fun ChannelChat(
                                 senderName = state.nodes[message.fromNodeNum]?.displayName,
                                 senderNodeNum = message.fromNodeNum,
                                 status = message.status.takeIf { message.isOutgoing },
-                                footnote = message.hopsAway?.let { hops ->
-                                    if (hops == 0) "direct" else "$hops hop${if (hops == 1) "" else "s"}"
-                                },
+                                // Only when it is worth knowing: a relayed
+                                // message may be slow or stale, a direct one is
+                                // unremarkable and said so on every bubble.
+                                footnote = message.hopsAway
+                                    ?.takeIf { it > 0 }
+                                    ?.let { hops -> "$hops hop${if (hops == 1) "" else "s"}" },
                                 quoted = parent?.let {
                                     QuotedMessage(
                                         senderName = state.nodes[it.fromNodeNum]?.displayName
@@ -869,8 +872,8 @@ private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
                     contentColor = MaterialTheme.colorScheme.onPrimary,
                     // Dimmed rather than greyed: the send button should still
                     // look like itself while the composer is empty.
-                    disabledContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.38f),
-                    disabledContentColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f),
+                    disabledContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+                    disabledContentColor = MaterialTheme.colorScheme.onPrimary,
                 ),
             ) {
                 Icon(

@@ -186,9 +186,9 @@ fun RoomMembersScreen(
                             ) {
                                 Text(
                                     if ((trace as? TraceState.Running)?.nodeNum == row.member.nodeNum) {
-                                        "Checking…"
+                                        "…"
                                     } else {
-                                        "Check path"
+                                        "Path"
                                     },
                                 )
                             }

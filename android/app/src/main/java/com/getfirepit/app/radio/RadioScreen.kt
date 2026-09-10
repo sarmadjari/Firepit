@@ -1,12 +1,8 @@
 package com.getfirepit.app.radio
 
-import com.getfirepit.core.protocol.MeshConstants
-import com.getfirepit.core.model.MeshNode
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.AlertDialog
-import android.text.format.DateUtils
 import android.Manifest
 import android.os.Build
+import android.text.format.DateUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -17,30 +13,42 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.getfirepit.core.designsystem.component.BackButton
+import com.getfirepit.core.designsystem.component.IdentityAvatar
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
+import com.getfirepit.core.model.MeshNode
+import com.getfirepit.core.protocol.MeshConstants
 import com.getfirepit.core.transport.LinkState
 
-/**
- * Stage 1 harness: scan, connect, and show what the config download returned.
- * Replaced by the real shell in Stage 3.
- */
+/** Connect a radio, and show what it and the mesh around it look like. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun RadioScreen(modifier: Modifier = Modifier, viewModel: RadioViewModel = hiltViewModel()) {
+fun RadioScreen(
+    modifier: Modifier = Modifier,
+    onBack: () -> Unit = {},
+    viewModel: RadioViewModel = hiltViewModel(),
+) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -52,47 +60,60 @@ fun RadioScreen(modifier: Modifier = Modifier, viewModel: RadioViewModel = hiltV
         if (required.values.all { it }) viewModel.startScan()
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(FirepitSpacing.screenMargin),
-        verticalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
-    ) {
-        Text("Firepit — radio link", style = MaterialTheme.typography.headlineLarge)
-        LinkStatus(state.link)
+    Scaffold(
+        modifier = modifier,
+        topBar = {
+            TopAppBar(
+                title = { Text("Radio") },
+                navigationIcon = { BackButton(onClick = onBack) },
+            )
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .fillMaxSize()
+                .padding(horizontal = FirepitSpacing.screenMargin),
+            verticalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
+        ) {
+            LinkStatus(state.link)
 
-        Row(horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s)) {
-            Button(onClick = { permissionLauncher.launch(blePermissions()) }) {
-                Text(if (state.scanning) "Scanning…" else "Scan")
+            Row(horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s)) {
+                Button(onClick = { permissionLauncher.launch(blePermissions()) }) {
+                    Text(if (state.scanning) "Scanning…" else "Scan")
+                }
+                OutlinedButton(onClick = viewModel::disconnect) { Text("Disconnect") }
             }
-            OutlinedButton(onClick = viewModel::disconnect) { Text("Disconnect") }
-        }
 
-        state.error?.let { message ->
-            Text(message, color = FirepitTheme.colors.danger, style = MaterialTheme.typography.bodyMedium)
-        }
+            state.error?.let { message ->
+                Text(message, color = FirepitTheme.colors.danger, style = MaterialTheme.typography.bodyMedium)
+            }
 
-        val details = state.details
-        if (details == null) {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s)) {
-                items(state.found, key = { it.identifier }) { radio ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = { viewModel.connect(radio) },
-                    ) {
-                        Column(Modifier.padding(FirepitSpacing.m)) {
-                            Text(radio.name ?: "(unnamed radio)", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                "${radio.identifier} · ${radio.rssi} dBm",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = FirepitTheme.colors.textSecondary,
-                            )
+            val details = state.details
+            if (details == null) {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s)) {
+                    items(state.found, key = { it.identifier }) { radio ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { viewModel.connect(radio) },
+                        ) {
+                            Column(Modifier.padding(FirepitSpacing.m)) {
+                                Text(
+                                    text = radio.name ?: "(unnamed radio)",
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                Text(
+                                    "${radio.identifier} · ${radio.rssi} dBm",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = FirepitTheme.colors.textSecondary,
+                                )
+                            }
                         }
                     }
                 }
+            } else {
+                RadioDetailsView(details = details, state = state, onCheckPath = viewModel::checkPath)
             }
-        } else {
-            RadioDetailsView(details = details, state = state, onCheckPath = viewModel::checkPath)
         }
     }
 
@@ -137,21 +158,22 @@ private fun RadioDetailsView(
     LazyColumn(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
-                Field("Node", "${details.nodeId}  (${details.nodeNum})")
+                Field("Node", details.nodeId, monospace = true)
                 Field("Firmware", details.firmware)
-                Field("Hardware", details.hardware)
-                Field("Region", details.region)
-                Field("Reboots", details.rebootCount.toString())
-                Field("PKI", details.capabilities.supportsPki.toString())
-                Field("Signing (2.8)", details.capabilities.supportsSigning.toString())
+                Field("Hardware", prettyName(details.hardware))
+                Field("Region", details.region.replace('_', ' '))
+                Field("Encryption keys", if (details.capabilities.supportsPki) "Yes" else "No")
+                Field("Signed messages", if (details.capabilities.supportsSigning) "Yes" else "No")
                 HorizontalDivider(Modifier.padding(vertical = FirepitSpacing.s))
                 Text("Channels", style = MaterialTheme.typography.titleMedium)
             }
         }
-        items(details.channels, key = { it.index }) { channel ->
+        // Empty slots are the radio's business, not the reader's: six lines of
+        // DISABLED buried the two channels actually in use.
+        items(details.channels.filter { it.role != "DISABLED" }, key = { it.index }) { channel ->
             Field(
-                "${channel.index}  ${channel.role}",
-                "${channel.name}  precision ${channel.precision}",
+                "${channel.index}  ${channel.role.lowercase().replaceFirstChar(Char::uppercase)}",
+                channel.name,
             )
         }
 
@@ -185,27 +207,44 @@ private fun NodeRow(
     onCheckPath: () -> Unit,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = FirepitSpacing.xs),
+        modifier = Modifier.fillMaxWidth().padding(vertical = FirepitSpacing.s),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
     ) {
+        IdentityAvatar(
+            nodeNum = node.nodeNum,
+            tag = node.shortName,
+            name = node.displayName,
+            size = 36.dp,
+        )
         Column(Modifier.weight(1f)) {
             Text(
                 text = if (isSelf) "${node.displayName} (this radio)" else node.displayName,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = nodeDetail(node),
                 style = MaterialTheme.typography.bodySmall,
                 color = FirepitTheme.colors.textSecondary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
         }
         if (!isSelf) {
             TextButton(onClick = onCheckPath, enabled = enabled) {
-                Text(if (tracing) "Checking…" else "Check path")
+                Text(if (tracing) "…" else "Path")
             }
         }
     }
 }
+
+/** WISMESH_TAG reads as shouting; the radio's own name does not. */
+private fun prettyName(raw: String): String = raw
+    .split('_')
+    .filter { it.isNotBlank() }
+    .joinToString(" ") { part -> part.lowercase().replaceFirstChar(Char::uppercase) }
 
 /** Nodes report their own last_heard and some have no clock, so an unheard node says so plainly. */
 private fun nodeDetail(node: MeshNode): String = buildList {
@@ -214,18 +253,35 @@ private fun nodeDetail(node: MeshNode): String = buildList {
     node.snr?.let { add("%.1f dB".format(it)) }
     // The firmware reports above 100 for a node running on mains, not a full battery.
     node.batteryLevel?.let { add(if (it > 100) "powered" else "$it%") }
-    add(node.lastHeard?.let { "heard " + DateUtils.getRelativeTimeSpanString(it) } ?: "not heard yet")
+    add(node.lastHeard?.let { "heard ${shortAge(it)}" } ?: "not heard yet")
 }.joinToString(" · ")
 
+/** Compact enough to sit on one line beside everything else. */
+private fun shortAge(epochMillis: Long): String {
+    val minutes = (System.currentTimeMillis() - epochMillis) / 60_000
+    return when {
+        minutes < 1 -> "just now"
+        minutes < 60 -> "${minutes}m ago"
+        minutes < 60 * 24 -> "${minutes / 60}h ago"
+        minutes < 60 * 24 * 30 -> "${minutes / (60 * 24)}d ago"
+        else -> "long ago"
+    }
+}
+
 @Composable
-private fun Field(label: String, value: String) {
+private fun Field(label: String, value: String, monospace: Boolean = false) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(label, style = MaterialTheme.typography.bodyMedium, color = FirepitTheme.colors.textSecondary)
-        Text(value, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            // Only for things read out character by character.
+            fontFamily = if (monospace) FontFamily.Monospace else null,
+        )
     }
 }
 

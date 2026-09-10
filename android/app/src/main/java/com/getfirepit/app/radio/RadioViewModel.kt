@@ -163,7 +163,9 @@ private fun com.getfirepit.core.protocol.phoneapi.RadioSnapshot.toDetails() = Ra
         ChannelRow(
             index = channel.index,
             role = channel.role.name,
-            name = channel.settings?.name?.ifBlank { "(preset name)" } ?: "",
+            // An unnamed channel is running the region's preset, which is what
+            // the radio will actually use.
+            name = channel.settings?.name?.ifBlank { "Default preset" } ?: "",
             precision = channel.settings?.module_settings?.position_precision ?: 0,
         )
     },
