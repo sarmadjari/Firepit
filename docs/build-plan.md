@@ -379,6 +379,43 @@ permission-denial paths, crash-free session.
 
 **Gate:** two phones + two nodes — create → invite → chat → map, a full afternoon, no internet.
 
+### Built
+
+- **Traceroute.** The roster can ask the mesh how it reaches a member. This exists because
+  the obvious request — "how many nodes heard my message" — cannot be answered: implicit ACK
+  stops at the first overheard rebroadcast, and no count is carried. Rather than invent a
+  number, the app measures the path on demand and says plainly that a path is not a receipt.
+- **Channel congestion warning** above the composer. Read from telemetry as it arrives, not
+  once from NodeInfo at connection, which would have aged into a lie within minutes.
+- **Automatic reconnect** to the last radio on launch, by scanning for its identifier rather
+  than addressing it directly, so a radio that is off simply never appears. An explicit
+  disconnect forgets it, so the next launch does not undo a deliberate choice.
+- **Permission-denial paths.** Camera and location denial now explain themselves and offer
+  the settings screen instead of failing silently.
+
+### Bugs this stage exposed
+
+- **The GPS ran while the app was backgrounded.** `DisposableEffect` fires when a screen
+  leaves the composition, and backgrounding does not do that. `dumpsys location` showed our
+  client active 33 of the last 35 minutes with `locations = 0` — burning power for a map
+  nobody could see. Now bound to the lifecycle; verified by watching the system log a
+  `-registration` on pressing Home.
+- **Notification permission was handled by catching the failure.** A denied permission then
+  looked exactly like a delivered notification. Now checked, and the suppression is logged.
+- **The app never reconnected to your radio.** Every restart needed a manual trip through
+  Settings. Found by trying to test reconnect storms and getting no link at all.
+
+### Not verified
+
+- **Battery over 8 h.** Cannot be measured while the phone is tethered for adb, which it must
+  be to drive these tests. What was checked instead: no wakelocks are held, and the location
+  request is `LOW_POWER`. The 8 h figure needs the phone unplugged and left alone.
+- **Reconnect storms.** Bluetooth was cycled and the app survived without crashing, but with
+  no radio connected at the time this proves only that nothing threw.
+- **Crash-free session.** No crash or ANR across this session's repeated restarts, but that is
+  an afternoon of hammering short of the claim.
+- **The gate itself.** Still needs a second phone and a second node. Unmet since Stage 4.
+
 ---
 
 ## Stage 8 — v1.0 features
