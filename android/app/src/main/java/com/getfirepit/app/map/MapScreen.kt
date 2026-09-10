@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -168,6 +169,7 @@ fun MapScreen(
             Column(
                 modifier = Modifier
                     .align(Alignment.TopStart)
+                    .statusBarsPadding()
                     .fillMaxWidth()
                     // Stops short of the controls stacked in the top corner,
                     // which were clipping the text.
@@ -207,6 +209,7 @@ fun MapScreen(
                 onClick = { markerLayer.frameAll(state.markers, force = true) },
                 modifier = Modifier
                     .align(Alignment.TopEnd)
+                    .statusBarsPadding()
                     .padding(FirepitSpacing.m),
             )
 
@@ -216,6 +219,7 @@ fun MapScreen(
                 onClick = onOpenOfflineAreas,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
+                    .statusBarsPadding()
                     .padding(
                         top = FirepitSpacing.m + CONTROL_SIZE + FirepitSpacing.s,
                         end = FirepitSpacing.m,
@@ -228,6 +232,7 @@ fun MapScreen(
                 onClick = { markerLayer.centre()?.let { droppingAt = it } },
                 modifier = Modifier
                     .align(Alignment.TopEnd)
+                    .statusBarsPadding()
                     .padding(
                         top = FirepitSpacing.m + (CONTROL_SIZE + FirepitSpacing.s) * 2,
                         end = FirepitSpacing.m,

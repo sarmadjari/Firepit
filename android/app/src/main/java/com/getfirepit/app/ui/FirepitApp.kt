@@ -117,6 +117,7 @@ fun FirepitApp(modifier: Modifier = Modifier) {
             // in the tree would stack with the space the bar reserves.
             modifier = modifier.imePadding(),
             containerColor = MaterialTheme.colorScheme.surface,
+            contentWindowInsets = WindowInsets(0),
             bottomBar = {
                 AnimatedVisibility(
                     visible = !immersive,
@@ -137,7 +138,9 @@ fun FirepitApp(modifier: Modifier = Modifier) {
                 }
             },
         ) { padding ->
-            Box(Modifier.padding(padding)) { screen() }
+            // Bottom only. Each screen's own bar already inset itself for the
+            // status bar, and padding here as well left a dead band above it.
+            Box(Modifier.padding(bottom = padding.calculateBottomPadding())) { screen() }
         }
     }
 }

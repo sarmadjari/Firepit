@@ -21,7 +21,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.getfirepit.core.designsystem.theme.BubbleShape
@@ -60,8 +64,9 @@ fun MessageBubble(
     isAlert: Boolean = false,
     quoted: QuotedMessage? = null,
     onQuoteClick: (() -> Unit)? = null,
-    isFirstInGroup: Boolean = true,
-    isLastInGroup: Boolean = true,
+    /** Runs to paint, decided by the caller that owns the search. */
+    highlight: List<IntRange> = emptyList(),
+    isFirstInGroup: Boolean = true,    isLastInGroup: Boolean = true,
 ) {
     val dark = FirepitTheme.colors.isDark
     val shape = bubbleShapeFor(isOutgoing, isLastInGroup)
@@ -123,7 +128,7 @@ fun MessageBubble(
             quoted?.let { QuotedBlock(it, dark, onQuoteClick) }
 
             Text(
-                text = text,
+                text = highlighted(text, highlight, FirepitTheme.colors.warn),
                 style = MaterialTheme.typography.bodyLarge,
             )
 
@@ -152,8 +157,22 @@ fun MessageBubble(
     }
 }
 
-/** Caps the bubble at a share of the parent width, per the UX spec. */
-private fun Modifier.constrainToBubbleWidth() = layout { measurable, constraints ->
+/** Paints the search runs, leaving the rest of the message alone. */
+@Composable
+private fun highlighted(text: String, runs: List<IntRange>, tint: Color): AnnotatedString {
+    if (runs.isEmpty()) return AnnotatedString(text)
+    return buildAnnotatedString {
+        append(text)
+        runs.forEach { run ->
+            // A stale range from a query that changed under us would crash.
+            val from = run.first.coerceIn(0, text.length)
+            val to = (run.last + 1).coerceIn(from, text.length)
+            addStyle(SpanStyle(background = tint.copy(alpha = 0.35f)), from, to)
+        }
+    }
+}
+
+/** Caps the bubble at a share of the parent width, per the UX spec. */private fun Modifier.constrainToBubbleWidth() = layout { measurable, constraints ->
     val maxWidth = (constraints.maxWidth * FirepitSpacing.BUBBLE_MAX_WIDTH_FRACTION).toInt()
     val placeable = measurable.measure(constraints.copy(minWidth = 0, maxWidth = maxWidth))
     layout(placeable.width, placeable.height) { placeable.place(0, 0) }

@@ -25,6 +25,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Badge
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -61,6 +62,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -799,12 +803,59 @@ private fun ChannelChat(
             TopAppBar(
                 title = {
                     if (searching) {
-                        OutlinedTextField(
+                        val focus = remember { FocusRequester() }
+                        LaunchedEffect(Unit) { focus.requestFocus() }
+
+                        BasicTextField(
                             value = state.query,
                             onValueChange = viewModel::updateQuery,
-                            modifier = Modifier.fillMaxWidth(),
-                            placeholder = { Text("Search this room") },
                             singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                color = FirepitTheme.colors.textPrimary,
+                            ),
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(focus),
+                            decorationBox = { field ->
+                                // A bar, not a boxed form field: it sits in the
+                                // header and only ever holds one short phrase.
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .background(FirepitTheme.colors.surface2)
+                                        .padding(horizontal = FirepitSpacing.m, vertical = 10.dp),
+                                ) {
+                                    Icon(
+                                        painter = painterResource(FirepitIcons.Search),
+                                        contentDescription = null,
+                                        tint = FirepitTheme.colors.textSecondary,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                    Box(Modifier.weight(1f)) {
+                                        if (state.query.isEmpty()) {
+                                            Text(
+                                                text = "Search this room",
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                color = FirepitTheme.colors.textSecondary,
+                                            )
+                                        }
+                                        field()
+                                    }
+                                    if (state.query.isNotEmpty()) {
+                                        Icon(
+                                            painter = painterResource(FirepitIcons.Close),
+                                            contentDescription = "Clear search",
+                                            tint = FirepitTheme.colors.textSecondary,
+                                            modifier = Modifier
+                                                .size(18.dp)
+                                                .clickable { viewModel.updateQuery("") },
+                                        )
+                                    }
+                                }
+                            },
                         )
                     } else {
                         Row(
@@ -935,6 +986,11 @@ private fun ChannelChat(
                                 },
                                 isFirstInGroup = item.isFirstInGroup,
                                 isLastInGroup = item.isLastInGroup,
+                                highlight = if (state.isSearching) {
+                                    highlightRanges(message.text, state.query)
+                                } else {
+                                    emptyList()
+                                },
                                 // Tight inside a block, open between speakers.
                                 modifier = Modifier
                                     .padding(top = if (item.isFirstInGroup) FirepitSpacing.s else 2.dp)
