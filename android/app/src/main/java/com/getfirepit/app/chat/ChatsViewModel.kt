@@ -1,5 +1,6 @@
 package com.getfirepit.app.chat
 
+import com.getfirepit.core.protocol.ChannelLoad
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.getfirepit.core.data.ChatPresence
@@ -40,6 +41,8 @@ data class ChatsUiState(
     val unread: Map<Int, Int> = emptyMap(),
     val muted: Set<Int> = emptySet(),
     val query: String = "",
+    /** Null until our radio reports; absent telemetry is not a clear channel. */
+    val channelLoad: ChannelLoad? = null,
 ) {
     val selectedChannel: RoomChannel? get() = channels.firstOrNull { it.index == selected }
     val draftBytes: Int get() = draft.toByteArray(Charsets.UTF_8).size
@@ -95,8 +98,9 @@ class ChatsViewModel @Inject constructor(
         channelState.observeUnread(),
         channelState.observeMuted(),
         query,
-    ) { unread, muted, query ->
-        ReadState(unread.associate { it.channel to it.count }, muted, query)
+        repository.channelLoad,
+    ) { unread, muted, query, load ->
+        ReadState(unread.associate { it.channel to it.count }, muted, query, load)
     }
 
     val uiState: StateFlow<ChatsUiState> = combine(
@@ -125,6 +129,7 @@ class ChatsViewModel @Inject constructor(
             unread = read.unread,
             muted = read.muted,
             query = read.query,
+            channelLoad = read.channelLoad,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatsUiState())
 
@@ -153,6 +158,7 @@ class ChatsViewModel @Inject constructor(
         val unread: Map<Int, Int>,
         val muted: Set<Int>,
         val query: String,
+        val channelLoad: ChannelLoad?,
     )
 
     fun updateQuery(text: String) {

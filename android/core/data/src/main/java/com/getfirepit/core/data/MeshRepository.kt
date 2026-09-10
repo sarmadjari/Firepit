@@ -1,5 +1,11 @@
 package com.getfirepit.core.data
 
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import org.meshtastic.proto.Telemetry
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flatMapLatest
+import com.getfirepit.core.protocol.ChannelLoad
 import android.util.Log
 import com.getfirepit.core.database.MessageDao
 import com.getfirepit.core.database.NodeDao
@@ -60,6 +66,7 @@ import org.meshtastic.proto.User
  * the UI back out. Nothing above this layer touches the transport.
  */
 @Singleton
+@OptIn(ExperimentalCoroutinesApi::class)
 class MeshRepository @Inject constructor(
     private val link: RadioLink,
     private val messageDao: MessageDao,
@@ -107,11 +114,28 @@ class MeshRepository @Inject constructor(
                 ?.let { runCatching { it.decodeBase64() }.getOrNull() }
                 ?.takeIf { it.size == PUBLIC_KEY_SIZE }
 
-    val isConnected: StateFlow<Boolean> = _myNodeNum
-        .map { it != null }
+    // Derived from the link, not from myNodeNum: that is remembered across
+    // sessions so the map can identify us offline, and would otherwise report a
+    // connection that does not exist.
+    val isConnected: StateFlow<Boolean> = link.state
+        .map { it is LinkState.Ready }
         .stateIn(scope, SharingStarted.Eagerly, false)
 
     private var hopLimit: Int = MeshConstants.DEFAULT_HOP_LIMIT
+
+    /**
+     * How busy our own radio finds the channel, or null before it says.
+     *
+     * Read from our own node rather than the mesh average: congestion is local,
+     * and it is our antenna that has to find a gap to speak in.
+     */
+    val channelLoad: StateFlow<ChannelLoad?> = _myNodeNum
+        .flatMapLatest { nodeNum ->
+            if (nodeNum == null) flowOf(null) else nodeDao.observeAll()
+                .map { nodes -> ChannelLoad.of(nodes.firstOrNull { it.nodeNum == nodeNum }?.channelUtilization) }
+        }
+        .distinctUntilChanged()
+        .stateIn(scope, SharingStarted.Eagerly, null)
 
     fun observeChannel(channel: Int): Flow<List<ChatMessage>> = messageDao.observeChannel(channel)
 
@@ -225,8 +249,27 @@ class MeshRepository @Inject constructor(
 
             PortNum.ROUTING_APP -> handleRouting(packet, data)
             PortNum.POSITION_APP -> handlePosition(packet, data)
+            PortNum.TELEMETRY_APP -> handleTelemetry(packet, data)
             else -> Unit
         }
+    }
+
+    /**
+     * Records how busy the air is around a node.
+     *
+     * NodeInfo carries these figures once at connection and never again, so
+     * without this the congestion warning would age into a lie within minutes.
+     */
+    private suspend fun handleTelemetry(packet: MeshPacket, data: Data) {
+        val metrics = runCatching { Telemetry.ADAPTER.decode(data.payload) }.getOrNull()
+            ?.device_metrics ?: return
+        nodeDao.updateMetrics(
+            nodeNum = packet.from,
+            batteryLevel = metrics.battery_level,
+            voltage = metrics.voltage,
+            channelUtilization = metrics.channel_utilization,
+            airUtilTx = metrics.air_util_tx,
+        )
     }
 
     private suspend fun handlePosition(packet: MeshPacket, data: Data) {

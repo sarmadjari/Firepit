@@ -1,5 +1,10 @@
 package com.getfirepit.app.notifications
 
+import android.util.Log
+import androidx.core.content.ContextCompat
+import android.content.pm.PackageManager
+import android.os.Build
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -75,9 +80,18 @@ class MessageNotifier @Inject constructor(
             .setGroup(GROUP)
             .build()
 
-        runCatching {
-            NotificationManagerCompat.from(context).notify(message.channel, notification)
+        // Checked rather than caught: a denied permission is a standing state,
+        // not an error, and swallowing it would leave someone believing they
+        // were being alerted to messages they never saw. Inline because lint
+        // only recognises the guard at the call site.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.i(TAG, "notification suppressed: POST_NOTIFICATIONS not granted")
+            return
         }
+        NotificationManagerCompat.from(context).notify(message.channel, notification)
     }
 
     private fun createChannel() {
@@ -90,6 +104,8 @@ class MessageNotifier @Inject constructor(
     }
 
     companion object {
+        private const val TAG = "FirepitNotify"
+
         const val EXTRA_CHANNEL = "com.getfirepit.app.CHANNEL"
         private const val CHANNEL_ID = "messages"
         private const val GROUP = "com.getfirepit.app.MESSAGES"

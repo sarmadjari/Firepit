@@ -71,6 +71,30 @@ interface NodeDao {
         positionTime: Long?,
         positionPrecision: Int?,
     )
+
+    /**
+     * Writes telemetry without touching identity.
+     *
+     * COALESCE keeps the previous reading when a packet omits a field, so a
+     * battery-only report does not erase the channel figures beside it.
+     */
+    @Query(
+        """
+        UPDATE nodes SET
+            batteryLevel = COALESCE(:batteryLevel, batteryLevel),
+            voltage = COALESCE(:voltage, voltage),
+            channelUtilization = COALESCE(:channelUtilization, channelUtilization),
+            airUtilTx = COALESCE(:airUtilTx, airUtilTx)
+        WHERE nodeNum = :nodeNum
+        """,
+    )
+    suspend fun updateMetrics(
+        nodeNum: Int,
+        batteryLevel: Int?,
+        voltage: Float?,
+        channelUtilization: Float?,
+        airUtilTx: Float?,
+    )
 }
 
 fun NodeDao.observeAll(): Flow<List<MeshNode>> =

@@ -1,5 +1,6 @@
 package com.getfirepit.app.map
 
+import androidx.lifecycle.compose.LifecycleStartEffect
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
@@ -68,6 +69,7 @@ fun MapScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var pickingRoom by remember { mutableStateOf(false) }
     var pendingRoomId by remember { mutableStateOf<Int?>(null) }
+    var locationDenied by remember { mutableStateOf(false) }
     val dark = FirepitTheme.colors.isDark
     val context = LocalContext.current
 
@@ -78,15 +80,20 @@ fun MapScreen(
         if (granted.values.any { it }) {
             viewModel.setMapVisible(true)
             pendingRoomId?.let(viewModel::shareWith)
-        } else if (pendingRoomId != null) {
-            viewModel.reportPermissionDenied()
+        } else {
+            locationDenied = true
+            if (pendingRoomId != null) viewModel.reportPermissionDenied()
         }
         pendingRoomId = null
     }
 
     // Asked on opening the map, not on sharing: showing yourself is local and
     // has no privacy consequence, so it should not require opting into a room.
-    DisposableEffect(Unit) {
+    //
+    // Bound to the lifecycle rather than the composition: backgrounding the app
+    // does not dispose this screen, so a plain DisposableEffect left the GPS
+    // running with the screen off, drawing power for a map nobody could see.
+    LifecycleStartEffect(Unit) {
         if (hasLocationPermission(context)) {
             viewModel.setMapVisible(true)
         } else {
@@ -97,7 +104,7 @@ fun MapScreen(
                 ),
             )
         }
-        onDispose { viewModel.setMapVisible(false) }
+        onStopOrDispose { viewModel.setMapVisible(false) }
     }
 
     // Held so redraws reuse one manager: a new one per update would stack
@@ -166,6 +173,13 @@ fun MapScreen(
                 verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
             ) {
                 when {
+                    // Ordered by what blocks the user soonest, so a fixable
+                    // problem is never hidden behind an informational one.
+                    locationDenied -> MapNotice(
+                        "Location is off, so your own position cannot be shown. " +
+                            "Turn it on in Android settings.",
+                    )
+
                     !state.connected -> MapNotice("Not connected — open Settings to reach your node.")
                     offlineOnly && areas.isEmpty() -> MapNotice(
                         "Offline maps only is on but nothing is downloaded, so the map is blank. " +

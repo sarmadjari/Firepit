@@ -2,10 +2,29 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Scanning invite QR codes. Bluetooth permissions merge in from Kable. -->
+    <!-- Scanning invite QR codes. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <!-- Optional: a device with no camera can still be invited by someone else. -->
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
+    <!-- Declared here rather than inherited from Kable's manifest: these are
+         requested at runtime, and a permission the app does not declare cannot
+         be granted. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!-- Sharing your position, showing it to yourself, and on Android 10-11
+         getting any BLE scan results at all. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- Bluetooth on Android 11 and below, where the modern split does not exist. -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
 
     <!-- Map tiles. Declared here rather than inherited from MapLibre's manifest,
          because the map stops working without it. -->

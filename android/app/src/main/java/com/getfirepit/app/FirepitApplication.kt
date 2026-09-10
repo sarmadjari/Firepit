@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
+import com.getfirepit.app.radio.RadioSessionController
 import com.getfirepit.app.notifications.MessageNotifier
 import com.getfirepit.core.data.ChatPresence
 import com.getfirepit.core.data.LocationRepository
@@ -30,6 +31,8 @@ class FirepitApplication : Application() {
 
     @Inject lateinit var presence: ChatPresence
 
+    @Inject lateinit var radioSession: RadioSessionController
+
     override fun onCreate() {
         super.onCreate()
         // The inbound pump must outlive every screen, so it starts here rather
@@ -40,6 +43,8 @@ class FirepitApplication : Application() {
         waypointRepository.start()
         locationRepository.start()
         messageNotifier.start()
+        // Last, so the stores above are listening before packets arrive.
+        radioSession.reconnectLastRadio()
 
         ProcessLifecycleOwner.get().lifecycle.addObserver(
             object : DefaultLifecycleObserver {

@@ -6,12 +6,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -44,6 +46,7 @@ fun RoomMembersScreen(
 ) {
     val membersFlow = remember(roomId) { viewModel.members(roomId) }
     val members by membersFlow.collectAsStateWithLifecycle(emptyList())
+    val trace by viewModel.trace.collectAsStateWithLifecycle()
 
     Scaffold(
         modifier = modifier,
@@ -120,11 +123,46 @@ fun RoomMembersScreen(
                                 name = row.displayName,
                             )
                         },
+                        trailingContent = {
+                            if (!row.isSelf) {
+                                TextButton(
+                                    onClick = { viewModel.checkPath(row.member.nodeNum, row.displayName) },
+                                    enabled = trace !is TraceState.Running,
+                                ) {
+                                    Text(
+                                        if ((trace as? TraceState.Running)?.nodeNum == row.member.nodeNum) {
+                                            "Checking…"
+                                        } else {
+                                            "Check path"
+                                        },
+                                    )
+                                }
+                            }
+                        },
                     )
                     HorizontalDivider()
                 }
             }
         }
+    }
+
+    (trace as? TraceState.Done)?.let { done ->
+        AlertDialog(
+            onDismissRequest = viewModel::clearTrace,
+            title = { Text("Path check") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s)) {
+                    Text(done.summary, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = "A path is not a delivery receipt. It shows the mesh could reach " +
+                            "them just now, not that they read anything.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FirepitTheme.colors.textSecondary,
+                    )
+                }
+            },
+            confirmButton = { TextButton(onClick = viewModel::clearTrace) { Text("Close") } },
+        )
     }
 }
 

@@ -6,10 +6,12 @@ import com.getfirepit.core.crypto.InviteCodec
 import com.getfirepit.core.crypto.RoomCrypto
 import com.getfirepit.core.data.MeshRepository
 import com.getfirepit.core.data.RoomRepository
+import com.getfirepit.core.data.TracerouteClient
 import com.getfirepit.core.model.MeshNode
 import com.getfirepit.core.model.RoomChannel
 import com.getfirepit.core.model.RoomMember
 import com.getfirepit.core.protocol.ChannelSlotManager
+import com.getfirepit.core.protocol.MeshConstants
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.seconds
@@ -19,6 +21,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -39,6 +42,13 @@ data class RoomsUiState(
     val error: String? = null,
 )
 
+/** What a path check is doing, for one member at a time. */
+sealed interface TraceState {
+    data object Idle : TraceState
+    data class Running(val nodeNum: Int) : TraceState
+    data class Done(val nodeNum: Int, val summary: String) : TraceState
+}
+
 /** A roster row: who they are, plus who vouched for them if anyone did. */
 data class MemberRow(
     val member: RoomMember,
@@ -54,7 +64,40 @@ data class MemberRow(
 class RoomsViewModel @Inject constructor(
     private val rooms: RoomRepository,
     private val mesh: MeshRepository,
+    private val traceroute: TracerouteClient,
 ) : ViewModel() {
+
+    private val _trace = MutableStateFlow<TraceState>(TraceState.Idle)
+    val trace: StateFlow<TraceState> = _trace.asStateFlow()
+
+    /**
+     * Checks the path to a member.
+     *
+     * The mesh cannot say who received a message, but it can say how it reaches
+     * a node, which is the question behind the asking.
+     */
+    fun checkPath(nodeNum: Int, name: String) {
+        viewModelScope.launch {
+            _trace.value = TraceState.Running(nodeNum)
+            val result = runCatching { traceroute.trace(nodeNum) }.getOrNull()
+            _trace.value = TraceState.Done(
+                nodeNum = nodeNum,
+                summary = when {
+                    result == null -> "No reply from $name. They may be out of range."
+                    result.isDirect -> "$name answered directly, no relay."
+                    else -> "$name is ${result.hopsOut} hops away, via " +
+                        result.towards.joinToString(", ") { hop ->
+                            MeshConstants.formatNodeId(hop.nodeNum) +
+                                (hop.snr?.let { " (%.1f dB)".format(it) } ?: "")
+                        }
+                },
+            )
+        }
+    }
+
+    fun clearTrace() {
+        _trace.value = TraceState.Idle
+    }
 
     private val busy = MutableStateFlow(false)
     private val invite = MutableStateFlow<InviteState?>(null)

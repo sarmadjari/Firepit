@@ -22,9 +22,11 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.getfirepit.app.permissions.PermissionNeeded
+import com.getfirepit.app.permissions.openAppSettings
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.BinaryBitmap
 import com.google.zxing.DecodeHintType
@@ -67,7 +69,13 @@ fun QrScanner(
     }
 
     if (!granted) {
-        Box(modifier.fillMaxSize())
+        PermissionNeeded(
+            title = "Camera needed to scan",
+            body = "An invite is a QR code, so Firepit needs the camera to read it. " +
+                "Nothing is recorded or sent anywhere.",
+            onOpenSettings = { context.openAppSettings() },
+            modifier = modifier.fillMaxSize(),
+        )
         return
     }
 

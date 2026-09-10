@@ -25,7 +25,15 @@ class SessionStore @Inject constructor(
             preferences.edit { putInt(KEY_MY_NODE_NUM, value ?: 0) }
         }
 
+    /** BLE identifier of the last radio we connected to, for reconnecting without asking. */
+    var lastRadioId: String?
+        get() = preferences.getString(KEY_LAST_RADIO, null)
+        set(value) {
+            preferences.edit { putString(KEY_LAST_RADIO, value) }
+        }
+
     private companion object {
         const val KEY_MY_NODE_NUM = "my_node_num"
+        const val KEY_LAST_RADIO = "last_radio_id"
     }
 }

@@ -1,5 +1,6 @@
 package com.getfirepit.app.chat
 
+import com.getfirepit.core.protocol.ChannelLoad
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -502,6 +503,30 @@ private fun ChannelChat(
     }
 }
 
+/**
+ * Warns when the air is too busy to speak into.
+ *
+ * Shown above the composer rather than after sending, because the useful moment
+ * is before you rely on a message arriving, not once it has already stalled.
+ */
+@Composable
+private fun CongestionNotice(load: ChannelLoad?) {
+    if (load == null || load == ChannelLoad.CLEAR) return
+    val congested = load == ChannelLoad.CONGESTED
+    Text(
+        text = if (congested) {
+            "Channel is congested — messages may not get through"
+        } else {
+            "Channel is busy — messages may take longer"
+        },
+        style = MaterialTheme.typography.labelMedium,
+        color = if (congested) FirepitTheme.colors.stale else FirepitTheme.colors.textSecondary,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = FirepitSpacing.m, vertical = FirepitSpacing.xs),
+    )
+}
+
 /** Composer banner for the message being replied to, matching the in-bubble quote. */
 @Composable
 private fun ReplyBanner(state: ChatsUiState, parent: ChatMessage, onCancel: () -> Unit) {
@@ -552,6 +577,8 @@ private fun ReplyBanner(state: ChatsUiState, parent: ChatMessage, onCancel: () -
 @Composable
 private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
     Column(Modifier.fillMaxWidth()) {
+        CongestionNotice(state.channelLoad)
+
         state.replyingTo?.let { parent ->
             ReplyBanner(state = state, parent = parent, onCancel = viewModel::cancelReply)
         }
@@ -684,9 +711,4 @@ private fun EmptyState(text: String) {
     }
 }
 
-private fun formatTime(epochMillis: Long): String {
-    val time = java.time.Instant.ofEpochMilli(epochMillis)
-        .atZone(java.time.ZoneId.systemDefault())
-        .toLocalTime()
-    return "%02d:%02d".format(time.hour, time.minute)
-}
+private fun formatTime(epochMillis: Long): String = MessageTimestamp.format(epochMillis)
