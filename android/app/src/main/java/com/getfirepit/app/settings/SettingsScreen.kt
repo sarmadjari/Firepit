@@ -51,6 +51,7 @@ import com.getfirepit.app.radio.RadioViewModel
 import com.getfirepit.core.data.Owner
 import com.getfirepit.core.designsystem.component.FirepitChip
 import com.getfirepit.core.designsystem.component.FirepitTopBar
+import com.getfirepit.core.designsystem.component.IdentityAvatar
 import com.getfirepit.core.designsystem.component.SectionLabel
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
@@ -311,17 +312,15 @@ private fun OwnerFields(
             Box(
                 modifier = Modifier
                     .padding(top = FirepitSpacing.s)
-                    .size(56.dp)
                     .clip(CircleShape)
-                    .background(identityColorFor(nodeNum ?: 0, dark, identitySlot))
                     .clickable { pickingColour = true }
                     .semantics { contentDescription = "Change your colour" },
-                contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    text = shortName.take(2).ifBlank { "?" },
-                    color = onIdentityColorFor(nodeNum ?: 0, dark, identitySlot),
-                    style = MaterialTheme.typography.titleMedium,
+                IdentityAvatar(
+                    nodeNum = nodeNum ?: 0,
+                    tag = shortName,
+                    name = longName,
+                    size = 56.dp,
                 )
             }
         }
@@ -351,7 +350,9 @@ private fun OwnerFields(
 
     if (pickingColour) {
         IdentityColourDialog(
+            nodeNum = nodeNum ?: 0,
             tag = shortName,
+            name = longName,
             chosen = identitySlot,
             onChoose = onChooseIdentity,
             onDismiss = { pickingColour = false },
@@ -368,13 +369,13 @@ private fun OwnerFields(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun IdentityColourDialog(
+    nodeNum: Int,
     tag: String?,
+    name: String,
     chosen: Int?,
     onChoose: (Int?) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val dark = FirepitTheme.colors.isDark
-
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Your colour") },
@@ -385,14 +386,11 @@ private fun IdentityColourDialog(
                     verticalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
                 ) {
                     IDENTITY_CHOICES.forEach { slot ->
-                        val selected = slot == chosen
                         Box(
                             modifier = Modifier
-                                .size(48.dp)
                                 .clip(CircleShape)
-                                .background(identityColorForSlot(slot, dark))
                                 .then(
-                                    if (selected) {
+                                    if (slot == chosen) {
                                         Modifier.border(3.dp, FirepitTheme.colors.textPrimary, CircleShape)
                                     } else {
                                         Modifier
@@ -401,14 +399,14 @@ private fun IdentityColourDialog(
                                 .clickable {
                                     onChoose(slot)
                                     onDismiss()
-                                }
-                                .semantics { contentDescription = "Colour ${slot + 1}" },
-                            contentAlignment = Alignment.Center,
+                                },
                         ) {
-                            Text(
-                                text = tag?.take(2).orEmpty(),
-                                color = Color.White,
-                                style = MaterialTheme.typography.labelMedium,
+                            IdentityAvatar(
+                                nodeNum = nodeNum,
+                                tag = tag,
+                                name = name,
+                                size = 52.dp,
+                                slot = slot,
                             )
                         }
                     }

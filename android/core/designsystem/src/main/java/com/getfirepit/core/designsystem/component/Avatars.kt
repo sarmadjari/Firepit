@@ -35,9 +35,10 @@ fun IdentityAvatar(
     name: String,
     modifier: Modifier = Modifier,
     size: Dp = FirepitSpacing.avatarSize,
+    // Defaults to the chosen colour; a caller previewing a different one says so.
+    slot: Int? = LocalIdentitySlots.current[nodeNum],
 ) {
     val dark = FirepitTheme.colors.isDark
-    val slot = LocalIdentitySlots.current[nodeNum]
     val label = tag?.takeIf { it.isNotBlank() } ?: "?"
 
     Box(
