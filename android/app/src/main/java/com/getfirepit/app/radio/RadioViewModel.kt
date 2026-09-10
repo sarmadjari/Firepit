@@ -1,18 +1,22 @@
 package com.getfirepit.app.radio
 
-import com.getfirepit.core.model.MeshNode
-import com.getfirepit.core.data.TracerouteClient
-import com.getfirepit.core.data.MeshRepository
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.getfirepit.core.data.MeshRepository
+import com.getfirepit.core.data.TracerouteClient
+import com.getfirepit.core.model.MeshNode
 import com.getfirepit.core.protocol.MeshConstants
+import com.getfirepit.core.data.SessionStore
+import com.getfirepit.core.protocol.NodeRole
 import com.getfirepit.core.protocol.RadioCapabilities
+import com.getfirepit.core.protocol.SavedRadio
 import com.getfirepit.core.transport.DiscoveredRadio
 import com.getfirepit.core.transport.LinkState
 import com.getfirepit.core.transport.RadioLink
 import com.getfirepit.core.transport.RadioScanner
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -20,8 +24,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 data class ChannelRow(val index: Int, val role: String, val name: String, val precision: Int)
 
@@ -47,6 +54,9 @@ data class RadioUiState(
     val myNodeNum: Int? = null,
     val tracing: Int? = null,
     val traceResult: String? = null,
+    val saved: List<SavedRadio> = emptyList(),
+    /** Which saved radio this session is talking to, if any. */
+    val connectedTo: String? = null,
 )
 
 @HiltViewModel
@@ -54,6 +64,8 @@ class RadioViewModel @Inject constructor(
     private val scanner: RadioScanner,
     private val link: RadioLink,
     private val session: RadioSessionController,
+    private val savedRadios: SavedRadioStore,
+    private val sessionStore: SessionStore,
     private val mesh: MeshRepository,
     private val traceroute: TracerouteClient,
 ) : ViewModel() {
@@ -77,10 +89,16 @@ class RadioViewModel @Inject constructor(
         },
         mesh.observeNodes(),
         mesh.myNodeNum,
-        tracing,
-        traceResult,
-    ) { base, nodes, me, tracing, result ->
+        combine(tracing, traceResult, savedRadios.radios) { tracing, result, saved ->
+            Triple(tracing, result, saved)
+        },
+        link.state,
+    ) { base, nodes, me, (tracing, result, saved), linkState ->
         base.copy(
+            saved = saved,
+            // The radio actually on the other end of the link, which is not
+            // necessarily the Personal one once Base stations are administered.
+            connectedTo = (linkState as? LinkState.Ready)?.let { sessionStore.lastRadioId },
             // Nearest first: the ones you can actually reach matter most.
             // 0L, not 0: mixing Long and Int here erases the selector type and
             // throws when the comparator meets both.
@@ -144,6 +162,39 @@ class RadioViewModel @Inject constructor(
         stopScan()
         error.value = null
         session.connect(radio)
+    }
+
+    /** Connects to a radio already known, without waiting for a scan to find it. */
+    fun connectSaved(saved: SavedRadio) {
+        error.value = null
+        viewModelScope.launch {
+            // One link at a time: switching radios means letting go of the
+            // current one first, or the new connection races the old.
+            session.disconnect()
+            val found = runCatching {
+                withTimeoutOrNull(SAVED_SCAN_WINDOW) {
+                    scanner.scanDistinct()
+                        .mapNotNull { radios -> radios.firstOrNull { it.identifier == saved.identifier } }
+                        .first()
+                }
+            }.getOrNull()
+
+            if (found == null) {
+                error.value = "${saved.name} did not answer. It may be off or out of range."
+            } else {
+                session.connect(found)
+            }
+        }
+    }
+
+    fun setRole(saved: SavedRadio, role: NodeRole) =
+        savedRadios.assign(saved.identifier, saved.name, role)
+
+    fun forget(saved: SavedRadio) = savedRadios.forget(saved.identifier)
+
+    private companion object {
+        /** Long enough for a radio in the room, short enough not to hang the screen. */
+        val SAVED_SCAN_WINDOW = 20.seconds
     }
 
     fun disconnect() {

@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineScope
+import com.getfirepit.core.protocol.NodeRole
 import com.getfirepit.core.transport.RadioScanner
 import com.getfirepit.core.data.SessionStore
 import com.getfirepit.core.data.ApplicationScope
@@ -29,10 +30,21 @@ class RadioSessionController @Inject constructor(
     private val link: RadioLink,
     private val scanner: RadioScanner,
     private val sessionStore: SessionStore,
+    private val savedRadios: SavedRadioStore,
     @param:ApplicationScope private val scope: CoroutineScope,
 ) {
     fun connect(radio: DiscoveredRadio) {
         sessionStore.lastRadioId = radio.identifier
+        // Registered here rather than at the button, so a radio reconnected on
+        // launch is administered too. A first radio is Personal, because that is
+        // what a first radio is; later ones default to Base until told otherwise.
+        if (savedRadios.radios.value.none { it.identifier == radio.identifier }) {
+            savedRadios.assign(
+                identifier = radio.identifier,
+                name = radio.name ?: radio.identifier,
+                role = if (savedRadios.personal == null) NodeRole.PERSONAL else NodeRole.BASE,
+            )
+        }
         // Started first: the service must reach startForeground quickly, and
         // waiting on the connection would risk the system's start timeout.
         //
@@ -54,13 +66,17 @@ class RadioSessionController @Inject constructor(
     }
 
     /**
-     * Reconnects to the radio last used, once it is in range.
+     * Reconnects to the radio that carries you, once it is in range.
+     *
+     * Prefers the Personal radio over whichever was used last: administering a
+     * Base station shouldn't stop your own messages arriving next time you open
+     * the app.
      *
      * Scans rather than addressing the device directly so a radio that is off
      * or out of range simply never appears, instead of failing repeatedly.
      */
     fun reconnectLastRadio() {
-        val wanted = sessionStore.lastRadioId ?: return
+        val wanted = savedRadios.personal?.identifier ?: sessionStore.lastRadioId ?: return
         scope.launch {
             runCatching {
                 withTimeoutOrNull(SCAN_WINDOW) {

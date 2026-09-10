@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -26,6 +27,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
@@ -34,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.getfirepit.core.designsystem.component.BackButton
+import com.getfirepit.core.designsystem.component.FirepitChip
 import com.getfirepit.core.designsystem.component.FirepitDetailBar
 import com.getfirepit.core.designsystem.component.IdentityAvatar
 import com.getfirepit.core.designsystem.component.SectionLabel
@@ -41,6 +46,8 @@ import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 import com.getfirepit.core.model.MeshNode
 import com.getfirepit.core.protocol.MeshConstants
+import com.getfirepit.core.protocol.NodeRole
+import com.getfirepit.core.protocol.SavedRadio
 import com.getfirepit.core.transport.LinkState
 
 /** Connect a radio, and show what it and the mesh around it look like. */
@@ -89,9 +96,25 @@ fun RadioScreen(
             }
 
             val details = state.details
+            val savedSection: LazyListScope.() -> Unit = {
+                savedRadioSection(
+                    saved = state.saved,
+                    connectedTo = state.connectedTo,
+                    onConnect = viewModel::connectSaved,
+                    onRole = viewModel::setRole,
+                    onForget = viewModel::forget,
+                )
+            }
             if (details == null) {
+                val nearby = state.found.filter { found ->
+                    state.saved.none { it.identifier == found.identifier }
+                }
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s)) {
-                    items(state.found, key = { it.identifier }) { radio ->
+                    savedSection()
+                    if (nearby.isNotEmpty()) {
+                        item(key = "nearby-label") { SectionLabel("Nearby") }
+                    }
+                    items(nearby, key = { it.identifier }) { radio ->
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             onClick = { viewModel.connect(radio) },
@@ -111,7 +134,12 @@ fun RadioScreen(
                     }
                 }
             } else {
-                RadioDetailsView(details = details, state = state, onCheckPath = viewModel::checkPath)
+                RadioDetailsView(
+                    details = details,
+                    state = state,
+                    onCheckPath = viewModel::checkPath,
+                    savedSection = savedSection,
+                )
             }
         }
     }
@@ -153,8 +181,10 @@ private fun RadioDetailsView(
     details: RadioDetails,
     state: RadioUiState,
     onCheckPath: (MeshNode) -> Unit,
+    savedSection: LazyListScope.() -> Unit,
 ) {
     LazyColumn(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
+        savedSection()
         item {
             Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
                 Field("Node", details.nodeId, monospace = true)
@@ -295,3 +325,101 @@ private fun blePermissions(): Array<String> = buildList {
         add(Manifest.permission.POST_NOTIFICATIONS)
     }
 }.toTypedArray()
+
+/**
+ * A radio this phone administers. Tapping the card reconnects to it; the chips
+ * say what the radio is for, and change it in one tap.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SavedRadioRow(
+    radio: SavedRadio,
+    connected: Boolean,
+    onConnect: () -> Unit,
+    onRole: (NodeRole) -> Unit,
+    onForget: () -> Unit,
+) {
+    // Forgetting is irreversible and sits a thumb's width from the row you tap
+    // to connect, so it asks first.
+    var confirming by remember { mutableStateOf(false) }
+    if (confirming) {
+        AlertDialog(
+            onDismissRequest = { confirming = false },
+            title = { Text("Forget ${radio.name}?") },
+            text = {
+                Text(
+                    "Firepit will stop administering this radio. The radio keeps " +
+                        "its settings, and you can add it again by scanning.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { confirming = false; onForget() }) { Text("Forget") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirming = false }) { Text("Keep") }
+            },
+        )
+    }
+    Card(modifier = Modifier.fillMaxWidth(), onClick = onConnect) {
+        Column(Modifier.padding(FirepitSpacing.m)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = radio.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = { confirming = true }) { Text("Forget") }
+            }
+            Text(
+                text = if (connected) "${radio.identifier} · Connected" else radio.identifier,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (connected) {
+                    FirepitTheme.colors.live
+                } else {
+                    FirepitTheme.colors.textSecondary
+                },
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
+                modifier = Modifier.padding(top = FirepitSpacing.s),
+            ) {
+                NodeRole.entries.forEach { role ->
+                    FirepitChip(
+                        label = role.label,
+                        selected = radio.role == role,
+                        onClick = { onRole(role) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The radios this phone administers.
+ *
+ * A [LazyListScope] extension rather than a composable so it can sit inside
+ * either list, and stay visible while a radio is connected — roles are worth
+ * changing most when you are standing next to the radio you just connected to.
+ */
+private fun LazyListScope.savedRadioSection(
+    saved: List<SavedRadio>,
+    connectedTo: String?,
+    onConnect: (SavedRadio) -> Unit,
+    onRole: (SavedRadio, NodeRole) -> Unit,
+    onForget: (SavedRadio) -> Unit,
+) {
+    if (saved.isEmpty()) return
+    item(key = "saved-label") { SectionLabel("Your radios") }
+    items(saved, key = { it.identifier }) { radio ->
+        SavedRadioRow(
+            radio = radio,
+            connected = connectedTo == radio.identifier,
+            onConnect = { onConnect(radio) },
+            onRole = { role -> onRole(radio, role) },
+            onForget = { onForget(radio) },
+        )
+    }
+}
