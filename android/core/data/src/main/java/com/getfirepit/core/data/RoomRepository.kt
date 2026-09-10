@@ -236,9 +236,10 @@ class RoomRepository @Inject constructor(
         val inviter = invite.inviter ?: throw RoomError.InviteInvalid
         if (invite.room_psk.size != RoomCrypto.PSK_SIZE) throw RoomError.InviteInvalid
 
-        // A link invite carries no rotating token; only QR invites are bound to
-        // a window, and only those are checked for freshness here.
-        if (invite.token.size != RoomCrypto.TOKEN_SIZE) return
+        // Every invite must be bound to a window. A tokenless one never stops
+        // working, so a copy kept from a room that has long since emptied would
+        // still carry a live key.
+        with(InviteCodec) { if (!invite.isTimeBound()) throw RoomError.InviteExpired }
 
         val inviteKey = RoomCrypto.inviteKey(invite.room_psk.toByteArray(), invite.room_id, invite.generation)
         val valid = RoomCrypto.isTokenValid(

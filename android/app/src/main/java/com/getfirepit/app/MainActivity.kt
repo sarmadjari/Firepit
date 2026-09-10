@@ -10,6 +10,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.getfirepit.app.settings.RetentionStore
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import com.getfirepit.app.settings.PersonStore
 import com.getfirepit.app.settings.ThemeChoice
 import com.getfirepit.app.settings.ThemePreferences
@@ -29,8 +32,13 @@ class MainActivity : ComponentActivity() {
 
     @Inject lateinit var meshRepository: MeshRepository
 
+    @Inject lateinit var retention: RetentionStore
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // At launch rather than on a timer: a phone left closed for a month
+        // should catch up the moment it is opened.
+        lifecycleScope.launch { retention.sweep() }
         enableEdgeToEdge()
         setContent {
             val choice by themePreferences.choice.collectAsStateWithLifecycle()

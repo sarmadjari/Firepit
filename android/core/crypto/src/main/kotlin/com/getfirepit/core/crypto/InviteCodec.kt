@@ -55,6 +55,14 @@ object InviteCodec {
             room_name.toByteArray().size <= MAX_ROOM_NAME_BYTES &&
             inviter?.user?.public_key?.size == PUBLIC_KEY_SIZE
 
+    /**
+     * Whether this invite stops working on its own.
+     *
+     * An invite carries the room's key, so one without a token is a key that
+     * never expires: kept after a room empties, it would still open it.
+     */
+    fun Invite.isTimeBound(): Boolean = token.size == RoomCrypto.TOKEN_SIZE
+
     /** nanopb caps `ChannelSettings.name` at 12 bytes including the terminator. */
     const val MAX_ROOM_NAME_BYTES = 11
     private const val PUBLIC_KEY_SIZE = 32

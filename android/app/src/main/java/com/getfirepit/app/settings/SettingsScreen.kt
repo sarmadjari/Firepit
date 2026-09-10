@@ -59,6 +59,7 @@ import com.getfirepit.core.designsystem.theme.IDENTITY_CHOICES
 import com.getfirepit.core.designsystem.theme.identityColorFor
 import com.getfirepit.core.designsystem.theme.identityColorForSlot
 import com.getfirepit.core.designsystem.theme.onIdentityColorFor
+import com.getfirepit.core.protocol.MessageRetention
 import com.getfirepit.core.protocol.OwnerName
 import com.getfirepit.core.protocol.Person
 import com.getfirepit.core.transport.LinkState
@@ -77,6 +78,7 @@ fun SettingsScreen(
     val theme by settingsViewModel.theme.collectAsStateWithLifecycle()
     val person by settingsViewModel.person.collectAsStateWithLifecycle()
     val connected by settingsViewModel.connected.collectAsStateWithLifecycle()
+    val retention by settingsViewModel.retentionChoice.collectAsStateWithLifecycle()
     val renameError by settingsViewModel.renameError.collectAsStateWithLifecycle()
 
     // A sub-screen takes the whole display, same as an open chat does.
@@ -116,6 +118,8 @@ fun SettingsScreen(
             theme = theme,
             person = person,
             connected = connected,
+            retention = retention,
+            onChooseRetention = settingsViewModel::chooseRetention,
             onSavePerson = settingsViewModel::savePerson,
             onUseAsNodeName = settingsViewModel::useAsNodeName,
             onChooseIdentity = settingsViewModel::chooseIdentitySlot,
@@ -145,6 +149,8 @@ private fun SettingsList(
     theme: ThemeChoice,
     person: Person?,
     connected: Boolean,
+    retention: MessageRetention,
+    onChooseRetention: (MessageRetention) -> Unit,
     onSavePerson: (String, String) -> Unit,
     onUseAsNodeName: () -> Unit,
     onChooseIdentity: (Int?) -> Unit,
@@ -199,6 +205,33 @@ private fun SettingsList(
                 supportingContent = { Text("Rename or delete the pins on your map") },
                 modifier = Modifier.clickable { onOpen(SettingsSection.PINS) },
             )
+            HorizontalDivider()
+
+            SectionLabel("Privacy")
+            Column(
+                modifier = Modifier.padding(
+                    horizontal = FirepitSpacing.screenMargin,
+                    vertical = FirepitSpacing.s,
+                ),
+                verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
+            ) {
+                Text("Keep messages for", style = MaterialTheme.typography.bodyMedium)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
+                    MessageRetention.entries.forEach { choice ->
+                        FirepitChip(
+                            label = choice.label,
+                            selected = retention == choice,
+                            onClick = { onChooseRetention(choice) },
+                        )
+                    }
+                }
+                Text(
+                    text = "Older messages are deleted from this phone. Everyone else " +
+                        "keeps their own copy, and nothing on a mesh can delete theirs.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FirepitTheme.colors.textSecondary,
+                )
+            }
             HorizontalDivider()
 
             SectionLabel("Appearance")

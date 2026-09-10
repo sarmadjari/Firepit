@@ -182,6 +182,27 @@ class InviteCodecTest {
     }
 
     @Test
+    fun `an invite carrying a token expires on its own`() {
+        with(InviteCodec) {
+            assertTrue(validInvite().copy(token = ByteArray(RoomCrypto.TOKEN_SIZE).toByteString()).isTimeBound())
+        }
+    }
+
+    @Test
+    fun `an invite with no token would last forever, so it is not time bound`() {
+        with(InviteCodec) {
+            assertFalse(validInvite().copy(token = ByteArray(0).toByteString()).isTimeBound())
+        }
+    }
+
+    @Test
+    fun `a token of the wrong length is not accepted as a window`() {
+        with(InviteCodec) {
+            assertFalse(validInvite().copy(token = ByteArray(4).toByteString()).isTimeBound())
+        }
+    }
+
+    @Test
     fun `an invite with a short key is rejected`() {
         // The firmware reads an empty or short PSK as "inherit the primary key",
         // which would quietly create a room anyone on the primary could read.

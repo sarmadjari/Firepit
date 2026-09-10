@@ -42,6 +42,10 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE id = :id")
     suspend fun findEntity(id: Int): MessageEntity?
 
+    /** Enforces the retention setting on this phone's copy. */
+    @Query("DELETE FROM messages WHERE sentAt < :cutoff")
+    suspend fun deleteOlderThan(cutoff: Long): Int
+
     /** Leaving a room takes its history with it; the key is gone either way. */
     @Query("DELETE FROM messages WHERE channel = :channel AND toNodeNum = :broadcast")
     suspend fun deleteChannel(channel: Int, broadcast: Int)

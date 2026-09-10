@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.getfirepit.core.data.MeshRepository
 import com.getfirepit.core.data.Owner
 import com.getfirepit.core.data.OwnerRepository
+import com.getfirepit.core.protocol.MessageRetention
 import com.getfirepit.core.protocol.Person
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -20,10 +21,17 @@ class SettingsViewModel @Inject constructor(
     private val themePreferences: ThemePreferences,
     private val people: PersonStore,
     private val owners: OwnerRepository,
+    private val retention: RetentionStore,
     mesh: MeshRepository,
 ) : ViewModel() {
 
     val theme: StateFlow<ThemeChoice> = themePreferences.choice
+
+    val retentionChoice: StateFlow<MessageRetention> = retention.choice
+
+    fun chooseRetention(choice: MessageRetention) {
+        viewModelScope.launch { retention.choose(choice) }
+    }
 
     /** You. Needs no radio, and changing it changes no radio. */
     val person: StateFlow<Person?> = people.person
