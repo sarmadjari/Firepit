@@ -237,6 +237,7 @@ class MeshRepository @Inject constructor(
 
     private suspend fun handlePacket(packet: MeshPacket) {
         val data = packet.decoded ?: return
+        markHeard(packet)
         when (data.portnum) {
             PortNum.TEXT_MESSAGE_APP -> saveIncomingText(packet, data)
 
@@ -252,6 +253,23 @@ class MeshRepository @Inject constructor(
             PortNum.TELEMETRY_APP -> handleTelemetry(packet, data)
             else -> Unit
         }
+    }
+
+    /**
+     * Notes that a node was heard, from any packet at all.
+     *
+     * NodeInfo carries last_heard once at connection, so without this a node
+     * transmitting right now still reads as last seen hours ago, or never.
+     */
+    private suspend fun markHeard(packet: MeshPacket) {
+        if (packet.from == 0 || packet.from == _myNodeNum.value) return
+        nodeDao.markHeard(
+            nodeNum = packet.from,
+            heardAt = System.currentTimeMillis(),
+            snr = packet.rx_snr.takeIf { it != 0f },
+            rssi = packet.rx_rssi?.takeIf { it != 0 },
+            hopsAway = (packet.hop_start - packet.hop_limit).takeIf { packet.hop_start > 0 },
+        )
     }
 
     /**

@@ -1,5 +1,10 @@
 package com.getfirepit.app.radio
 
+import com.getfirepit.core.protocol.MeshConstants
+import com.getfirepit.core.model.MeshNode
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
+import android.text.format.DateUtils
 import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -87,8 +92,27 @@ fun RadioScreen(modifier: Modifier = Modifier, viewModel: RadioViewModel = hiltV
                 }
             }
         } else {
-            RadioDetailsView(details)
+            RadioDetailsView(details = details, state = state, onCheckPath = viewModel::checkPath)
         }
+    }
+
+    state.traceResult?.let { summary ->
+        AlertDialog(
+            onDismissRequest = viewModel::clearTrace,
+            title = { Text("Path check") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s)) {
+                    Text(summary, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "A path is not a delivery receipt. It shows the mesh could reach them " +
+                            "just now, not that anyone read anything.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FirepitTheme.colors.textSecondary,
+                    )
+                }
+            },
+            confirmButton = { TextButton(onClick = viewModel::clearTrace) { Text("Close") } },
+        )
     }
 }
 
@@ -105,7 +129,11 @@ private fun LinkStatus(link: LinkState) {
 }
 
 @Composable
-private fun RadioDetailsView(details: RadioDetails) {
+private fun RadioDetailsView(
+    details: RadioDetails,
+    state: RadioUiState,
+    onCheckPath: (MeshNode) -> Unit,
+) {
     LazyColumn(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
@@ -116,7 +144,6 @@ private fun RadioDetailsView(details: RadioDetails) {
                 Field("Reboots", details.rebootCount.toString())
                 Field("PKI", details.capabilities.supportsPki.toString())
                 Field("Signing (2.8)", details.capabilities.supportsSigning.toString())
-                Field("Known nodes", details.knownNodes.toString())
                 HorizontalDivider(Modifier.padding(vertical = FirepitSpacing.s))
                 Text("Channels", style = MaterialTheme.typography.titleMedium)
             }
@@ -127,8 +154,68 @@ private fun RadioDetailsView(details: RadioDetails) {
                 "${channel.name}  precision ${channel.precision}",
             )
         }
+
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
+                HorizontalDivider(Modifier.padding(vertical = FirepitSpacing.s))
+                Text(
+                    "Nodes (${state.nodes.size})",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            }
+        }
+        items(state.nodes, key = { it.nodeNum }) { node ->
+            NodeRow(
+                node = node,
+                isSelf = node.nodeNum == state.myNodeNum,
+                tracing = state.tracing == node.nodeNum,
+                enabled = state.tracing == null,
+                onCheckPath = { onCheckPath(node) },
+            )
+        }
     }
 }
+
+@Composable
+private fun NodeRow(
+    node: MeshNode,
+    isSelf: Boolean,
+    tracing: Boolean,
+    enabled: Boolean,
+    onCheckPath: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = FirepitSpacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = if (isSelf) "${node.displayName} (this radio)" else node.displayName,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = nodeDetail(node),
+                style = MaterialTheme.typography.bodySmall,
+                color = FirepitTheme.colors.textSecondary,
+            )
+        }
+        if (!isSelf) {
+            TextButton(onClick = onCheckPath, enabled = enabled) {
+                Text(if (tracing) "Checking…" else "Check path")
+            }
+        }
+    }
+}
+
+/** Nodes report their own last_heard and some have no clock, so an unheard node says so plainly. */
+private fun nodeDetail(node: MeshNode): String = buildList {
+    add(MeshConstants.formatNodeId(node.nodeNum))
+    node.hopsAway?.let { add(if (it == 0) "direct" else "$it hops") }
+    node.snr?.let { add("%.1f dB".format(it)) }
+    // The firmware reports above 100 for a node running on mains, not a full battery.
+    node.batteryLevel?.let { add(if (it > 100) "powered" else "$it%") }
+    add(node.lastHeard?.let { "heard " + DateUtils.getRelativeTimeSpanString(it) } ?: "not heard yet")
+}.joinToString(" · ")
 
 @Composable
 private fun Field(label: String, value: String) {

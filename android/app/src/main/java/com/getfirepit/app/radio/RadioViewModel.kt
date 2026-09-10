@@ -1,5 +1,8 @@
 package com.getfirepit.app.radio
 
+import com.getfirepit.core.model.MeshNode
+import com.getfirepit.core.data.TracerouteClient
+import com.getfirepit.core.data.MeshRepository
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.getfirepit.core.protocol.MeshConstants
@@ -40,6 +43,10 @@ data class RadioUiState(
     val link: LinkState = LinkState.Disconnected,
     val details: RadioDetails? = null,
     val error: String? = null,
+    val nodes: List<MeshNode> = emptyList(),
+    val myNodeNum: Int? = null,
+    val tracing: Int? = null,
+    val traceResult: String? = null,
 )
 
 @HiltViewModel
@@ -47,14 +54,18 @@ class RadioViewModel @Inject constructor(
     private val scanner: RadioScanner,
     private val link: RadioLink,
     private val session: RadioSessionController,
+    private val mesh: MeshRepository,
+    private val traceroute: TracerouteClient,
 ) : ViewModel() {
 
     private val scanning = MutableStateFlow(false)
     private val found = MutableStateFlow(emptyList<DiscoveredRadio>())
     private val error = MutableStateFlow<String?>(null)
+    private val tracing = MutableStateFlow<Int?>(null)
+    private val traceResult = MutableStateFlow<String?>(null)
     private var scanJob: Job? = null
 
-    val uiState: StateFlow<RadioUiState> =
+    val uiState: StateFlow<RadioUiState> = combine(
         combine(scanning, found, link.state, error) { scanning, found, linkState, error ->
             RadioUiState(
                 scanning = scanning,
@@ -63,7 +74,54 @@ class RadioViewModel @Inject constructor(
                 details = (linkState as? LinkState.Ready)?.snapshot?.toDetails(),
                 error = error,
             )
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RadioUiState())
+        },
+        mesh.observeNodes(),
+        mesh.myNodeNum,
+        tracing,
+        traceResult,
+    ) { base, nodes, me, tracing, result ->
+        base.copy(
+            // Nearest first: the ones you can actually reach matter most.
+            // 0L, not 0: mixing Long and Int here erases the selector type and
+            // throws when the comparator meets both.
+            nodes = nodes.sortedWith(
+                compareByDescending<MeshNode> { it.nodeNum == me }
+                    .thenBy { it.hopsAway ?: Int.MAX_VALUE }
+                    .thenByDescending { it.lastHeard ?: 0L },
+            ),
+            myNodeNum = me,
+            tracing = tracing,
+            traceResult = result,
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RadioUiState())
+
+    fun checkPath(node: MeshNode) {
+        if (tracing.value != null) return
+        viewModelScope.launch {
+            tracing.value = node.nodeNum
+            val name = node.displayName
+            val result = runCatching { traceroute.trace(node.nodeNum) }
+            tracing.value = null
+            traceResult.value = result.fold(
+                onSuccess = { trace ->
+                    when {
+                        trace == null -> "No reply from $name within a minute. It may be out of range."
+                        trace.isDirect -> "$name answered directly, no relay in between."
+                        else -> "$name is ${trace.hopsOut} hops away, via " +
+                            trace.towards.joinToString(", ") { hop ->
+                                MeshConstants.formatNodeId(hop.nodeNum) +
+                                    (hop.snr?.let { " (%.1f dB)".format(it) } ?: "")
+                            }
+                    }
+                },
+                onFailure = { cause -> cause.message ?: "Could not trace the route" },
+            )
+        }
+    }
+
+    fun clearTrace() {
+        traceResult.value = null
+    }
 
     fun startScan() {
         if (scanJob?.isActive == true) return

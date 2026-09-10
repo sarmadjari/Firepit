@@ -95,6 +95,19 @@ interface NodeDao {
         channelUtilization: Float?,
         airUtilTx: Float?,
     )
+
+    /** Signal figures come from the packet in hand, so a null means this hop did not measure it. */
+    @Query(
+        """
+        UPDATE nodes SET
+            lastHeard = :heardAt,
+            snr = COALESCE(:snr, snr),
+            rssi = COALESCE(:rssi, rssi),
+            hopsAway = COALESCE(:hopsAway, hopsAway)
+        WHERE nodeNum = :nodeNum
+        """,
+    )
+    suspend fun markHeard(nodeNum: Int, heardAt: Long, snr: Float?, rssi: Int?, hopsAway: Int?)
 }
 
 fun NodeDao.observeAll(): Flow<List<MeshNode>> =
