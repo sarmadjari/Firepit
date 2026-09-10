@@ -111,6 +111,52 @@ class ChannelSlotManagerTest {
         }
     }
 
+    @Test
+    fun `history follows each room to the slot it moves into`() {
+        val channels = listOf(room(1, 11), room(2, 22), room(3, 33))
+
+        assertEquals(listOf(2 to 1, 3 to 2), ChannelSlotManager.slotMovesForLeaving(channels, 11))
+    }
+
+    @Test
+    fun `leaving the last room moves nothing`() {
+        val channels = listOf(room(1, 11), room(2, 22), room(3, 33))
+
+        assertEquals(
+            emptyList<Pair<Int, Int>>(),
+            ChannelSlotManager.slotMovesForLeaving(channels, 33),
+        )
+    }
+
+    @Test
+    fun `a room that is not ours moves nothing`() {
+        assertEquals(
+            emptyList<Pair<Int, Int>>(),
+            ChannelSlotManager.slotMovesForLeaving(listOf(room(1, 11)), 99),
+        )
+    }
+
+    @Test
+    fun `moves never write onto a slot still in use`() {
+        val channels = listOf(room(1, 11), room(2, 22), room(3, 33), room(4, 44))
+        val occupied = channels.map { it.index }.toMutableSet()
+        occupied.remove(ChannelSlotManager.slotOf(channels, 22))
+
+        ChannelSlotManager.slotMovesForLeaving(channels, 22).forEach { (from, to) ->
+            assertTrue("slot $to was still taken", to !in occupied)
+            occupied.remove(from)
+            occupied.add(to)
+        }
+    }
+
+    @Test
+    fun `the slot a room sits in is reported for its history`() {
+        val channels = listOf(room(1, 11), room(2, 22))
+
+        assertEquals(2, ChannelSlotManager.slotOf(channels, 22))
+        assertNull(ChannelSlotManager.slotOf(channels, 99))
+    }
+
     private companion object {
         const val PRIMARY_ID = 0x4D455348
 

@@ -10,6 +10,8 @@ import com.getfirepit.core.database.recordReported
 import com.getfirepit.core.model.ChannelRole
 import com.getfirepit.core.model.RoomChannel
 import com.getfirepit.core.model.RoomMember
+import com.getfirepit.core.database.MessageDao
+import com.getfirepit.core.model.BROADCAST_NODE_NUM
 import com.getfirepit.core.protocol.ChannelSlotManager
 import com.getfirepit.core.protocol.MeshConstants
 import com.getfirepit.core.protocol.MeshPacketBuilder
@@ -62,6 +64,7 @@ class RoomRepository @Inject constructor(
     private val mesh: MeshRepository,
     private val admin: NodeAdminClient,
     private val memberDao: RoomMemberDao,
+    private val messageDao: MessageDao,
     @param:ApplicationScope private val scope: CoroutineScope,
 ) {
 
@@ -200,7 +203,11 @@ class RoomRepository @Inject constructor(
 
     /** Frees the room's slot and closes the gap so the rooms stay consecutive. */
     suspend fun leaveRoom(roomId: Int) {
-        ChannelSlotManager.writesForLeaving(mesh.channels.value, roomId).forEach { write ->
+        val channels = mesh.channels.value
+        val leavingSlot = ChannelSlotManager.slotOf(channels, roomId)
+        val moves = ChannelSlotManager.slotMovesForLeaving(channels, roomId)
+
+        ChannelSlotManager.writesForLeaving(channels, roomId).forEach { write ->
             val channel = write.channel
             admin.setChannel(
                 if (channel == null) {
@@ -213,6 +220,13 @@ class RoomRepository @Inject constructor(
                 },
             )
         }
+        // History is stored per slot, and the firmware makes the remaining
+        // rooms shuffle down, so it has to be moved with them.
+        leavingSlot?.let { messageDao.deleteChannel(it, BROADCAST_NODE_NUM) }
+        moves.forEach { (from, to) ->
+            messageDao.moveChannel(from, to, BROADCAST_NODE_NUM)
+        }
+
         Log.i(TAG, "left room $roomId")
         memberDao.deleteRoom(roomId)
         issuedInvites.entries.removeAll { it.value.roomId == roomId }

@@ -28,6 +28,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -62,11 +64,38 @@ fun RoomMembersScreen(
     muted: Boolean = false,
     onInvite: () -> Unit = {},
     onToggleMute: () -> Unit = {},
+    onLeft: () -> Unit = {},
     viewModel: RoomsViewModel = hiltViewModel(),
 ) {
     val membersFlow = remember(roomId) { viewModel.members(roomId) }
     val members by membersFlow.collectAsStateWithLifecycle(emptyList())
     val trace by viewModel.trace.collectAsStateWithLifecycle()
+    var confirmingLeave by remember { mutableStateOf(false) }
+
+    if (confirmingLeave) {
+        AlertDialog(
+            onDismissRequest = { confirmingLeave = false },
+            title = { Text("Leave this room?") },
+            text = {
+                Text(
+                    "The key goes with it, so you will need a new invitation to " +
+                        "come back, and this room's messages are deleted from this phone.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmingLeave = false
+                        viewModel.leaveRoom(roomId)
+                        onLeft()
+                    },
+                ) { Text("Leave") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingLeave = false }) { Text("Stay") }
+            },
+        )
+    }
 
     Scaffold(
         modifier = modifier,
@@ -111,6 +140,12 @@ fun RoomMembersScreen(
                         icon = if (muted) FirepitIcons.Bell else FirepitIcons.Mute,
                         label = if (muted) "Unmute" else "Mute",
                         onClick = onToggleMute,
+                        modifier = Modifier.weight(1f),
+                    )
+                    RoomAction(
+                        icon = FirepitIcons.Close,
+                        label = "Leave",
+                        onClick = { confirmingLeave = true },
                         modifier = Modifier.weight(1f),
                     )
                 }

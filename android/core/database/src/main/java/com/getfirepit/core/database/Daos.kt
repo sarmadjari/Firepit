@@ -42,6 +42,22 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE id = :id")
     suspend fun findEntity(id: Int): MessageEntity?
 
+    /** Leaving a room takes its history with it; the key is gone either way. */
+    @Query("DELETE FROM messages WHERE channel = :channel AND toNodeNum = :broadcast")
+    suspend fun deleteChannel(channel: Int, broadcast: Int)
+
+    /**
+     * Follows a room to its new slot.
+     *
+     * The firmware requires active channels to be consecutive, so leaving one
+     * shifts the rest down. History is stored per slot, and would otherwise be
+     * read as belonging to whichever room moved into that number.
+     */
+    @Query(
+        "UPDATE messages SET channel = :to WHERE channel = :from AND toNodeNum = :broadcast",
+    )
+    suspend fun moveChannel(from: Int, to: Int, broadcast: Int)
+
     @Upsert
     suspend fun upsert(message: MessageEntity)
 

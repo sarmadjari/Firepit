@@ -160,6 +160,7 @@ fun ChatsPane(
                 muted = current.channelIndex in state.muted,
                 onInvite = { overlay = RoomsOverlay.Invite(current.roomId, current.roomName) },
                 onToggleMute = { viewModel.toggleMute(current.channelIndex) },
+                onLeft = dismiss,
                 viewModel = roomsViewModel,
             )
         }

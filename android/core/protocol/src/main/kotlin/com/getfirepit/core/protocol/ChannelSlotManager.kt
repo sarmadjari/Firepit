@@ -60,6 +60,26 @@ object ChannelSlotManager {
         return writes + SlotWrite(lastUsed, null)
     }
 
+    /**
+     * Where each remaining room ends up, as oldSlot to newSlot.
+     *
+     * Ascending, and the leaving room's slot is freed first, so applying these
+     * in order never writes onto a slot still holding something.
+     */
+    fun slotMovesForLeaving(channels: List<RoomChannel>, roomId: Int): List<Pair<Int, Int>> {
+        val current = rooms(channels)
+        if (current.none { it.id == roomId }) return emptyList()
+        return current.filterNot { it.id == roomId }
+            .mapIndexedNotNull { position, room ->
+                val target = FIRST_ROOM_SLOT + position
+                if (room.index == target) null else room.index to target
+            }
+    }
+
+    /** The slot a room occupies, or null when it is not one of ours. */
+    fun slotOf(channels: List<RoomChannel>, roomId: Int): Int? =
+        rooms(channels).firstOrNull { it.id == roomId }?.index
+
     /** The layout [writesForLeaving] produces, used to assert the result. */
     fun layoutAfterLeaving(channels: List<RoomChannel>, roomId: Int): List<RoomChannel> =
         rooms(channels)
