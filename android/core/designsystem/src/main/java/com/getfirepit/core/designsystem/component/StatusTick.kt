@@ -1,13 +1,17 @@
 package com.getfirepit.core.designsystem.component
 
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 import com.getfirepit.core.model.MessageStatus
 
@@ -23,15 +27,14 @@ import com.getfirepit.core.model.MessageStatus
  */
 @Composable
 fun StatusTick(status: MessageStatus, modifier: Modifier = Modifier) {
-    val (glyph, description) = status.glyphAndLabel()
+    val (icon, description) = status.iconAndLabel() ?: return
 
-    Row(modifier = modifier.semantics { contentDescription = description }) {
-        Text(
-            text = glyph,
-            style = MaterialTheme.typography.bodySmall,
-            color = status.tint(),
-        )
-    }
+    Icon(
+        painter = painterResource(icon),
+        contentDescription = description,
+        tint = status.tint(),
+        modifier = modifier.size(14.dp),
+    )
 }
 
 @Composable
@@ -41,13 +44,13 @@ fun MessageStatus.tint(): Color = when (this) {
     else -> FirepitTheme.colors.textSecondary
 }
 
-fun MessageStatus.glyphAndLabel(): Pair<String, String> = when (this) {
-    MessageStatus.QUEUED -> "◷" to "Sending"
-    MessageStatus.SENT_TO_NODE, MessageStatus.UNKNOWN -> "✓" to "Sent to your node"
-    MessageStatus.REACHED_MESH -> "✓" to "Heard by at least one node"
-    MessageStatus.DELIVERED -> "✓✓" to "Delivered to their node"
-    MessageStatus.UNHEARD -> "✓" to "No node heard this"
-    MessageStatus.FAILED -> "⚠" to "Failed, tap to retry"
-    // Nothing to report about a message we are holding.
-    MessageStatus.RECEIVED -> "" to ""
+/** Null while we are holding a message of our own: there is nothing to report. */
+fun MessageStatus.iconAndLabel(): Pair<Int, String>? = when (this) {
+    MessageStatus.QUEUED -> FirepitIcons.Pending to "Sending"
+    MessageStatus.SENT_TO_NODE, MessageStatus.UNKNOWN -> FirepitIcons.Tick to "Sent to your node"
+    MessageStatus.REACHED_MESH -> FirepitIcons.Tick to "Heard by at least one node"
+    MessageStatus.DELIVERED -> FirepitIcons.TickDouble to "Delivered to their node"
+    MessageStatus.UNHEARD -> FirepitIcons.Tick to "No node heard this"
+    MessageStatus.FAILED -> FirepitIcons.Warning to "Failed, tap to retry"
+    MessageStatus.RECEIVED -> null
 }

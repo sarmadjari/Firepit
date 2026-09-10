@@ -17,6 +17,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -29,6 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -118,20 +120,6 @@ fun RoomMembersScreen(
 
             item { SectionLabel("Members") }
 
-            item {
-                Text(
-                    text = "Anyone with the room's key can read and post. Members are listed as " +
-                        "Firepit hears them, or when another member reports them, so this may be " +
-                        "incomplete.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = FirepitTheme.colors.textSecondary,
-                    modifier = Modifier.padding(
-                        horizontal = FirepitSpacing.screenMargin,
-                        vertical = FirepitSpacing.s,
-                    ),
-                )
-            }
-
             if (members.isEmpty()) {
                 item {
                     Text(
@@ -145,30 +133,22 @@ fun RoomMembersScreen(
 
             items(members, key = { it.member.nodeNum }) { row ->
                 ListItem(
+                    colors = ListItemDefaults.colors(containerColor = FirepitTheme.colors.surface2),
                     headlineContent = {
-                        Text(if (row.isSelf) "${row.displayName} (you)" else row.displayName)
+                        Text(
+                            text = buildString {
+                                append(row.displayName)
+                                row.invitedByName?.let { append(" · invited by $it") }
+                            },
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     },
                     supportingContent = {
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(
-                                text = row.invitedByName?.let { "Invited by $it" }
-                                    ?: if (row.member.isVouched) {
-                                        "Created this room"
-                                    } else {
-                                        "Invite unknown"
-                                    },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (row.member.isVouched) {
-                                    FirepitTheme.colors.textSecondary
-                                } else {
-                                    FirepitTheme.colors.stale
-                                },
-                            )
-                            Text(
-                                text = row.member.lastHeard
-                                    ?.let { "Last heard ${relativeTime(it)}" }
-                                    // Somebody else's word, not our own observation.
-                                    ?: "Listed by another member, not heard yet",
+                                text = memberDetail(row),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = if (row.member.isFirstHand) {
                                     FirepitTheme.colors.textSecondary
@@ -176,6 +156,13 @@ fun RoomMembersScreen(
                                     FirepitTheme.colors.stale
                                 },
                             )
+                            if (!row.member.isVouched) {
+                                Text(
+                                    text = "Invite unknown",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = FirepitTheme.colors.stale,
+                                )
+                            }
                         }
                     },
                     leadingContent = {
@@ -186,7 +173,13 @@ fun RoomMembersScreen(
                         )
                     },
                     trailingContent = {
-                        if (!row.isSelf) {
+                        if (row.isSelf) {
+                            Text(
+                                text = "You",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = FirepitTheme.colors.textSecondary,
+                            )
+                        } else {
                             TextButton(
                                 onClick = { viewModel.checkPath(row.member.nodeNum, row.displayName) },
                                 enabled = trace !is TraceState.Running,
@@ -203,6 +196,17 @@ fun RoomMembersScreen(
                     },
                 )
                 HorizontalDivider(color = FirepitTheme.colors.outline)
+            }
+
+            item {
+                Text(
+                    text = "Anyone with the room's key can read and post. Members appear as Firepit " +
+                        "hears them, or when another member reports them, so this list may be " +
+                        "incomplete.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FirepitTheme.colors.textSecondary,
+                    modifier = Modifier.padding(FirepitSpacing.screenMargin),
+                )
             }
         }
     }
@@ -239,6 +243,22 @@ private fun relativeTime(epochMillis: Long): String {
         else -> "${days}d ago"
     }
 }
+
+/** Hardware, charge and when we last heard them, as the design asks. */
+private fun memberDetail(row: MemberRow): String = buildList {
+    row.node?.hwModel?.takeIf { it.isNotBlank() }?.let { add(prettyHardware(it)) }
+    row.node?.batteryLevel?.let { add(if (it > 100) "powered" else "$it%") }
+    add(
+        row.member.lastHeard?.let { "heard ${relativeTime(it)}" }
+            // Somebody else's word, not our own observation.
+            ?: "not heard yet",
+    )
+}.joinToString(" · ")
+
+/** WISMESH_TAG reads as shouting in a list; the radio's own name does not. */
+private fun prettyHardware(model: String): String = model
+    .split('_')
+    .joinToString(" ") { part -> part.lowercase().replaceFirstChar(Char::uppercase) }
 
 /** One of the room's headline actions, drawn as an outlined card. */
 @Composable

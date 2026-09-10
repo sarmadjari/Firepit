@@ -212,6 +212,7 @@ fun MapScreen(
                     .align(Alignment.TopEnd)
                     .padding(FirepitSpacing.m),
             )
+
             MapControl(
                 icon = FirepitIcons.Download,
                 description = "Offline areas",

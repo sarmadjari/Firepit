@@ -237,6 +237,14 @@ fun ChatsPane(
                         } else {
                             null
                         },
+                        memberCount = if (channel.isRoom) {
+                            roomsViewModel.members(channel.id)
+                                .collectAsStateWithLifecycle(emptyList()).value
+                                .size
+                                .takeIf { it > 0 }
+                        } else {
+                            null
+                        },
                     )
                 }
             }
@@ -536,6 +544,7 @@ private fun ChannelChat(
     onBack: (() -> Unit)?,
     onInvite: (() -> Unit)?,
     onShowMembers: (() -> Unit)?,
+    memberCount: Int?,
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -579,6 +588,13 @@ private fun ChannelChat(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
                                 ) {
+                                    memberCount?.let { count ->
+                                        Text(
+                                            text = if (count == 1) "1 member · " else "$count members · ",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = FirepitTheme.colors.textSecondary,
+                                        )
+                                    }
                                     LiveRing(size = 8.dp, live = state.connected)
                                     Text(
                                         text = if (state.connected) "connected" else "not connected",

@@ -49,5 +49,13 @@ object FirepitIcons {
 
     @DrawableRes val Close: Int = R.drawable.ic_close
 
+    @DrawableRes val Tick: Int = R.drawable.ic_tick
+
+    @DrawableRes val TickDouble: Int = R.drawable.ic_tick_double
+
+    @DrawableRes val Pending: Int = R.drawable.ic_pending
+
+    @DrawableRes val Warning: Int = R.drawable.ic_warning
+
     @DrawableRes val Chevron: Int = R.drawable.ic_chevron
 }
