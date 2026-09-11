@@ -792,6 +792,7 @@ private fun ChannelChat(
     onShowMembers: (() -> Unit)?,
     memberCount: Int?,
 ) {
+    val receipts by viewModel.receiptsOnScreen.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var searching by rememberSaveable(channel.index) { mutableStateOf(false) }
@@ -971,9 +972,10 @@ private fun ChannelChat(
                                 // Only when it is worth knowing: a relayed
                                 // message may be slow or stale, a direct one is
                                 // unremarkable and said so on every bubble.
-                                footnote = message.hopsAway
-                                    ?.takeIf { it > 0 }
-                                    ?.let { hops -> "$hops hop${if (hops == 1) "" else "s"}" },
+                                footnote = receiptFootnote(receipts[message.id])
+                                    ?: message.hopsAway
+                                        ?.takeIf { it > 0 }
+                                        ?.let { hops -> "$hops hop${if (hops == 1) "" else "s"}" },
                                 quoted = parent?.let {
                                     QuotedMessage(
                                         senderName = state.nodes[it.fromNodeNum]?.displayName
@@ -1252,6 +1254,23 @@ private fun InfoRow(label: String, value: String) {
     ) {
         Text(label, style = MaterialTheme.typography.bodyMedium, color = FirepitTheme.colors.textSecondary)
         Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/**
+ * What the room has told us about a message we sent.
+ *
+ * Counts only what arrived. A member whose phone said nothing is absent rather
+ * than reported as not having read it, because silence carries no information:
+ * they may be asleep, out of range, or have receipts turned off.
+ */
+private fun receiptFootnote(receipts: List<Receipt>?): String? {
+    if (receipts.isNullOrEmpty()) return null
+    val read = receipts.count { it.state == ReceiptState.READ }
+    val held = receipts.size
+    return when {
+        read > 0 -> "Read by $read"
+        else -> "Delivered to $held"
     }
 }
 

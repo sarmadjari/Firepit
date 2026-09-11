@@ -21,6 +21,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -61,6 +62,12 @@ class ReceiptRepository @Inject constructor(
 
     /** Who has this message, and when they got it. */
     fun observe(messageId: Int): Flow<List<Receipt>> = receiptDao.observe(messageId)
+
+    /** The same, for everything on screen at once. */
+    fun observeAll(messageIds: List<Int>): Flow<Map<Int, List<Receipt>>> =
+        receiptDao.observeForAll(messageIds).map { rows ->
+            rows.groupBy({ it.messageId }) { Receipt(it.nodeNum, it.state, it.at) }
+        }
 
     /** A message arrived. */
     suspend fun received(channel: Int, messageId: Int, peer: Int? = null) {

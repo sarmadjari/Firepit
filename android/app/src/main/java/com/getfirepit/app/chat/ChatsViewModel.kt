@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -184,6 +185,13 @@ class ChatsViewModel @Inject constructor(
                 ?.let { roomKeys.keyFor(it) != null } == true,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatsUiState())
+
+    /** Receipts for the messages on screen, so a sender can see them arrive. */
+    val receiptsOnScreen: StateFlow<Map<Int, List<Receipt>>> = messages
+        .flatMapLatest { shown ->
+            receipts.observeAll(shown.filter { it.isOutgoing }.map { it.id })
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     /**
      * Kept out of the main state because combine has typed overloads only to
