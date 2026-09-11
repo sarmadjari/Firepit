@@ -2,6 +2,7 @@ package com.getfirepit.core.protocol
 
 import com.getfirepit.protocol.meshchat.JoinHello
 import com.getfirepit.protocol.meshchat.MeshChatControl
+import com.getfirepit.protocol.meshchat.Receipt
 import com.getfirepit.protocol.meshchat.RosterEntry
 import com.getfirepit.protocol.meshchat.RosterSync
 import okio.ByteString.Companion.toByteString
@@ -108,6 +109,28 @@ class ProtocolContractTest {
     }
 
     @Test
+    fun `a full receipt fits in one packet, sealed`() {
+        // Worst case: every id a large fixed32, both lists full to the cap.
+        val control = MeshChatControl(
+            version = 1,
+            receipt = Receipt(
+                room_id = -1,
+                delivered = List(ReceiptRules.MAX_IDS_PER_PACKET / 2) { Int.MIN_VALUE + it },
+                read = List(ReceiptRules.MAX_IDS_PER_PACKET / 2) { Int.MAX_VALUE - it },
+            ),
+        )
+
+        val encoded = MeshChatControl.ADAPTER.encode(control)
+        val onTheWire = encoded.size + SEALING_OVERHEAD
+
+        assertEquals(control, MeshChatControl.ADAPTER.decode(encoded))
+        assertTrue(
+            "A sealed receipt is $onTheWire bytes, over the ${Constants.DATA_PAYLOAD_LEN.value}-byte payload",
+            onTheWire <= Constants.DATA_PAYLOAD_LEN.value,
+        )
+    }
+
+    @Test
     fun `a full roster sync fits in one packet`() {
         // Worst case on the wire: negative node numbers are large uint32 values,
         // which take the full five bytes as a varint. Measures 208 of 233.
@@ -137,5 +160,8 @@ class ProtocolContractTest {
 
         /** Mirrors RoomRepository.MAX_ROSTER_ENTRIES. */
         const val MAX_ROSTER_ENTRIES = 14
+
+        /** SealedText.OVERHEAD, restated so core:protocol need not see core:crypto. */
+        const val SEALING_OVERHEAD = 29
     }
 }

@@ -86,7 +86,19 @@ message MeshChatControl {
     RosterEvent roster_event = 3;
     LiveLocationRequest live_location_request = 4;
     RosterSync roster_sync = 5;
+    Receipt receipt = 6;
   }
+}
+
+// Who in a room has received a message and who has opened it, batched so one
+// packet answers for many. Sealed under the room key like the messages
+// themselves, so an outsider learns neither the room nor which messages.
+message Receipt {
+  fixed32 room_id = 1;
+  // Arrived, not yet opened.
+  repeated fixed32 delivered = 2;
+  // Opened. Reading implies arrival, so an id is never in both lists.
+  repeated fixed32 read = 3;
 }
 
 // Joiner -> inviter, as a PKI direct message, after the NodeInfo hello has had
