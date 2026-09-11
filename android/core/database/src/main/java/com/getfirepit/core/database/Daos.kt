@@ -9,6 +9,7 @@ import com.getfirepit.core.model.BROADCAST_NODE_NUM
 import com.getfirepit.core.model.ChatMessage
 import com.getfirepit.core.model.MapPin
 import com.getfirepit.core.model.MeshNode
+import com.getfirepit.core.model.Receipt
 import com.getfirepit.core.model.MessageStatus
 import com.getfirepit.core.model.RoomMember
 import kotlinx.coroutines.flow.Flow
@@ -331,3 +332,53 @@ suspend fun RoomMemberDao.recordReported(roomId: Int, nodeNum: Int, now: Long, i
         ),
     )
 }
+
+@Dao
+interface ReceiptDao {
+
+    @Query("SELECT * FROM receipts WHERE messageId = :messageId ORDER BY at ASC")
+    fun observeFor(messageId: Int): Flow<List<ReceiptEntity>>
+
+    @Query("SELECT * FROM receipts WHERE messageId IN (:messageIds)")
+    fun observeForAll(messageIds: List<Int>): Flow<List<ReceiptEntity>>
+
+    /**
+     * Inserts only for a message this phone actually has.
+     *
+     * The WHERE EXISTS is not belt and braces: OR IGNORE resolves uniqueness,
+     * not foreign keys, so a receipt naming a message we never received would
+     * otherwise throw. Arriving before the message it describes is ordinary on
+     * a mesh, and is not an error.
+     *
+     * OR IGNORE then leaves an existing row alone, so a repeated delivery
+     * receipt cannot walk a read one backwards.
+     */
+    @Query(
+        "INSERT OR IGNORE INTO receipts (messageId, nodeNum, state, at) " +
+            "SELECT :messageId, :nodeNum, 'RECEIVED', :at " +
+            "WHERE EXISTS (SELECT 1 FROM messages WHERE id = :messageId)",
+    )
+    suspend fun recordReceived(messageId: Int, nodeNum: Int, at: Long)
+
+    @Query(
+        "INSERT OR IGNORE INTO receipts (messageId, nodeNum, state, at) " +
+            "SELECT :messageId, :nodeNum, 'READ', :at " +
+            "WHERE EXISTS (SELECT 1 FROM messages WHERE id = :messageId)",
+    )
+    suspend fun insertRead(messageId: Int, nodeNum: Int, at: Long)
+
+    @Query(
+        "UPDATE receipts SET state = 'READ', at = :at " +
+            "WHERE messageId = :messageId AND nodeNum = :nodeNum AND state != 'READ'",
+    )
+    suspend fun promoteToRead(messageId: Int, nodeNum: Int, at: Long)
+}
+
+/** Reading is the stronger claim, so it is applied whether or not a row exists. */
+suspend fun ReceiptDao.recordRead(messageId: Int, nodeNum: Int, at: Long) {
+    insertRead(messageId, nodeNum, at)
+    promoteToRead(messageId, nodeNum, at)
+}
+
+fun ReceiptDao.observe(messageId: Int): Flow<List<Receipt>> =
+    observeFor(messageId).map { rows -> rows.map { Receipt(it.nodeNum, it.state, it.at) } }

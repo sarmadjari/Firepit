@@ -10,6 +10,7 @@ import androidx.room.migration.Migration
 import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.execSQL
 import com.getfirepit.core.model.MessageStatus
+import com.getfirepit.core.model.ReceiptState
 
 internal class Converters {
     @TypeConverter
@@ -17,6 +18,12 @@ internal class Converters {
 
     @TypeConverter
     fun fromStatus(status: MessageStatus): String = status.name
+
+    @TypeConverter
+    fun toReceiptState(name: String): ReceiptState = ReceiptState.valueOf(name)
+
+    @TypeConverter
+    fun fromReceiptState(state: ReceiptState): String = state.name
 }
 
 @Database(
@@ -27,8 +34,9 @@ internal class Converters {
         ChannelStateEntity::class,
         MapPinEntity::class,
         DeletedPinEntity::class,
+        ReceiptEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -38,6 +46,7 @@ abstract class FirepitDatabase : RoomDatabase() {
     abstract fun roomMemberDao(): RoomMemberDao
     abstract fun channelStateDao(): ChannelStateDao
     abstract fun mapPinDao(): MapPinDao
+    abstract fun receiptDao(): ReceiptDao
 
     companion object {
         /** Adds the roster table. Messages and nodes are left untouched. */
@@ -141,7 +150,7 @@ abstract class FirepitDatabase : RoomDatabase() {
             }
         }
 
-        /** Remembers deleted pins so a rebroadcast cannot resurrect them. */
+        /** Adds how fast a node is moving and which way. */
         private val MIGRATION_7_8 = object : Migration(7, 8) {
             override fun migrate(connection: SQLiteConnection) {
                 connection.execSQL("ALTER TABLE nodes ADD COLUMN groundSpeed INTEGER")
@@ -149,6 +158,7 @@ abstract class FirepitDatabase : RoomDatabase() {
             }
         }
 
+        /** Remembers deleted pins so a rebroadcast cannot resurrect them. */
         private val MIGRATION_6_7 = object : Migration(6, 7) {
             override fun migrate(connection: SQLiteConnection) {
                 connection.execSQL(
@@ -164,6 +174,32 @@ abstract class FirepitDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds receipts, as a child of the message they describe.
+         *
+         * The cascade is the point: retention and leaving a room both delete
+         * messages, and neither should have to know receipts exist.
+         */
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS receipts (
+                        messageId INTEGER NOT NULL,
+                        nodeNum INTEGER NOT NULL,
+                        state TEXT NOT NULL,
+                        at INTEGER NOT NULL,
+                        PRIMARY KEY(messageId, nodeNum),
+                        FOREIGN KEY(messageId) REFERENCES messages(id) ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                connection.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_receipts_messageId ON receipts(messageId)",
+                )
+            }
+        }
+
         fun create(context: Context): FirepitDatabase =
             Room.databaseBuilder(context, FirepitDatabase::class.java, "firepit.db")
                 .addMigrations(
@@ -174,6 +210,7 @@ abstract class FirepitDatabase : RoomDatabase() {
                     MIGRATION_5_6,
                     MIGRATION_6_7,
                     MIGRATION_7_8,
+                    MIGRATION_8_9,
                 )
                 .build()
     }
