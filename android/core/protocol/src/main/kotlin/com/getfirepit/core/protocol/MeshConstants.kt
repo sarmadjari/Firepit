@@ -14,15 +14,6 @@ object MeshConstants {
     /** Firepit's private application port. Event-driven only, never periodic. */
     const val MESHCHAT_CONTROL_PORT: Int = 300
 
-    /**
-     * Sealed room text. Private range, so nothing else on the mesh reads it.
-     *
-     * A separate port rather than a marker inside TEXT_MESSAGE_APP: other
-     * clients then show nothing at all instead of a line of rubbish, and the
-     * radio's own screen does not display what the phone has kept private.
-     */
-    const val MESHCHAT_TEXT_PORT: Int = 301
-
     /** `Constants.DATA_PAYLOAD_LEN` — the room available to `Data.payload`. */
     const val DATA_PAYLOAD_LEN: Int = 233
 

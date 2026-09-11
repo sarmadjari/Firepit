@@ -5,9 +5,10 @@ import com.getfirepit.core.protocol.MeshConstants
 /**
  * A room message as it travels: a version, then ciphertext.
  *
- * Sealed messages ride their own private port, so nothing here has to announce
- * what it is — anything arriving there is either ours or noise. The version
- * byte exists so a later format can be recognised rather than mis-read.
+ * Carried in MeshChatControl on PRIVATE_APP, the way the rest of this protocol
+ * travels, so a client that is not Firepit ignores it and the radio's own
+ * screen does not display it. The version byte exists so a later format is
+ * recognised rather than mis-read.
  */
 object SealedText {
 

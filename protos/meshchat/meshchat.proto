@@ -87,7 +87,20 @@ message MeshChatControl {
     LiveLocationRequest live_location_request = 4;
     RosterSync roster_sync = 5;
     Receipt receipt = 6;
+    SealedMessage sealed_message = 7;
   }
+}
+
+// A room message with its words already encrypted under the room key, which the
+// radio never holds. Travels on PRIVATE_APP like the rest of this protocol, so
+// clients that are not Firepit ignore it and the radio's own screen does not
+// display it.
+message SealedMessage {
+  fixed32 room_id = 1;
+  // SealedText: a version byte, a nonce, then ciphertext and tag.
+  bytes ciphertext = 2;
+  // Mirrors MeshPacket.reply_id, which cannot be read without the key.
+  fixed32 reply_id = 3;
 }
 
 // Who in a room has received a message and who has opened it, batched so one
