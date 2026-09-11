@@ -164,6 +164,9 @@ class MeshRepository @Inject constructor(
     fun start() {
         scope.launch {
             link.state.collect { state ->
+                // A different radio has a different clock; the old one's skew
+                // would otherwise describe a device no longer attached.
+                if (state !is LinkState.Ready) _clockSkewMillis.value = null
                 if (state is LinkState.Ready) {
                     _snapshot.value = state.snapshot
                     _myNodeNum.value = state.snapshot.myNodeNum

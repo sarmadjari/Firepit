@@ -52,6 +52,7 @@ class NodeClock @Inject constructor(
             // A reconnection, or a different radio, is worth asking about again.
             ready.collect { if (!it) declined.value = false }
         }
+
         scope.launch {
             combine(ready, mesh.clockSkewMillis, declined) { connected, skew, refused ->
                 if (!connected || refused || skew == null) null
@@ -68,6 +69,9 @@ class NodeClock @Inject constructor(
         runCatching { admin.setTime(now.toInt()) }
             .onSuccess { Log.i(TAG, "radio clock set to $now") }
             .onFailure { Log.w(TAG, "could not set the radio clock", it) }
+        // Packets already in flight still carry the old stamp, and asking again
+        // about a clock we have just set would look like it had not worked.
+        declined.value = true
         _offer.value = null
     }
 

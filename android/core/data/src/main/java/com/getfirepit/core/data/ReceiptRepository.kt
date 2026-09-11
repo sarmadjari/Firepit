@@ -163,7 +163,7 @@ class ReceiptRepository @Inject constructor(
      */
     private suspend fun send(conversation: Conversation, batch: PendingReceipts): Boolean {
         val myNodeNum = mesh.myNodeNum.value ?: return false
-        val roomId = roomIdForChannel(conversation.channel)
+        val roomId = mesh.roomIdForChannel(conversation.channel)
         val receipt = ReceiptProto(
             room_id = roomId ?: 0,
             delivered = batch.delivered.toList(),
@@ -220,24 +220,12 @@ class ReceiptRepository @Inject constructor(
      * before room keys are distributed, and it still keeps relays out.
      */
     private fun seal(roomId: Int, myNodeNum: Int, control: MeshChatControl): ByteString? {
-        val key = roomKeys.keyFor(roomId) ?: channelKeyFor(roomId) ?: return null
+        val key = roomKeys.keyFor(roomId) ?: mesh.channelKeyFor(roomId) ?: return null
         val sealed = RoomCipher.seal(key, control.encode(), SealedText.contextOf(roomId, myNodeNum))
         return MeshChatControl(
             sealed_message = SealedMessage(room_id = roomId, ciphertext = sealed.toByteString()),
         ).encode().let(ByteString::of)
     }
-
-    private fun channelKeyFor(roomId: Int): ByteArray? {
-        val index = mesh.channels.value.firstOrNull { it.id == roomId }?.index ?: return null
-        val psk = mesh.snapshot.value?.channels?.get(index)?.settings?.psk?.toByteArray()
-        if (psk == null || psk.size != RoomCrypto.PSK_SIZE) return null
-        return RoomCrypto.channelKey(psk, roomId, generation = 1)
-    }
-
-    private fun roomIdForChannel(channel: Int): Int? = mesh.channels.value
-        .firstOrNull { it.index == channel && it.isRoom }
-        ?.id
-        ?.takeIf { it != 0 }
 
     private companion object {
         const val TAG = "ReceiptRepository"

@@ -315,7 +315,7 @@ class RoomRepository @Inject constructor(
         when (data.portnum) {
             // Anyone talking in a room is evidently in it, whatever we were told.
             PortNum.TEXT_MESSAGE_APP, PortNum.TEXT_MESSAGE_COMPRESSED_APP, PortNum.NODEINFO_APP ->
-                roomIdForChannel(packet.channel)?.let { roomId ->
+                mesh.roomIdForChannel(packet.channel)?.let { roomId ->
                     memberDao.record(roomId, packet.from, System.currentTimeMillis())
                 }
 
@@ -362,7 +362,7 @@ class RoomRepository @Inject constructor(
      * opening it is itself proof the sender holds the key.
      */
     private suspend fun handleSealed(packet: MeshPacket, sealed: SealedMessage, myNodeNum: Int) {
-        val key = roomKeys.keyFor(sealed.room_id) ?: channelKeyFor(sealed.room_id) ?: return
+        val key = roomKeys.keyFor(sealed.room_id) ?: mesh.channelKeyFor(sealed.room_id) ?: return
         val context = SealedText.contextOf(sealed.room_id, packet.from)
         val plain = RoomCipher.open(key, sealed.ciphertext.toByteArray(), context) ?: run {
             Log.w(TAG, "sealed payload for room ${sealed.room_id} would not open")
@@ -487,26 +487,13 @@ class RoomRepository @Inject constructor(
      * anyone in the room could otherwise fabricate a trust chain.
      */
     private suspend fun handleRosterEvent(packet: MeshPacket, event: RosterEvent) {
-        val roomId = roomIdForChannel(packet.channel) ?: return
+        val roomId = mesh.roomIdForChannel(packet.channel) ?: return
         if (event.invited_by != packet.from) {
             Log.w(TAG, "roster event from ${packet.from} claims inviter ${event.invited_by}; ignored")
             return
         }
         memberDao.record(roomId, event.node_num, System.currentTimeMillis(), invitedBy = event.invited_by)
     }
-
-    /** Mirrors ReceiptRepository: the key every member can derive from the room PSK. */
-    private fun channelKeyFor(roomId: Int): ByteArray? {
-        val index = mesh.channels.value.firstOrNull { it.id == roomId }?.index ?: return null
-        val psk = mesh.snapshot.value?.channels?.get(index)?.settings?.psk?.toByteArray()
-        if (psk == null || psk.size != RoomCrypto.PSK_SIZE) return null
-        return RoomCrypto.channelKey(psk, roomId, generation = 1)
-    }
-
-    private fun roomIdForChannel(channel: Int): Int? = mesh.channels.value
-        .firstOrNull { it.index == channel && it.isRoom }
-        ?.id
-        ?.takeIf { it != 0 }
 
     private fun forgetStaleInvites(nowMillis: Long) {
         issuedInvites.entries.removeAll { nowMillis - it.value.issuedAt > INVITE_LEDGER_TTL_MS }
