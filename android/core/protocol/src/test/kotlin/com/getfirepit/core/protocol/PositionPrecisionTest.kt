@@ -109,8 +109,37 @@ class PositionSharingTest {
     }
 
     @Test
-    fun `one sharing channel is valid`() {
+    fun `one sharing room is valid`() {
         assertTrue(PositionSharing.isValid(listOf(channel(0, 0), channel(1, 32))))
+    }
+
+    /**
+     * The firmware sends its own periodic broadcasts on the primary and its key
+     * is one every Meshtastic radio has, so a position there is public however
+     * few channels carry it.
+     */
+    @Test
+    fun `the primary sharing is never valid, even on its own`() {
+        assertFalse(PositionSharing.isValid(listOf(channel(0, 32), channel(1, 0))))
+    }
+
+    @Test
+    fun `a sharing primary is turned off on the next check`() {
+        val channels = listOf(channel(0, 32, id = 0), channel(1, 0, id = 111))
+
+        val writes = PositionSharing.writesToShareOnly(channels, roomId = null, precision = 32)
+
+        assertEquals(listOf(PrecisionWrite(0, 0)), writes)
+    }
+
+    /** A primary carrying a room's id is still the primary. */
+    @Test
+    fun `the primary cannot be chosen as the sharing room`() {
+        val channels = listOf(channel(0, 0, id = 111))
+
+        val writes = PositionSharing.writesToShareOnly(channels, roomId = 111, precision = 32)
+
+        assertTrue("the primary must never be given a precision", writes.isEmpty())
     }
 
     @Test
