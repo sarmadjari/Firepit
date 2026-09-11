@@ -746,6 +746,10 @@ private fun DirectChat(
                                 text = item.label,
                                 modifier = Modifier.padding(vertical = FirepitSpacing.m),
                             )
+                            is ChatItem.Notice -> SystemChip(
+                                text = item.text,
+                                modifier = Modifier.padding(vertical = FirepitSpacing.s),
+                            )
                             is ChatItem.Bubble -> {
                                 val message = item.message
                                 MessageBubble(
@@ -957,6 +961,10 @@ private fun ChannelChat(
                         is ChatItem.Day -> SystemChip(
                             text = item.label,
                             modifier = Modifier.padding(vertical = FirepitSpacing.m),
+                        )
+                        is ChatItem.Notice -> SystemChip(
+                            text = item.text,
+                            modifier = Modifier.padding(vertical = FirepitSpacing.s),
                         )
 
                         is ChatItem.Bubble -> {

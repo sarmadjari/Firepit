@@ -162,6 +162,30 @@ class RoomsViewModel @Inject constructor(
         rooms.leaveRoom(roomId)
     }
 
+    private val _rotation = MutableStateFlow<String?>(null)
+
+    /** What the last removal managed, for telling the user plainly. */
+    val rotation: StateFlow<String?> = _rotation.asStateFlow()
+
+    fun clearRotation() {
+        _rotation.value = null
+    }
+
+    fun removeMember(roomId: Int, nodeNum: Int) = run("Could not remove them") {
+        val result = rooms.rotateRoom(roomId, remove = setOf(nodeNum))
+        _rotation.value = when {
+            result.missed.isEmpty() ->
+                "Removed. Everyone still in the room has the new key."
+            result.reached.isEmpty() ->
+                "Removed, and the room has a new key. Nobody else could be reached to be " +
+                    "given it, so invite them again when they are back in range."
+            else ->
+                "Removed, and the room has a new key. ${result.missed.size} member" +
+                    "${if (result.missed.size == 1) "" else "s"} could not be reached; " +
+                    "invite them again when they are back in range."
+        }
+    }
+
     fun joinFromScan(scanned: String) = run("Could not join") {
         val decoded = InviteCodec.decode(scanned) ?: error("That isn't a Firepit invite")
         rooms.joinRoom(decoded)

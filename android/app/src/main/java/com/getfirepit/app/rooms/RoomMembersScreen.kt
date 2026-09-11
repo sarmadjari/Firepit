@@ -70,6 +70,8 @@ fun RoomMembersScreen(
     val membersFlow = remember(roomId) { viewModel.members(roomId) }
     val members by membersFlow.collectAsStateWithLifecycle(emptyList())
     val trace by viewModel.trace.collectAsStateWithLifecycle()
+    val rotation by viewModel.rotation.collectAsStateWithLifecycle()
+    var removing by remember { mutableStateOf<MemberRow?>(null) }
     var confirmingLeave by remember { mutableStateOf(false) }
 
     if (confirmingLeave) {
@@ -213,17 +215,22 @@ fun RoomMembersScreen(
                                 color = FirepitTheme.colors.textSecondary,
                             )
                         } else {
-                            TextButton(
-                                onClick = { viewModel.checkPath(row.member.nodeNum, row.displayName) },
-                                enabled = trace !is TraceState.Running,
-                            ) {
-                                Text(
-                                    if ((trace as? TraceState.Running)?.nodeNum == row.member.nodeNum) {
-                                        "…"
-                                    } else {
-                                        "Path"
-                                    },
-                                )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                TextButton(
+                                    onClick = { viewModel.checkPath(row.member.nodeNum, row.displayName) },
+                                    enabled = trace !is TraceState.Running,
+                                ) {
+                                    Text(
+                                        if ((trace as? TraceState.Running)?.nodeNum == row.member.nodeNum) {
+                                            "…"
+                                        } else {
+                                            "Path"
+                                        },
+                                    )
+                                }
+                                TextButton(onClick = { removing = row }) {
+                                    Text("Remove", color = FirepitTheme.colors.danger)
+                                }
                             }
                         }
                     },
@@ -260,6 +267,38 @@ fun RoomMembersScreen(
                 }
             },
             confirmButton = { TextButton(onClick = viewModel::clearTrace) { Text("Close") } },
+        )
+    }
+    removing?.let { row ->
+        AlertDialog(
+            onDismissRequest = { removing = null },
+            title = { Text("Remove ${row.displayName}?") },
+            text = {
+                Text(
+                    "Nothing can take the old key back from them, so the room moves to a new " +
+                        "one instead. Everyone still here is sent it privately; ${row.displayName} " +
+                        "is not, and can read nothing from now on.\n\n" +
+                        "They keep whatever they already received.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.removeMember(roomId, row.member.nodeNum)
+                    removing = null
+                }) {
+                    Text("Remove and change the key", color = FirepitTheme.colors.danger)
+                }
+            },
+            dismissButton = { TextButton(onClick = { removing = null }) { Text("Cancel") } },
+        )
+    }
+
+    rotation?.let { message ->
+        AlertDialog(
+            onDismissRequest = viewModel::clearRotation,
+            title = { Text("The room has a new key") },
+            text = { Text(message) },
+            confirmButton = { TextButton(onClick = viewModel::clearRotation) { Text("Done") } },
         )
     }
 }

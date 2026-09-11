@@ -94,6 +94,7 @@ message MeshChatControl {
     Receipt receipt = 6;
     SealedMessage sealed_message = 7;
     RoomText room_text = 8;
+    KeyRotation key_rotation = 9;
   }
 }
 
@@ -103,6 +104,10 @@ message MeshChatControl {
 // display it.
 message SealedMessage {
   fixed32 room_id = 1;
+  // Which key opens it. Old keys are kept for reading history, so a message
+  // has to say which generation sealed it rather than leave the receiver
+  // guessing between several.
+  uint32 generation = 3;
   // SealedText: a version byte, a nonce, then an encrypted MeshChatControl.
   // One envelope for everything, so words and receipts travel alike and a
   // listener cannot tell them apart by shape.
@@ -176,4 +181,21 @@ message RosterSync {
 message RosterEntry {
   uint32 node_num = 1;
   uint32 invited_by = 2;
+}
+
+// New keys for a room, sent to one member at a time as a PKI direct message so
+// that whoever is being removed simply never receives one. There is no way to
+// take a key back from someone; the room moves to a new one instead.
+message KeyRotation {
+  fixed32 room_id = 1;
+  // Always one more than the generation being replaced.
+  uint32 generation = 2;
+  // Exactly 32 bytes. What the radio will encrypt the channel with.
+  bytes room_psk = 3;
+  // Exactly 32 bytes. What the phone seals words with; the radio never sees it.
+  bytes firepit_key = 4;
+  string room_name = 5;
+  // Who is no longer in the room, so every member's roster agrees and the
+  // reason the key changed can be shown rather than left mysterious.
+  repeated fixed32 removed = 6;
 }

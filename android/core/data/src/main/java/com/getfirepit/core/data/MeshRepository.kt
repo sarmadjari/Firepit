@@ -249,7 +249,11 @@ class MeshRepository @Inject constructor(
                 channel = channel,
                 portNum = PortNum.PRIVATE_APP,
                 payload = MeshChatControl(
-                    sealed_message = SealedMessage(room_id = roomId, ciphertext = sealed.toByteString()),
+                    sealed_message = SealedMessage(
+                        room_id = roomId,
+                        ciphertext = sealed.toByteString(),
+                        generation = roomKeys.generationOf(roomId),
+                    ),
                 ).encode().let(ByteString::of),
                 hopLimit = hopLimit,
                 wantAck = true,

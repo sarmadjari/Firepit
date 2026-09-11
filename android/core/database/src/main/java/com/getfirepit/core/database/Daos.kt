@@ -297,6 +297,12 @@ interface RoomMemberDao {
     @Upsert
     suspend fun upsert(member: RoomMemberEntity)
 
+    @Query("DELETE FROM room_members WHERE roomId = :roomId AND nodeNum = :nodeNum")
+    suspend fun remove(roomId: Int, nodeNum: Int)
+
+    @Query("SELECT nodeNum FROM room_members WHERE roomId = :roomId")
+    suspend fun nodeNumsIn(roomId: Int): List<Int>
+
     @Query("DELETE FROM room_members WHERE roomId = :roomId")
     suspend fun deleteRoom(roomId: Int)
 }

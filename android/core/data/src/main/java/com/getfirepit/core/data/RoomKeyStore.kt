@@ -32,23 +32,47 @@ class RoomKeyStore @Inject constructor(
     private val preferences =
         context.getSharedPreferences("firepit_room_keys", Context.MODE_PRIVATE)
 
-    /** Null when this room has no Firepit key, which means it is not sealed. */
-    fun keyFor(roomId: Int): ByteArray? {
-        val stored = preferences.getString(roomId.toString(), null) ?: return null
+    /** The key a room is sealing with now, or null when it is not sealed. */
+    fun keyFor(roomId: Int): ByteArray? = keyFor(roomId, generationOf(roomId))
+
+    /**
+     * A specific generation, because old keys are kept.
+     *
+     * Rotating a room does not make its history unreadable: messages already on
+     * the phone were sealed under the key of their day, and throwing that away
+     * would delete the conversation rather than protect it.
+     */
+    fun keyFor(roomId: Int, generation: Int): ByteArray? {
+        val stored = preferences.getString(slot(roomId, generation), null) ?: return null
         return unwrap(Base64.decode(stored, Base64.NO_WRAP))
     }
 
-    fun remember(roomId: Int, key: ByteArray) {
+    /** Which generation this room is sealing with. */
+    fun generationOf(roomId: Int): Int = preferences.getInt(current(roomId), FIRST)
+
+    fun remember(roomId: Int, key: ByteArray, generation: Int = FIRST) {
         require(key.size == RoomCipher.KEY_SIZE) { "A room key is ${RoomCipher.KEY_SIZE} bytes" }
         preferences.edit {
-            putString(roomId.toString(), Base64.encodeToString(wrap(key), Base64.NO_WRAP))
+            putString(slot(roomId, generation), Base64.encodeToString(wrap(key), Base64.NO_WRAP))
+            // Never walk backwards: a late rotation message must not undo a
+            // newer one that has already been applied.
+            if (generation >= generationOf(roomId)) putInt(current(roomId), generation)
         }
     }
 
-    fun generate(roomId: Int): ByteArray = RoomCipher.generateKey().also { remember(roomId, it) }
+    fun generate(roomId: Int, generation: Int = FIRST): ByteArray =
+        RoomCipher.generateKey().also { remember(roomId, it, generation) }
 
-    /** Leaving a room takes its key with it, or leaving would not mean much. */
-    fun forget(roomId: Int) = preferences.edit { remove(roomId.toString()) }
+    /** Leaving a room takes every key it ever had, or leaving would not mean much. */
+    fun forget(roomId: Int) = preferences.edit {
+        preferences.all.keys
+            .filter { it == current(roomId) || it.startsWith("$roomId/") }
+            .forEach { remove(it) }
+    }
+
+    private fun slot(roomId: Int, generation: Int) = "$roomId/$generation"
+
+    private fun current(roomId: Int) = "$roomId.generation"
 
     private fun wrap(key: ByteArray): ByteArray {
         val cipher = Cipher.getInstance(TRANSFORMATION).apply { init(Cipher.ENCRYPT_MODE, master()) }
@@ -94,7 +118,10 @@ class RoomKeyStore @Inject constructor(
         }.generateKey()
     }
 
-    private companion object {
+    companion object {
+        /** Rooms start here; a rotation is always one more. */
+        const val FIRST = 1
+
         const val TAG = "FirepitRoomKeys"
         const val PROVIDER = "AndroidKeyStore"
         const val ALIAS = "firepit_room_key_wrapping"

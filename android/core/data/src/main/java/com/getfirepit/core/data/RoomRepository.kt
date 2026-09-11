@@ -13,7 +13,10 @@ import com.getfirepit.core.model.ChannelRole
 import com.getfirepit.core.model.RoomChannel
 import com.getfirepit.core.model.RoomMember
 import com.getfirepit.core.database.MessageDao
+import com.getfirepit.core.database.save
 import com.getfirepit.core.model.BROADCAST_NODE_NUM
+import com.getfirepit.core.model.ChatMessage
+import com.getfirepit.core.model.MessageStatus
 import com.getfirepit.core.protocol.ChannelSlotManager
 import com.getfirepit.core.protocol.MeshConstants
 import com.getfirepit.core.protocol.MeshPacketBuilder
@@ -21,6 +24,7 @@ import com.getfirepit.protocol.meshchat.Invite
 import com.getfirepit.protocol.meshchat.Inviter
 import com.getfirepit.protocol.meshchat.JoinHello
 import com.getfirepit.protocol.meshchat.MeshChatControl
+import com.getfirepit.protocol.meshchat.KeyRotation
 import com.getfirepit.protocol.meshchat.SealedMessage
 import com.getfirepit.protocol.meshchat.RosterEntry
 import com.getfirepit.protocol.meshchat.RosterEvent
@@ -216,6 +220,159 @@ class RoomRepository @Inject constructor(
         announceJoin(slot, invite)
     }
 
+    /**
+     * Moves the room to new keys and leaves [remove] behind.
+     *
+     * Nothing can take a key back from someone who already has it, so removal
+     * is really everyone else moving on without them. The new keys go to each
+     * remaining member as a direct message encrypted to their node, which is
+     * the only part of this that is actually private; the removed member simply
+     * never receives one.
+     *
+     * Members who are offline get nothing and will find the room silent. They
+     * are reported back to the caller so they can be invited again rather than
+     * left wondering.
+     */
+    suspend fun rotateRoom(roomId: Int, remove: Set<Int> = emptySet()): RotationResult {
+        val myNodeNum = mesh.myNodeNum.value ?: throw RoomError.NotConnected
+        val room = ChannelSlotManager.findByRoomId(mesh.channels.value, roomId)
+            ?: throw RoomError.InviteInvalid
+
+        val generation = roomKeys.generationOf(roomId) + 1
+        val psk = RoomCrypto.generatePsk()
+        val firepitKey = RoomCipher.generateKey()
+
+        // Our own radio first: if this fails nothing has been given away.
+        admin.setChannel(channelFor(room.index, room.name, psk, roomId))
+        roomKeys.remember(roomId, firepitKey, generation)
+
+        remove.forEach { memberDao.remove(roomId, it) }
+
+        val rotation = KeyRotation(
+            room_id = roomId,
+            generation = generation,
+            room_psk = psk.toByteString(),
+            firepit_key = firepitKey.toByteString(),
+            room_name = room.name,
+            removed = remove.toList(),
+        )
+
+        val keeping = memberDao.nodeNumsIn(roomId).filter { it != myNodeNum }
+        val reached = keeping.filter { sendRotation(it, rotation) }
+
+        // On the old key, so the people who did not get the new one hear why
+        // the room went quiet instead of being left to guess.
+        announceRotation(room.index, myNodeNum, generation)
+
+        noticeInRoom(room.index, rotationNotice(remove))
+        Log.i(TAG, "rotated room $roomId to generation $generation, ${reached.size}/${keeping.size} reached")
+        return RotationResult(generation, reached.toSet(), (keeping - reached.toSet()).toSet())
+    }
+
+    private suspend fun sendRotation(member: Int, rotation: KeyRotation): Boolean {
+        val publicKey = mesh.snapshot.value?.nodes?.get(member)?.user?.public_key
+        if (publicKey == null || publicKey.size != 32) {
+            Log.w(TAG, "no public key for $member; cannot hand over the new room key")
+            return false
+        }
+        return runCatching {
+            link.send(
+                ToRadio(
+                    packet = MeshPacketBuilder.meshPacket(
+                        to = member,
+                        channel = 0,
+                        portNum = PortNum.PRIVATE_APP,
+                        payload = MeshChatControl(key_rotation = rotation).encode().let(ByteString::of),
+                        pkiEncrypted = true,
+                        publicKey = publicKey,
+                        wantAck = true,
+                    ),
+                ),
+            )
+        }.onFailure { Log.w(TAG, "could not send the new key to $member", it) }.isSuccess
+    }
+
+    private suspend fun announceRotation(slot: Int, myNodeNum: Int, generation: Int) {
+        runCatching {
+            link.send(
+                ToRadio(
+                    packet = MeshPacketBuilder.meshPacket(
+                        to = MeshConstants.BROADCAST_NODENUM,
+                        channel = slot,
+                        portNum = PortNum.PRIVATE_APP,
+                        payload = MeshChatControl(
+                            roster_event = RosterEvent(
+                                kind = RosterEvent.Kind.KEY_ROTATED,
+                                node_num = myNodeNum,
+                                generation = generation,
+                            ),
+                        ).encode().let(ByteString::of),
+                        priority = MeshPacket.Priority.BACKGROUND,
+                    ),
+                ),
+            )
+        }.onFailure { Log.w(TAG, "could not announce the rotation", it) }
+    }
+
+    /** Applies a rotation somebody else performed. */
+    private suspend fun handleKeyRotation(packet: MeshPacket, rotation: KeyRotation, authenticated: Boolean) {
+        if (!authenticated) {
+            Log.w(TAG, "unauthenticated key rotation from ${packet.from}; ignored")
+            return
+        }
+        // Only somebody already in the room may change its locks.
+        if (memberDao.findEntity(rotation.room_id, packet.from) == null) {
+            Log.w(TAG, "key rotation for ${rotation.room_id} from a non-member ${packet.from}; ignored")
+            return
+        }
+        if (rotation.generation <= roomKeys.generationOf(rotation.room_id)) {
+            Log.i(TAG, "key rotation for ${rotation.room_id} is not newer than ours; ignored")
+            return
+        }
+        val psk = rotation.room_psk.toByteArray()
+        val firepitKey = rotation.firepit_key.toByteArray()
+        if (psk.size != RoomCrypto.PSK_SIZE || firepitKey.size != RoomCipher.KEY_SIZE) return
+
+        val slot = ChannelSlotManager.slotOf(mesh.channels.value, rotation.room_id) ?: return
+        admin.setChannel(channelFor(slot, rotation.room_name, psk, rotation.room_id))
+        roomKeys.remember(rotation.room_id, firepitKey, rotation.generation)
+        rotation.removed.forEach { memberDao.remove(rotation.room_id, it) }
+
+        noticeInRoom(slot, rotationNotice(rotation.removed.toSet()))
+        Log.i(TAG, "took the new key for room ${rotation.room_id}, generation ${rotation.generation}")
+    }
+
+    private fun rotationNotice(removed: Set<Int>): String = when {
+        removed.isEmpty() -> "The room's key was changed. Everyone still here has the new one."
+        removed.size == 1 -> "${MeshConstants.formatNodeId(removed.first())} was removed. " +
+            "The room's key was changed, so they cannot read anything from now on."
+        else -> "${removed.size} people were removed. " +
+            "The room's key was changed, so they cannot read anything from now on."
+    }
+
+    /**
+     * A line in the room that nobody said.
+     *
+     * Stored like a message so it survives a restart and sits in the history at
+     * the moment it happened, with no sender so the UI can tell it apart.
+     */
+    private suspend fun noticeInRoom(slot: Int, text: String) {
+        val myNodeNum = mesh.myNodeNum.value ?: return
+        messageDao.save(
+            ChatMessage(
+                id = MeshPacketBuilder.randomPacketId(),
+                channel = slot,
+                fromNodeNum = NOTICE_NODE,
+                toNodeNum = BROADCAST_NODE_NUM,
+                text = text,
+                sentAt = System.currentTimeMillis(),
+                status = MessageStatus.RECEIVED,
+                isOutgoing = false,
+            ),
+            myNodeNum,
+        )
+    }
+
     /** Frees the room's slot and closes the gap so the rooms stay consecutive. */
     suspend fun leaveRoom(roomId: Int) {
         val channels = mesh.channels.value
@@ -366,6 +523,8 @@ class RoomRepository @Inject constructor(
             receipts.handle(packet.from, receipt)
         }
 
+        control.key_rotation?.let { rotation -> handleKeyRotation(packet, rotation, authenticated) }
+
         control.room_text?.let { room ->
             if (!authenticated) {
                 Log.w(TAG, "unsealed room text from ${packet.from}; ignored")
@@ -382,7 +541,11 @@ class RoomRepository @Inject constructor(
      * opening it is itself proof the sender holds the key.
      */
     private suspend fun handleSealed(packet: MeshPacket, sealed: SealedMessage, myNodeNum: Int) {
-        val key = roomKeys.keyFor(sealed.room_id) ?: mesh.channelKeyFor(sealed.room_id) ?: return
+        // The generation it was sealed under, not the one we have moved on to:
+        // history stays readable across a rotation.
+        val key = roomKeys.keyFor(sealed.room_id, sealed.generation.takeIf { it > 0 } ?: RoomKeyStore.FIRST)
+            ?: mesh.channelKeyFor(sealed.room_id)
+            ?: return
         val context = SealedText.contextOf(sealed.room_id, packet.from)
         val plain = SealedText.open(key, sealed.ciphertext.toByteArray(), context) ?: run {
             Log.w(TAG, "sealed payload for room ${sealed.room_id} would not open")
@@ -534,6 +697,9 @@ class RoomRepository @Inject constructor(
     )
 
     private companion object {
+        /** No real node has zero, so it marks a line the room itself wrote. */
+        const val NOTICE_NODE = 0
+
         const val TAG = "FirepitRooms"
 
         /** Full precision: finding each other in a crowd is the point (decision U-2). */
@@ -551,3 +717,10 @@ class RoomRepository @Inject constructor(
         const val MAX_ROSTER_ENTRIES = 14
     }
 }
+
+/** What a rotation managed to hand over, and to whom it did not. */
+data class RotationResult(
+    val generation: Int,
+    val reached: Set<Int>,
+    val missed: Set<Int>,
+)

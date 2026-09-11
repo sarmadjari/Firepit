@@ -13,6 +13,9 @@ import kotlin.time.Duration.Companion.minutes
 sealed interface ChatItem {
     data class Day(val label: String, val date: LocalDate) : ChatItem
 
+    /** Something the room did, rather than something anyone said. */
+    data class Notice(val id: Int, val text: String) : ChatItem
+
     data class Bubble(
         val message: ChatMessage,
         val isFirstInGroup: Boolean,
@@ -49,6 +52,11 @@ fun buildChatItems(
         val newDay = previous == null || previous.displayDate(zone) != date
         if (newDay) items += ChatItem.Day(dayLabel(date, today), date)
 
+        if (message.isNotice) {
+            items += ChatItem.Notice(message.id, message.text)
+            return@forEachIndexed
+        }
+
         items += ChatItem.Bubble(
             message = message,
             // A quote needs its author named above it, so a reply opens a block.
@@ -74,6 +82,9 @@ private fun ChatMessage.groupsWith(other: ChatMessage?, zone: ZoneId, window: Du
 }
 
 private fun ChatMessage.displayTime(): Long = shownAt()
+
+/** No real node has zero, so it marks a line the room itself wrote. */
+val ChatMessage.isNotice: Boolean get() = fromNodeNum == 0
 
 /**
  * When the message existed, as far as anything here can tell.
@@ -104,6 +115,7 @@ private fun dayLabel(date: LocalDate, today: LocalDate): String = when (date) {
 /** Stable identity for the lazy list. Packet ids are unique, so they never collide with day keys. */
 fun ChatItem.key(): Any = when (this) {
     is ChatItem.Day -> "day-$date"
+    is ChatItem.Notice -> id
     is ChatItem.Bubble -> message.id
 }
 
