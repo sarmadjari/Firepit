@@ -50,17 +50,21 @@ class ReceiptRepository @Inject constructor(
 
     private val pacer = OutboundPacer(System::currentTimeMillis)
     private val mutex = Mutex()
-    private val pending = mutableMapOf<Int, PendingReceipts>()
-    private val echo = mutableMapOf<Int, PendingReceipts>()
+    private val pending = mutableMapOf<Conversation, PendingReceipts>()
+    private val echo = mutableMapOf<Conversation, PendingReceipts>()
     private var flushJob: Job? = null
+
+    /** A channel, or the one person a direct message came from. */
+    private data class Conversation(val channel: Int, val peer: Int?)
 
     /** Who has this message, and when they got it. */
     fun observe(messageId: Int): Flow<List<Receipt>> = receiptDao.observe(messageId)
 
     /** A message arrived. */
-    suspend fun received(channel: Int, messageId: Int) {
+    suspend fun received(channel: Int, messageId: Int, peer: Int? = null) {
+        val key = Conversation(channel, peer)
         mutex.withLock {
-            pending[channel] = ReceiptRules.received(pending[channel] ?: PendingReceipts(), messageId)
+            pending[key] = ReceiptRules.received(pending[key] ?: PendingReceipts(), messageId)
         }
         schedule(QUIET_WINDOW_MILLIS)
     }
@@ -71,10 +75,11 @@ class ReceiptRepository @Inject constructor(
      * Sent sooner than a delivery receipt: it is the half anyone actually waits
      * for, and arriving ten minutes late makes it useless.
      */
-    suspend fun read(channel: Int, messageIds: Set<Int>) {
+    suspend fun read(channel: Int, messageIds: Set<Int>, peer: Int? = null) {
         if (messageIds.isEmpty()) return
+        val key = Conversation(channel, peer)
         mutex.withLock {
-            pending[channel] = ReceiptRules.opened(pending[channel] ?: PendingReceipts(), messageIds)
+            pending[key] = ReceiptRules.opened(pending[key] ?: PendingReceipts(), messageIds)
         }
         schedule(READ_WINDOW_MILLIS)
     }
@@ -101,48 +106,83 @@ class ReceiptRepository @Inject constructor(
     /** Send what is owed, one packet per conversation. */
     suspend fun flush() {
         val owed = mutex.withLock { pending.filterValues { !it.isEmpty }.toMap() }
-        owed.forEach { (channel, outstanding) ->
-            val sent = ReceiptRules.batch(outstanding, echo[channel] ?: PendingReceipts())
+        owed.forEach { (conversation, outstanding) ->
+            val sent = ReceiptRules.batch(outstanding, echo[conversation] ?: PendingReceipts())
             if (sent.isEmpty) return@forEach
-            if (!send(channel, sent)) return@forEach
+            if (!send(conversation, sent)) return@forEach
             mutex.withLock {
-                pending[channel] = ReceiptRules.remaining(pending[channel] ?: PendingReceipts(), sent)
-                echo[channel] = ReceiptRules.echoOf(sent)
+                pending[conversation] =
+                    ReceiptRules.remaining(pending[conversation] ?: PendingReceipts(), sent)
+                echo[conversation] = ReceiptRules.echoOf(sent)
             }
         }
     }
 
-    private suspend fun send(channel: Int, batch: PendingReceipts): Boolean {
+    /**
+     * Sent only where it can be sent privately: sealed under a room key, or
+     * addressed to one person and encrypted to them.
+     *
+     * On an ordinary channel a receipt would announce to everyone in earshot
+     * what this phone has been reading, which is worse than having no receipt.
+     */
+    private suspend fun send(conversation: Conversation, batch: PendingReceipts): Boolean {
         val myNodeNum = mesh.myNodeNum.value ?: return false
-        val roomId = roomIdForChannel(channel)
+        val roomId = roomIdForChannel(conversation.channel)
         val receipt = ReceiptProto(
             room_id = roomId ?: 0,
             delivered = batch.delivered.toList(),
             read = batch.read.toList(),
         )
         val control = MeshChatControl(receipt = receipt)
-        val payload = seal(roomId, myNodeNum, control) ?: control.encode().let(ByteString::of)
 
-        val packet = MeshPacketBuilder.meshPacket(
-            to = BROADCAST_NODE_NUM,
-            channel = channel,
-            portNum = PortNum.PRIVATE_APP,
-            payload = payload,
-            // Nobody is waiting on a receipt about a receipt.
-            priority = MeshPacket.Priority.BACKGROUND,
-        )
+        val packet = when {
+            roomId != null -> {
+                val payload = seal(roomId, myNodeNum, control) ?: return false
+                MeshPacketBuilder.meshPacket(
+                    to = BROADCAST_NODE_NUM,
+                    channel = conversation.channel,
+                    portNum = PortNum.PRIVATE_APP,
+                    payload = payload,
+                    // Nobody is waiting on a receipt about a receipt.
+                    priority = MeshPacket.Priority.BACKGROUND,
+                )
+            }
+
+            conversation.peer != null -> {
+                val publicKey = publicKeyOf(conversation.peer) ?: return false
+                MeshPacketBuilder.meshPacket(
+                    to = conversation.peer,
+                    channel = conversation.channel,
+                    portNum = PortNum.PRIVATE_APP,
+                    payload = control.encode().let(ByteString::of),
+                    pkiEncrypted = true,
+                    publicKey = publicKey,
+                    priority = MeshPacket.Priority.BACKGROUND,
+                )
+            }
+
+            else -> {
+                Log.i(TAG, "no private way to send a receipt on channel ${conversation.channel}")
+                return false
+            }
+        }
+
         pacer.awaitSlot(PortNum.PRIVATE_APP)
         return runCatching { link.send(ToRadio(packet = packet)) }
-            .onFailure { Log.w(TAG, "receipt send failed on channel $channel", it) }
+            .onFailure { Log.w(TAG, "receipt send failed", it) }
             .isSuccess
     }
+
+    private fun publicKeyOf(node: Int): ByteString? = mesh.snapshot.value
+        ?.nodes?.get(node)?.user?.public_key
+        ?.takeIf { it.size > 0 }
 
     /**
      * Under the room key where there is one, so a listener cannot learn who is
      * reading whom from traffic it cannot otherwise open.
      */
-    private fun seal(roomId: Int?, myNodeNum: Int, control: MeshChatControl): ByteString? {
-        val key = roomId?.let { roomKeys.keyFor(it) } ?: return null
+    private fun seal(roomId: Int, myNodeNum: Int, control: MeshChatControl): ByteString? {
+        val key = roomKeys.keyFor(roomId) ?: return null
         val sealed = RoomCipher.seal(key, control.encode(), SealedText.contextOf(roomId, myNodeNum))
         return MeshChatControl(
             sealed_message = SealedMessage(room_id = roomId, ciphertext = sealed.toByteString()),

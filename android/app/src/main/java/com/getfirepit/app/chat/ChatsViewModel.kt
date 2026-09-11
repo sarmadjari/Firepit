@@ -189,11 +189,12 @@ class ChatsViewModel @Inject constructor(
     init {
         // On screen and looked at is the only honest definition of read.
         viewModelScope.launch {
-            combine(messages, selected, presence.foreground) { shown, channel, foreground ->
-                if (channel == null || !foreground) null
-                else channel to shown.filterNot { it.isOutgoing }.map { it.id }.toSet()
+            combine(messages, selected, directPeer, presence.foreground) {
+                    shown, channel, peer, foreground ->
+                if (!foreground || (channel == null && peer == null)) null
+                else Triple(channel ?: 0, peer, shown.filterNot { it.isOutgoing }.map { it.id }.toSet())
             }.collect { open ->
-                open?.let { (channel, ids) -> receipts.read(channel, ids) }
+                open?.let { (channel, peer, ids) -> receipts.read(channel, ids, peer) }
             }
         }
     }

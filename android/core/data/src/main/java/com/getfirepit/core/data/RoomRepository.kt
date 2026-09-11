@@ -323,7 +323,10 @@ class RoomRepository @Inject constructor(
             else -> Unit
         }
 
-        if (data.portnum == PortNum.TEXT_MESSAGE_APP) receipts.received(packet.channel, packet.id)
+        if (data.portnum == PortNum.TEXT_MESSAGE_APP) {
+            val direct = packet.to == myNodeNum
+            receipts.received(packet.channel, packet.id, peer = packet.from.takeIf { direct })
+        }
     }
 
     private suspend fun handleControl(packet: MeshPacket, payload: ByteArray, myNodeNum: Int) {
