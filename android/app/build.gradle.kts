@@ -22,6 +22,19 @@ android {
             }
         }
     }
+
+    // MapLibre's renderer is about 13 MB per architecture and four of them ship
+    // by default, three of which no given phone can run. Splitting keeps a
+    // shareable build near a third of the size; the universal APK stays for
+    // anything that needs one.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = true
+        }
+    }
 }
 
 dependencies {
