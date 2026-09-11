@@ -502,17 +502,25 @@ the app's claims were ahead of its code.
 
 ### Not built
 
-- **Encrypted database.** Attempted with SQLCipher and reverted. The one-time migration of an
-  existing plaintext database uses `ATTACH` + `sqlcipher_export()`, and in `sqlcipher-android`
-  4.9.0 the attachment is not visible to the connection that runs the export
-  (`unknown database`), while running the export through `rawExecSQL` never steps the statement
-  and silently produces no file. Both failure modes leave plaintext in place while the code
-  believes it has encrypted it, which is worse than not shipping it. Needs the connection pinned
-  to a single connection, or a different migration strategy, plus the instrumented test that
-  caught this.
 - **Admin-signed invites.** `RoomAdmin` exists and is tested; nothing issues or verifies grants
   yet. Depends on rotation, which now exists: grants are bound to a generation, so bumping the
   generation is what demotes an admin.
+
+### Deferred from this stage
+
+- **Encrypted database — not wanted for now.** Android already encrypts the disk of a locked
+  phone, room keys sit in the keystore rather than in the database, and backups are off. What
+  full-database encryption adds on top is protection against an unlocked or rooted phone. Worth
+  having, but a smaller gap than it was before rooms were sealed.
+
+  Tried once with SQLCipher and reverted, which is worth recording so the next attempt starts
+  further along. The one-time migration of an existing plaintext database goes through `ATTACH` +
+  `sqlcipher_export()`, and in `sqlcipher-android` 4.9.0 two things go wrong: run through
+  `rawExecSQL` the statement is never stepped and no file appears at all, and run through
+  `rawQuery` the attachment is invisible to the connection the query lands on (`unknown
+  database`). Both leave plaintext in place while the code believes it has encrypted it. A fix
+  needs the migration pinned to one connection, or a different strategy — and the instrumented
+  test that caught this, which is the part actually worth keeping.
 
 ---
 
