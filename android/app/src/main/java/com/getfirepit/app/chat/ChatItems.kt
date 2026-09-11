@@ -3,6 +3,7 @@ package com.getfirepit.app.chat
 import com.getfirepit.core.model.ChatMessage
 import java.time.Instant
 import java.time.LocalDate
+import kotlin.math.abs
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlin.time.Duration
@@ -33,6 +34,11 @@ fun buildChatItems(
     groupWindow: Duration = GROUP_WINDOW,
 ): List<ChatItem> {
     if (messages.isEmpty()) return emptyList()
+
+    // The database orders by sentAt, but the day shown comes from the radio's
+    // clock where there is one. Grouping an order built on a different clock
+    // puts one day on screen twice, which is a repeated key and a crash.
+    val messages = messages.sortedBy { it.displayTime() }
 
     val items = mutableListOf<ChatItem>()
     messages.forEachIndexed { index, message ->
@@ -67,8 +73,21 @@ private fun ChatMessage.groupsWith(other: ChatMessage?, zone: ZoneId, window: Du
     return kotlin.math.abs(displayTime() - other.displayTime()) <= window.inWholeMilliseconds
 }
 
-/** The radio's clock when it gave us one, since that is when the message existed. */
-private fun ChatMessage.displayTime(): Long = rxTime ?: sentAt
+private fun ChatMessage.displayTime(): Long = shownAt()
+
+/**
+ * When the message existed, as far as anything here can tell.
+ *
+ * The radio hands a packet to the phone as soon as it has it, so the two clocks
+ * should agree. A radio that has never been told the time can be hours out or
+ * read as 1970, and believing it files today's conversation under yesterday,
+ * above the replies to it. Past the tolerance the phone's clock is the more
+ * honest of the two; the radio's claim is still shown in the info sheet.
+ */
+fun ChatMessage.shownAt(): Long {
+    val claimed = rxTime ?: return sentAt
+    return if (abs(claimed - sentAt) <= CLOCK_TOLERANCE.inWholeMilliseconds) claimed else sentAt
+}
 
 private fun ChatMessage.displayDate(zone: ZoneId): LocalDate =
     Instant.ofEpochMilli(displayTime()).atZone(zone).toLocalDate()
@@ -90,3 +109,6 @@ fun ChatItem.key(): Any = when (this) {
 
 /** Long enough to keep a burst together, short enough that a later reply separates. */
 private val GROUP_WINDOW = 5.minutes
+
+/** How far a radio's clock may be from the phone's before it is not worth believing. */
+private val CLOCK_TOLERANCE = 5.minutes

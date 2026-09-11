@@ -13,8 +13,8 @@ option java_outer_classname = "MeshChatProtos";
  *
  *   Invite / LoRaProfile / Inviter  — encoded into QR codes and links only.
  *                                      NEVER transmitted over LoRa.
- *   MeshChatControl and friends     — private application port 300, one packet
- *                                      per event, never periodic, <= ~40 bytes.
+ *   MeshChatControl and friends     — PortNum.PRIVATE_APP, one packet per event,
+ *                                      never periodic. The oneof says which.
  *
  * "MeshChat" is the internal protocol name and stays stable regardless of the
  * product name (Firepit). Changing it changes the wire contract.

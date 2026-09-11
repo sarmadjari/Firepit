@@ -11,9 +11,6 @@ object MeshConstants {
     const val DEFAULT_HOP_LIMIT: Int = 3
     const val MAX_HOP_LIMIT: Int = 7
 
-    /** Firepit's private application port. Event-driven only, never periodic. */
-    const val MESHCHAT_CONTROL_PORT: Int = 300
-
     /** `Constants.DATA_PAYLOAD_LEN` — the room available to `Data.payload`. */
     const val DATA_PAYLOAD_LEN: Int = 233
 

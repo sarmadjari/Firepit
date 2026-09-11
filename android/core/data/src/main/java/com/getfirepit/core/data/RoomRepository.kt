@@ -319,7 +319,13 @@ class RoomRepository @Inject constructor(
                     memberDao.record(roomId, packet.from, System.currentTimeMillis())
                 }
 
-            PortNum.PRIVATE_APP -> handleControl(packet, data.payload.toByteArray(), myNodeNum)
+            PortNum.PRIVATE_APP -> handleControl(
+                packet,
+                data.payload.toByteArray(),
+                myNodeNum,
+                // Anyone on a shared channel can put bytes on it under any name.
+                authenticated = packet.pki_encrypted,
+            )
             else -> Unit
         }
 
@@ -329,27 +335,40 @@ class RoomRepository @Inject constructor(
         }
     }
 
-    private suspend fun handleControl(packet: MeshPacket, payload: ByteArray, myNodeNum: Int) {
+    private suspend fun handleControl(
+        packet: MeshPacket,
+        payload: ByteArray,
+        myNodeNum: Int,
+        authenticated: Boolean,
+    ) {
         val control = runCatching { MeshChatControl.ADAPTER.decode(payload) }.getOrNull() ?: return
         control.join_hello?.let { hello -> handleJoinHello(packet.from, hello, myNodeNum) }
         control.roster_event?.let { event -> handleRosterEvent(packet, event) }
         control.roster_sync?.let { sync -> handleRosterSync(packet, sync) }
-        control.receipt?.let { receipt -> receipts.handle(packet.from, receipt) }
         control.sealed_message?.let { sealed -> handleSealed(packet, sealed, myNodeNum) }
+
+        control.receipt?.let { receipt ->
+            if (!authenticated) {
+                Log.w(TAG, "unauthenticated receipt from ${packet.from}; ignored")
+                return@let
+            }
+            receipts.handle(packet.from, receipt)
+        }
     }
 
     /**
      * Open it and treat what is inside as if it had arrived in the clear. The
-     * key is the room's, so a radio relaying this cannot do the same.
+     * key is the room's, so a radio relaying this cannot do the same, and
+     * opening it is itself proof the sender holds the key.
      */
     private suspend fun handleSealed(packet: MeshPacket, sealed: SealedMessage, myNodeNum: Int) {
-        val key = roomKeys.keyFor(sealed.room_id) ?: return
+        val key = roomKeys.keyFor(sealed.room_id) ?: channelKeyFor(sealed.room_id) ?: return
         val context = SealedText.contextOf(sealed.room_id, packet.from)
         val plain = RoomCipher.open(key, sealed.ciphertext.toByteArray(), context) ?: run {
             Log.w(TAG, "sealed payload for room ${sealed.room_id} would not open")
             return
         }
-        handleControl(packet, plain, myNodeNum)
+        handleControl(packet, plain, myNodeNum, authenticated = true)
     }
 
     /**
@@ -474,6 +493,14 @@ class RoomRepository @Inject constructor(
             return
         }
         memberDao.record(roomId, event.node_num, System.currentTimeMillis(), invitedBy = event.invited_by)
+    }
+
+    /** Mirrors ReceiptRepository: the key every member can derive from the room PSK. */
+    private fun channelKeyFor(roomId: Int): ByteArray? {
+        val index = mesh.channels.value.firstOrNull { it.id == roomId }?.index ?: return null
+        val psk = mesh.snapshot.value?.channels?.get(index)?.settings?.psk?.toByteArray()
+        if (psk == null || psk.size != RoomCrypto.PSK_SIZE) return null
+        return RoomCrypto.channelKey(psk, roomId, generation = 1)
     }
 
     private fun roomIdForChannel(channel: Int): Int? = mesh.channels.value

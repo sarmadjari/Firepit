@@ -349,7 +349,8 @@ class MeshRepository @Inject constructor(
             toNodeNum = packet.to,
             text = text,
             sentAt = System.currentTimeMillis(),
-            rxTime = packet.rx_time?.toLong()?.times(1_000),
+            // Zero is a radio that has never been told the time, not 1970.
+            rxTime = packet.rx_time?.takeIf { it != 0 }?.toLong()?.times(1_000),
             status = MessageStatus.RECEIVED,
             isOutgoing = false,
             rxSnr = packet.rx_snr.takeIf { it != 0f },

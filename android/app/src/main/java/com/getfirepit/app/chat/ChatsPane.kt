@@ -750,7 +750,7 @@ private fun DirectChat(
                                 val message = item.message
                                 MessageBubble(
                                     text = message.text,
-                                    time = MessageTimestamp.bubbleFormat(message.rxTime ?: message.sentAt),
+                                    time = MessageTimestamp.bubbleFormat(message.shownAt()),
                                     isOutgoing = message.isOutgoing,
                                     senderName = null,
                                     senderNodeNum = message.fromNodeNum,
@@ -963,7 +963,7 @@ private fun ChannelChat(
                             val parent = state.repliedTo(message)
                             MessageBubble(
                                 text = message.text,
-                                time = MessageTimestamp.bubbleFormat(message.rxTime ?: message.sentAt),
+                                time = MessageTimestamp.bubbleFormat(message.shownAt()),
                                 isOutgoing = message.isOutgoing,
                                 senderName = state.nodes[message.fromNodeNum]?.displayName,
                                 senderNodeNum = message.fromNodeNum,

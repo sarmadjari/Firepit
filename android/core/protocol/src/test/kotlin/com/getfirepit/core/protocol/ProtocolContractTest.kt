@@ -32,12 +32,11 @@ class ProtocolContractTest {
     }
 
     @Test
-    fun `private control port is inside the third-party range`() {
-        assertTrue(
-            "Port 300 must sit in the app-private range or nodes will treat it as a known service",
-            MESHCHAT_CONTROL_PORT >= PortNum.PRIVATE_APP.value,
-        )
-        assertTrue(MESHCHAT_CONTROL_PORT <= PortNum.MAX.value)
+    fun `control traffic uses the port the protos sanction for private apps`() {
+        // portnums.proto: private apps may use PRIVATE_APP directly rather than
+        // claim a number, which would mean diverging from the vendored protos.
+        assertEquals(256, PortNum.PRIVATE_APP.value)
+        assertTrue(PortNum.PRIVATE_APP.value <= PortNum.MAX.value)
     }
 
     @Test

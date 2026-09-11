@@ -143,11 +143,57 @@ class ChatItemsTest {
     }
 
     @Test
-    fun `the radio clock wins over local time when deciding the day`() {
+    fun `the radio clock decides the day when the two clocks agree`() {
+        val message = message(1, from = 7, at = at(9)).copy(rxTime = at(9) - 60_000)
+
+        val items = buildChatItems(listOf(message), today, zone)
+
+        assertEquals("Today", (items.first() as ChatItem.Day).label)
+    }
+
+    /**
+     * Observed on a radio whose clock was fifteen hours behind: a message that
+     * had just arrived was filed under yesterday, above the replies to it.
+     */
+    @Test
+    fun `a radio clock far from the phone's is not believed`() {
         val message = message(1, from = 7, at = at(9)).copy(rxTime = at(7))
 
         val items = buildChatItems(listOf(message), today, zone)
 
-        assertEquals("7 September", (items.first() as ChatItem.Day).label)
+        assertEquals("Today", (items.first() as ChatItem.Day).label)
+    }
+
+    /**
+     * A radio that has never been told the time once put 1970 between two of
+     * today's messages, which repeated a day key and brought the screen down.
+     */
+    @Test
+    fun `a wrong radio clock cannot repeat a day key`() {
+        val messages = listOf(
+            message(1, from = 7, at = at(9)),
+            message(2, from = 7, at = at(9, 1)).copy(rxTime = 0),
+            message(3, from = 7, at = at(9, 2)),
+        )
+
+        val keys = buildChatItems(messages, today, zone).map { it.key() }
+
+        assertEquals(keys.size, keys.toSet().size)
+        assertEquals(1, keys.count { it == "day-2026-09-09" })
+    }
+
+    @Test
+    fun `a disbelieved radio clock leaves a message where it arrived`() {
+        val messages = listOf(
+            message(1, from = 7, at = at(9)),
+            message(2, from = 7, at = at(9, 1)).copy(rxTime = at(7)),
+            message(3, from = 7, at = at(9, 2)),
+        )
+
+        val items = buildChatItems(messages, today, zone)
+        val keys = items.map { it.key() }
+
+        assertEquals(keys.size, keys.toSet().size)
+        assertEquals(listOf(1, 2, 3), items.filterIsInstance<ChatItem.Bubble>().map { it.message.id })
     }
 }

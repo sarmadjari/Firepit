@@ -2,6 +2,7 @@ package com.getfirepit.core.data
 
 import android.util.Log
 import com.getfirepit.core.crypto.RoomCipher
+import com.getfirepit.core.crypto.RoomCrypto
 import com.getfirepit.core.crypto.SealedText
 import com.getfirepit.core.database.ReceiptDao
 import com.getfirepit.core.database.observe
@@ -52,6 +53,7 @@ class ReceiptRepository @Inject constructor(
     private val mutex = Mutex()
     private val pending = mutableMapOf<Conversation, PendingReceipts>()
     private val echo = mutableMapOf<Conversation, PendingReceipts>()
+    private val reported = mutableMapOf<Conversation, MutableSet<Int>>()
     private var flushJob: Job? = null
 
     /** A channel, or the one person a direct message came from. */
@@ -64,6 +66,7 @@ class ReceiptRepository @Inject constructor(
     suspend fun received(channel: Int, messageId: Int, peer: Int? = null) {
         val key = Conversation(channel, peer)
         mutex.withLock {
+            if (messageId in reported.getOrPut(key) { mutableSetOf() }) return@withLock
             pending[key] = ReceiptRules.received(pending[key] ?: PendingReceipts(), messageId)
         }
         schedule(QUIET_WINDOW_MILLIS)
@@ -74,12 +77,19 @@ class ReceiptRepository @Inject constructor(
      *
      * Sent sooner than a delivery receipt: it is the half anyone actually waits
      * for, and arriving ten minutes late makes it useless.
+     *
+     * The caller passes everything on screen each time the list changes, so ids
+     * already reported are dropped here. Without that a room would re-send the
+     * same receipts on every arrival, which is the flood batching exists to
+     * avoid.
      */
     suspend fun read(channel: Int, messageIds: Set<Int>, peer: Int? = null) {
         if (messageIds.isEmpty()) return
         val key = Conversation(channel, peer)
         mutex.withLock {
-            pending[key] = ReceiptRules.opened(pending[key] ?: PendingReceipts(), messageIds)
+            val fresh = messageIds - reported.getOrPut(key) { mutableSetOf() }
+            if (fresh.isEmpty()) return@withLock
+            pending[key] = ReceiptRules.opened(pending[key] ?: PendingReceipts(), fresh)
         }
         schedule(READ_WINDOW_MILLIS)
     }
@@ -103,18 +113,44 @@ class ReceiptRepository @Inject constructor(
         }
     }
 
-    /** Send what is owed, one packet per conversation. */
+    /**
+     * Send what is owed, one packet per conversation.
+     *
+     * A batch is capped, so anything left over needs another window rather than
+     * waiting for the next message to arrive and carry it.
+     */
     suspend fun flush() {
         val owed = mutex.withLock { pending.filterValues { !it.isEmpty }.toMap() }
         owed.forEach { (conversation, outstanding) ->
             val sent = ReceiptRules.batch(outstanding, echo[conversation] ?: PendingReceipts())
             if (sent.isEmpty) return@forEach
-            if (!send(conversation, sent)) return@forEach
+            if (!send(conversation, sent)) {
+                // Nothing about this conversation will change, so holding the
+                // ids only grows a list nobody will ever read, and re-offering
+                // them would repeat the attempt on every message that arrives.
+                mutex.withLock {
+                    pending.remove(conversation)
+                    remember(conversation, outstanding)
+                }
+                return@forEach
+            }
             mutex.withLock {
                 pending[conversation] =
                     ReceiptRules.remaining(pending[conversation] ?: PendingReceipts(), sent)
                 echo[conversation] = ReceiptRules.echoOf(sent)
+                remember(conversation, sent)
             }
+        }
+        if (mutex.withLock { pending.any { !it.value.isEmpty } }) schedule(QUIET_WINDOW_MILLIS)
+    }
+
+    /** Ids already announced, kept bounded: a receipt is worth saying once. */
+    private fun remember(conversation: Conversation, sent: PendingReceipts) {
+        val seen = reported.getOrPut(conversation) { mutableSetOf() }
+        seen += sent.delivered
+        seen += sent.read
+        if (seen.size > REPORTED_MEMORY) {
+            reported[conversation] = seen.drop(seen.size - REPORTED_MEMORY).toMutableSet()
         }
     }
 
@@ -178,15 +214,24 @@ class ReceiptRepository @Inject constructor(
         ?.takeIf { it.size > 0 }
 
     /**
-     * Under the room key where there is one, so a listener cannot learn who is
-     * reading whom from traffic it cannot otherwise open.
+     * Under the room's own key where there is one, otherwise under a key
+     * derived from the channel PSK every member already holds. The second is
+     * weaker — the radio knows that PSK — but it is what makes receipts work
+     * before room keys are distributed, and it still keeps relays out.
      */
     private fun seal(roomId: Int, myNodeNum: Int, control: MeshChatControl): ByteString? {
-        val key = roomKeys.keyFor(roomId) ?: return null
+        val key = roomKeys.keyFor(roomId) ?: channelKeyFor(roomId) ?: return null
         val sealed = RoomCipher.seal(key, control.encode(), SealedText.contextOf(roomId, myNodeNum))
         return MeshChatControl(
             sealed_message = SealedMessage(room_id = roomId, ciphertext = sealed.toByteString()),
         ).encode().let(ByteString::of)
+    }
+
+    private fun channelKeyFor(roomId: Int): ByteArray? {
+        val index = mesh.channels.value.firstOrNull { it.id == roomId }?.index ?: return null
+        val psk = mesh.snapshot.value?.channels?.get(index)?.settings?.psk?.toByteArray()
+        if (psk == null || psk.size != RoomCrypto.PSK_SIZE) return null
+        return RoomCrypto.channelKey(psk, roomId, generation = 1)
     }
 
     private fun roomIdForChannel(channel: Int): Int? = mesh.channels.value
@@ -198,6 +243,7 @@ class ReceiptRepository @Inject constructor(
         const val TAG = "ReceiptRepository"
         const val QUIET_WINDOW_MILLIS = 30_000L
         const val READ_WINDOW_MILLIS = 3_000L
+        const val REPORTED_MEMORY = 500
         const val JITTER_MILLIS = 20_000L
     }
 }
