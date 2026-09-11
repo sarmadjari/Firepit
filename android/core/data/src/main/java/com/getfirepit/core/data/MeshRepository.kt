@@ -84,6 +84,10 @@ class MeshRepository @Inject constructor(
     private val _myNodeNum = MutableStateFlow(sessionStore.myNodeNum)
     val myNodeNum: StateFlow<Int?> = _myNodeNum.asStateFlow()
 
+    /** How far the radio's clock sits from the phone's, once a packet has shown us. */
+    private val _clockSkewMillis = MutableStateFlow<Long?>(null)
+    val clockSkewMillis: StateFlow<Long?> = _clockSkewMillis.asStateFlow()
+
     private val _channels = MutableStateFlow<List<RoomChannel>>(emptyList())
     val channels: StateFlow<List<RoomChannel>> = _channels.asStateFlow()
 
@@ -261,8 +265,21 @@ class MeshRepository @Inject constructor(
         message.node_info?.let { saveNode(it) }
     }
 
+    /**
+     * The radio hands a packet over as soon as it has it, so its stamp should
+     * match the phone's clock. Whatever it is out by is what it will put on
+     * every message it passes us.
+     */
+    private fun noteClockSkew(packet: MeshPacket) {
+        val stamped = packet.rx_time?.takeIf { it != 0 } ?: return
+        val skew = stamped.toLong() * 1_000 - System.currentTimeMillis()
+        if (_clockSkewMillis.value == null) Log.i(TAG, "radio clock is ${skew / 1000}s from the phone")
+        _clockSkewMillis.value = skew
+    }
+
     private suspend fun handlePacket(packet: MeshPacket) {
         val data = packet.decoded ?: return
+        noteClockSkew(packet)
         markHeard(packet)
         when (data.portnum) {
             PortNum.TEXT_MESSAGE_APP -> saveIncomingText(packet, data)

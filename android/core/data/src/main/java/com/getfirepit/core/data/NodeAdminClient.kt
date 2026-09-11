@@ -57,6 +57,16 @@ class NodeAdminClient @Inject constructor(
     }
 
     /**
+     * Sets the radio's clock from the phone.
+     *
+     * The firmware records this as Net quality, below GPS, so a radio with a
+     * fix keeps its own better time and only one without is corrected.
+     */
+    suspend fun setTime(epochSeconds: Int) {
+        send(AdminMessage(session_passkey = sessionPasskey(), set_time_only = epochSeconds))
+    }
+
+    /**
      * Writes the device config back whole.
      *
      * The firmware replaces the section rather than merging it, so this takes a

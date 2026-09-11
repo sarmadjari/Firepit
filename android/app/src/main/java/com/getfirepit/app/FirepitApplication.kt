@@ -9,6 +9,7 @@ import com.getfirepit.app.notifications.MessageNotifier
 import com.getfirepit.core.data.ChatPresence
 import com.getfirepit.core.data.LocationRepository
 import com.getfirepit.core.data.MeshRepository
+import com.getfirepit.core.data.NodeClock
 import com.getfirepit.core.data.RoomRepository
 import com.getfirepit.core.data.WaypointRepository
 import dagger.hilt.android.HiltAndroidApp
@@ -29,6 +30,8 @@ class FirepitApplication : Application() {
 
     @Inject lateinit var messageNotifier: MessageNotifier
 
+    @Inject lateinit var nodeClock: NodeClock
+
     @Inject lateinit var presence: ChatPresence
 
     @Inject lateinit var radioSession: RadioSessionController
@@ -43,6 +46,7 @@ class FirepitApplication : Application() {
         waypointRepository.start()
         locationRepository.start()
         messageNotifier.start()
+        nodeClock.start()
         // Last, so the stores above are listening before packets arrive.
         radioSession.reconnectLastRadio()
 

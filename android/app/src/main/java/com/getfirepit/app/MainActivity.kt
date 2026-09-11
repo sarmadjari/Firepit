@@ -18,6 +18,7 @@ import com.getfirepit.app.settings.ThemeChoice
 import com.getfirepit.app.settings.ThemePreferences
 import com.getfirepit.app.ui.FirepitApp
 import com.getfirepit.core.data.MeshRepository
+import com.getfirepit.core.data.NodeClock
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 import com.getfirepit.core.designsystem.theme.LocalIdentitySlots
 import dagger.hilt.android.AndroidEntryPoint
@@ -31,6 +32,8 @@ class MainActivity : ComponentActivity() {
     @Inject lateinit var people: PersonStore
 
     @Inject lateinit var meshRepository: MeshRepository
+
+    @Inject lateinit var nodeClock: NodeClock
 
     @Inject lateinit var retention: RetentionStore
 
@@ -61,6 +64,7 @@ class MainActivity : ComponentActivity() {
                     },
                 ) {
                     FirepitApp(Modifier.fillMaxSize())
+                    ClockOfferDialog(nodeClock)
                 }
             }
         }
