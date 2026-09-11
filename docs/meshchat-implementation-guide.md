@@ -23,7 +23,7 @@ When this guide, the design doc, and upstream disagree, resolve in this order:
 ### 0.2 Working rules for the agent
 
 - **Pin versions.** Generate protobuf code from a pinned protobufs tag. Do not hand-write message structs.
-- **Never invent wire formats.** Everything on the air uses stock portnums, with one locked exception (D-2): MeshChat control events (join hello, roster events, live-location requests) ride a single private application port, `PortNum 300`, as a small protobuf — one packet per event, never periodic. App-level formats (QR, links, local DB) are yours to define; they are specified in §6.8.
+- **Never invent wire formats.** Everything on the air uses stock portnums, with one locked exception (D-2): MeshChat control events (join hello, roster events, receipts, sealed room messages, live-location requests) ride `PortNum.PRIVATE_APP` (256) as a single `MeshChatControl` protobuf whose `oneof` says which — one packet per event, never periodic. `portnums.proto` sanctions this directly: *"To simplify initial development and testing you can use PRIVATE_APP in your code without needing to rebuild protobuf files."* Claiming 300 would mean editing the vendored protos, and the generated `PortNum` enum cannot express a number they do not declare. App-level formats (QR, links, local DB) are yours to define; they are specified in §6.8.
 - **Verify before relying on a default.** Firmware defaults changed between 2.7 and 2.8 (position precision, telemetry, node numbers). MeshChat must set what it needs explicitly.
 - **Prefer no-reboot operations.** Channel edits do not reboot the node; most `set_config` writes do. Design flows around that (§6.3, §6.7).
 - **Everything the node does for you is rate-limited.** Positions, NodeInfo, and telemetry replies are throttled by the firmware; the phone API also rate-limits outgoing text (2 s) and position/waypoint/alert/telemetry (10 s per portnum). Build queues, not retries-in-a-loop.
@@ -638,13 +638,13 @@ Every member's node stores the joiner's key and name (`NodeDB::updateUser`), and
 **Step B — join hello to the inviter (PKI DM on the MeshChat control port):** after ~5 s (let step A propagate):
 ```text
 MeshPacket{ to: inviter.node_num, pki_encrypted: true, want_ack: true, hop_limit: 3,
-            decoded: Data{ portnum: 300, payload: MeshChatControl{ join_hello: JoinHello{ invite_id, token, generation, app_version } } } }
+            decoded: Data{ portnum: PRIVATE_APP, payload: MeshChatControl{ join_hello: JoinHello{ invite_id, token, generation, app_version } } } }
 ```
-Port 300 is MeshChat's private application port (Meshtastic reserves ports ≥ 256 for third-party apps, `portnums.proto`). Nodes ignore unknown ports: nothing appears on a T-Echo screen, no buzzer, and other Meshtastic apps do not render it as a message. Payload ≈ 20 bytes. If the DM NAKs with `PKI_UNKNOWN_PUBKEY`, repeat step A once and retry B after 30 s.
+`PRIVATE_APP` (256) is where Meshtastic reserves room for third-party apps, and `portnums.proto` says outright that you may use it directly "without needing to rebuild protobuf files". Nodes ignore unknown ports: nothing appears on a T-Echo screen, no buzzer, and other Meshtastic apps do not render it as a message. Payload ≈ 20 bytes. If the DM NAKs with `PKI_UNKNOWN_PUBKEY`, repeat step A once and retry B after 30 s.
 
-**Step C — inviter side:** on a valid `JoinHello` (verify `invite_id`, and for QR invites the `token`/window), set `invites.status = joined`, add `room_members(joined_by, invited_by = self)`, and `set_favorite_node(joiner)` on its own node. Then optionally announce to the room so every roster shows the trust chain (design §6): one room broadcast of `MeshChatControl{ roster_event: RosterEvent{ kind: JOINED, node_num: joiner, invited_by: inviter } }` on port 300 (`want_ack: true`). Decision D-3.
+**Step C — inviter side:** on a valid `JoinHello` (verify `invite_id`, and for QR invites the `token`/window), set `invites.status = joined`, add `room_members(joined_by, invited_by = self)`, and `set_favorite_node(joiner)` on its own node. Then optionally announce to the room so every roster shows the trust chain (design §6): one room broadcast of `MeshChatControl{ roster_event: RosterEvent{ kind: JOINED, node_num: joiner, invited_by: inviter } }` on `PRIVATE_APP` (`want_ack: true`). Decision D-3.
 
-**MeshChat control protobuf (v1, port 300) — decided in D-2:**
+**MeshChat control protobuf (v1, `PortNum.PRIVATE_APP`) — decided in D-2:**
 ```protobuf
 message MeshChatControl {
   uint32 version = 1;                                 // 1
@@ -652,13 +652,19 @@ message MeshChatControl {
     JoinHello join_hello = 2;                         // joiner → inviter, PKI DM
     RosterEvent roster_event = 3;                     // inviter → room broadcast: JOINED / KEY_ROTATED
     LiveLocationRequest live_location_request = 4;    // member → member, PKI DM
+    Receipt receipt = 6;                              // room broadcast (sealed) or PKI DM
+    SealedMessage sealed_message = 7;                 // any of the above, encrypted under the room key
   }
 }
 message JoinHello { fixed32 invite_id = 1; bytes token = 2; uint32 generation = 3; uint32 app_version = 4; }
 message RosterEvent { enum Kind { JOINED = 0; KEY_ROTATED = 1; } Kind kind = 1; uint32 node_num = 2; uint32 invited_by = 3; uint32 generation = 4; }
 message LiveLocationRequest { fixed32 room_id = 1; uint32 suggested_secs = 2; }
+message Receipt { fixed32 room_id = 1; repeated fixed32 delivered = 2; repeated fixed32 read = 3; }
+message SealedMessage { fixed32 room_id = 1; bytes ciphertext = 2; fixed32 reply_id = 3; }
 ```
-Rules: one packet per event, never periodic, payload ≤ ~40 bytes; unknown fields and kinds are ignored; a control packet is never rendered as chat. Relays set to `rebroadcast_mode = CORE_PORTNUMS_ONLY` drop private ports — irrelevant for group-owned infrastructure and for Group-only mode (D-1); in public-relay mode a strict public router may drop a hello on one path, flooding tries the others, and membership stays evidence-based (§5.3) so a lost hello only delays the "invited by" attribution.
+Rules: one packet per event, never periodic; unknown fields and kinds are ignored; a control packet is never rendered as chat. Most payloads are ≤ ~40 bytes; a full receipt of 40 ids is ~206 bytes sealed and still inside the 233-byte budget, which `SealedReceiptTest` asserts rather than assumes.
+
+`SealedMessage` wraps an encoded `MeshChatControl`, so opening it yields another control message handled as if it had arrived in the clear — and opening it is itself proof the sender holds the room key. A `Receipt` that arrived neither sealed nor PKI-encrypted is **discarded**: on a shared channel anyone can put bytes on the air under any name, and a forged receipt is a lie about who read what. Relays set to `rebroadcast_mode = CORE_PORTNUMS_ONLY` drop private ports — irrelevant for group-owned infrastructure and for Group-only mode (D-1); in public-relay mode a strict public router may drop a hello on one path, flooding tries the others, and membership stays evidence-based (§5.3) so a lost hello only delays the "invited by" attribution.
 
 #### 6.8.6 Removing a member / leaving (PSK rotation)
 
@@ -743,7 +749,7 @@ UI rule: 200-byte cap (Apple parity), soft hint at 165 on 2.8.
 | ID | Decision | Default in this guide | Alternatives / trade-off |
 |---|---|---|---|
 | D-1 | **Primary channel (slot 0) policy — locked 2026-09-09 as a two-mode "Range" setting.** Slot 0 carries NodeInfo/telemetry and sets the frequency slot; NodeDB admits only decodable packets | Both modes: app-wide private key (extractable → "semi-public among MeshChat users"), `position_precision = 0`, uplink/downlink off. **Group only (default):** primary name `MeshChat` → own frequency slot; only MeshChat nodes hear and relay; quietest. **Group + public relays:** primary name empty (displays as the preset name) → firmware derives the same frequency slot as the public LongFast mesh, so public nodes rebroadcast our encrypted packets; identity/battery stay private (private key), NodeDB stays clean (undecodable packets are not admitted); cost = shared airtime and our nodes relaying public traffic. Per node, carried in invites (`LoRaProfile.mesh_mode`), joiners align automatically with a notice | Stock public LongFast primary rejected: public names/battery and NodeDB pollution |
-| D-2 | Join-hello transport — **locked 2026-09-09** | Private application port `300` carrying `MeshChatControl` (§6.8.5): PKI DM for join hello and live-location requests, room broadcast for roster events; one packet per event | Text DM with a control prefix rejected: the node treats it as a real message (T-Echo screen, buzzer, other apps show garbage) |
+| D-2 | Join-hello transport — **locked 2026-09-09**, port corrected 2026-09-11 | `PortNum.PRIVATE_APP` carrying `MeshChatControl` (§6.8.5): PKI DM for join hello and live-location requests, room broadcast for roster events; one packet per event. An earlier note said port 300; nothing ever sent on it, and the generated `PortNum` enum cannot express a value the vendored protos do not declare | Text DM with a control prefix rejected: the node treats it as a real message (T-Echo screen, buzzer, other apps show garbage) |
 | D-3 | Roster trust chain propagation — **locked (default accepted 2026-09-09)** | one `JOINED` control broadcast per join | none (only the inviter knows who invited whom) |
 | D-4 | Link+PIN strength — **locked 2026-09-09** | 8-digit numeric PIN shown as `4821 9306`, Argon2id (64 MiB, t=3, p=1) key derivation, XChaCha20-Poly1305 payload encryption, 15-min soft expiry, single use | 6 digits rejected: a captured link can be brute-forced offline in hours because the payload holds a permanent room key |
 | D-5 | `want_ack` on room messages — **locked (default accepted 2026-09-09)** | true (needed for the "reached mesh" tick; up to 3 retransmits when isolated) | false: no delivery signal at all |

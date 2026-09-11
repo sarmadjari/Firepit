@@ -56,10 +56,10 @@ pure-Kotlin layers are testable without fakes, which is most of why they are pur
 | Toolchain verified | AGP 9.4.0 → built-in Kotlin 2.2.10 (POM-confirmed); `CommonExtension` lost its type parameters; `defaultConfig`/`compileOptions` are getters only |
 | Convention plugins | `firepit.android.application`, `.library`, `.library.compose`, `firepit.jvm.library` |
 | Protos vendored | tag v2.8.0, commit `7b2464c`; `nanopb.proto` on protoPath |
-| `meshchat.proto` | Invite + `MeshChatControl` (port 300) |
+| `meshchat.proto` | Invite + `MeshChatControl` on `PortNum.PRIVATE_APP` |
 | App-wide primary key | 32 random bytes, base64 |
 | Ember tokens | light + dark, all 28 values diffed against the Figma token sheets — zero drift |
-| Contract canary | `ProtocolContractTest`: payload budget 233, port 300 legality, well-known portnums, packet round-trip, 2.8 fields defaulting on 2.7 |
+| Contract canary | `ProtocolContractTest`: payload budget 233, `PRIVATE_APP` is 256, well-known portnums, packet round-trip, 2.8 fields defaulting on 2.7 |
 | CI | build + JVM tests + lint on push/PR |
 
 **Exit proof met:** `./gradlew build` green; the canary fails loudly if the proto pin moves.
@@ -180,7 +180,7 @@ snapshots checked in.
 - Primary channel (slot 0): app-wide key, precision 0, Range mode = Group only.
 - **Rotating QR**: HMAC-SHA256 invite key, 8 s window, ±2 window tolerance, `firepit://join?v=1&d=…`.
 - **Join handshake in the mandated order**: NodeInfo hello on the room → ~5 s → PKI DM `JoinHello`
-  on port 300. Reversing it fails — PKI needs the peer's key in NodeDB first.
+  on `PRIVATE_APP`. Reversing it fails — PKI needs the peer's key in NodeDB first.
 - Favorite every member so NodeDB eviction cannot break the room.
 - Admin plumbing: session passkey; the **reboot matrix** encoded as data so every write knows
   whether to warn "node restarts ~10 s".
@@ -195,7 +195,7 @@ sequences keep slots consecutive with `room_id → settings` intact.
 - `RoomCrypto` / `InviteCodec` — PSK generation, HMAC-SHA256 invite key, 8 s rotating token,
   `firepit://join?v=1&d=…`. JDK primitives only; libsodium arrives with the Stage 8 link+PIN invite.
 - `NodeAdminClient` — session passkey, `set_channel`, `get_channel`, `set_owner`, favorites.
-- `RoomRepository` — create, invite, join (NodeInfo hello → 5 s → PKI DM on port 300), leave.
+- `RoomRepository` — create, invite, join (NodeInfo hello → 5 s → PKI DM on `PRIVATE_APP`), leave.
 - UI — create dialog with an 11-byte counter, rotating QR invite, CameraX + ZXing scanner.
   ZXing does both generation and decoding, which keeps ML Kit and Play Services out of the build.
 - **Roster** (`room_members`, DB v2) — who we have seen in a room, with `invited_by` provenance.
@@ -415,6 +415,67 @@ permission-denial paths, crash-free session.
 - **Crash-free session.** No crash or ANR across this session's repeated restarts, but that is
   an afternoon of hammering short of the claim.
 - **The gate itself.** Still needs a second phone and a second node. Unmet since Stage 4.
+
+---
+
+## Stage 7.5 — Identity, privacy and receipts
+
+Not a planned stage. It came out of asking what "private and secure by default" actually
+requires, checking each answer against the firmware docs, and finding several places where
+the app's claims were ahead of its code.
+
+### Built
+
+- **Several radios, one phone.** Devices are separated from nodes, each device says what it
+  is for (Personal / Base / Router), and infrastructure can extend the mesh without crowding
+  the map.
+- **The person is separate from the radio they carry.** Name, tag and colour follow the
+  person; the mesh still sees only the node.
+- **Rooms can be left, and take their history with them.** Channel slots must stay
+  consecutive, so leaving re-packs them; messages are keyed by slot, so they are moved with
+  the rooms rather than silently re-attributed.
+- **Message retention** — day, week or month, with forgetting the only option.
+- **Crypto primitives** — `RoomCipher` (AES-256-GCM), `SealedText`, `RoomAdmin` (ECDSA
+  P-256), `RoomKeyStore` (Android Keystore). Platform crypto only, no new dependencies.
+- **Receipts.** Who holds a message and who has opened it, with times, batched 40 to a
+  packet, sealed where they can be and not sent where they cannot. See the design doc.
+- **The radio's clock.** The skew is measured from the packets themselves and the app offers
+  to correct it, since a radio fifteen hours out files today's conversation under yesterday.
+
+### Bugs this stage exposed
+
+- **Opening a room crashed the app.** `Key "day-2026-09-11" was already used`. The list was
+  ordered by the phone's clock and grouped by the radio's, and `rx_time = 0` — a radio that
+  has never been told the time — was stored as 1970 rather than as no time. One 1970 message
+  between two of today's gave `Today, 1970, Today`. The two neighbouring lines already
+  guarded against a zero SNR and a zero RSSI; this one did not.
+- **`leaveRoom` would have corrupted history**, for the slot-repacking reason above.
+- **`INSERT OR IGNORE` does not cover foreign keys**, only uniqueness and check constraints.
+  A receipt naming a message this phone never received would have thrown. Caught by a test
+  written against a DAO comment that claimed otherwise.
+- **Tokenless invites never expired.**
+- **`allowBackup="true"`** — messages went to Google Drive by default.
+- **Notifications showed message text on the lock screen.**
+- **DM receipts would have been broadcast** on the channel the message arrived on,
+  announcing to everyone in earshot what had just been read.
+- **Receipts were accepted unauthenticated**, so anyone on a shared channel could forge one.
+- **The read loop re-reported every visible message** on each list change, which would have
+  re-sent the same receipts forever — the flood batching exists to prevent.
+
+### Corrections to work done in this stage
+
+- **`MESHCHAT_TEXT_PORT = 301` could never have worked.** The generated `PortNum` enum has no
+  such value, and a commit message claimed sealed text travelled on it. Sealed messages are a
+  `MeshChatControl` payload on `PRIVATE_APP` like everything else. `MESHCHAT_CONTROL_PORT`
+  was removed for the same reason: nothing sent on 300 either.
+- **`roomIdForChannel` and `channelKeyFor` were copied into two repositories**, one carrying a
+  comment noting it mirrored the other.
+
+### Not verified
+
+- **Receipts crossing the air.** Needs a second phone running Firepit. The wire format,
+  packet budget and sealing are covered by tests; the traffic is not.
+- **Sealed room text end to end** — the primitives are tested, the composer is not wired.
 
 ---
 

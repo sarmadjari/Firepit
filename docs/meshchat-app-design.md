@@ -123,7 +123,7 @@ Per node, over BLE only:
 
 - **Room = Meshtastic secondary channel.** Name + PSK. The key is the access boundary; there's no separate permission system
 - **Primary channel (slot 0) = hidden "MeshChat" channel** with an app-wide key. It carries names and battery between MeshChat nodes and never carries location. **Range mode** per node: *Group only* (default; own frequency slot, quietest) or *Group + public relays* (empty primary name → the public LongFast frequency slot, so public Meshtastic nodes rebroadcast our encrypted traffic; names and battery stay private). A group must share one mode; invites carry it and joiners align
-- **Control messages** (join hello, roster events, live-location requests) → one private application port (300), one small packet per event, never periodic
+- **Control messages** (join hello, roster events, receipts, sealed room messages, live-location requests) → `PortNum.PRIVATE_APP` (256), one small packet per event, never periodic. The `MeshChatControl` `oneof` distinguishes them; other clients ignore the port and the radio's own screen does not display them
 - **Identity tag** → each person picks a 2-character tag stored in Meshtastic's `short_name` (default: first + last initials, e.g. SJ), shown inside avatars and map markers together with a per-node colour
 - **Room slot manager** — tracks the 7 available channel slots, keeps them consecutive, and handles reindexing when a room is left
 - **Multi-node connection manager** — each connected node keeps its own independent session and state, rather than the official app's single-active-node model. See section 4 for the full connection model
@@ -144,7 +144,35 @@ Encryption is always on. Nothing to configure, no way to turn it off.
 - **Direct messages:** Meshtastic's native PKI encryption (`pki_encrypted` + `public_key`), giving DMs a pairwise layer on top of the channel key
 - **Broadcast authenticity:** firmware 2.8+ signs broadcast messages with XEdDSA, so a group message can be verified as genuinely from its claimed sender — not just decryptable by key-holders. Shown as a "verified" badge only when the node reports signing support; 2.7 nodes rely on PKI for DMs and key possession for rooms
 
-**A custom E2E layer was considered and rejected.** X25519 + XChaCha20-Poly1305 on top of the above would duplicate what native PKI DMs already provide, cost ~40 bytes of nonce and tag out of a ~200-byte budget, and require group key management that doesn't exist yet. Native encryption plus 2.8 message signing covers the realistic threat model for a small trusted group. Revisit only if that model changes.
+**A custom E2E layer was considered and rejected, and that decision has since been partly reversed.** The original reasoning — that X25519 + XChaCha20-Poly1305 would duplicate what native PKI DMs already provide, cost ~40 bytes of a ~200-byte budget, and need group key management that did not exist — still holds for **direct messages**, which remain native PKI and gain nothing from a second layer.
+
+It does not hold for **rooms**. A room's PSK lives on the radio, so anyone holding the hardware can read the room, and every relay carrying the traffic is trusted with the same key the members use. A layer the radio never sees is the only thing that changes that. What exists now:
+
+- `RoomCipher` — AES-256-GCM, 28 bytes of overhead, platform crypto only
+- `SealedText` — a version byte plus ciphertext, 171 characters of room inside one packet
+- `RoomKeyStore` — room keys wrapped by the Android Keystore, so copying the phone's files yields nothing
+- `RoomAdmin` — ECDSA P-256, the signatures admin-only invites will rest on
+
+**Sealed room text is not yet wired to the composer**; the primitives are built and tested, and key distribution is the next step. Receipts already travel sealed (see below).
+
+### Who has read what
+
+Every message records which phones reported holding it and which reported opening it, each with a time, shown in the message's info sheet.
+
+- **Collected, not per message.** One packet carries 40 ids, so a morning's reading costs one transmission rather than forty. Read receipts leave after ~3 s, delivery receipts after ~30 s, both jittered; read supersedes delivered rather than adding to it
+- **Sent only where they can be private.** Sealed under the room key for rooms, encrypted to one person for DMs, and **not sent at all** on an ordinary channel — announcing what you have been reading to everyone in earshot is worse than having no receipt
+- **Accepted only where they were authenticated.** A receipt that arrived neither sealed nor PKI-encrypted is ignored, because anyone on a shared channel can put bytes on it under any name
+- **Never claims more than it was told.** Only phones that reported appear. Nobody is ever listed as *not* having read something: a phone that says nothing has told us nothing
+
+Room receipts are currently sealed under a key derived from the room PSK (`RoomCrypto.channelKey`), which every member already holds. That keeps relays and non-members out but not someone holding the radio; it moves to the Keystore-held room key once key distribution lands.
+
+### The radio's clock
+
+The radio stamps every message it hands over, and a unit with no GPS and no battery-backed clock stamps them with whatever it believes the time is — one on the test bench was fifteen hours behind, which filed a message that had just arrived under yesterday.
+
+The skew is read from the packets themselves: the radio passes a packet up as soon as it has it, so its stamp and the phone's clock should agree. Past two minutes the app offers to set the clock from the phone. It asks rather than acting, because writing someone's hardware is their decision, and declining lasts until the radio connects again. `AdminMessage.set_time_only` is filed by the firmware as Net quality, below GPS, so a radio with a fix keeps the better time it has. Costs no airtime.
+
+The display distrusts an implausible radio clock independently, since the radios of *other* people are not ours to set.
 
 ### How people join
 - The room creator makes the first invite — as the only member, they are necessarily the first gate
@@ -203,7 +231,7 @@ Encryption is always on. Nothing to configure, no way to turn it off.
 **How the design responds:**
 
 - Native packet priority: `ALERT` for urgent pings, `RELIABLE` for chat, background priority for routine position and telemetry — so chat never queues behind background traffic
-- No custom periodic traffic. Chat, position, telemetry, identity and waypoints ride stock portnums; one private application port (300) carries MeshChat's event-only control messages (join hello, roster events, live-location requests), one packet each — decision D-2 in the implementation guide
+- No custom periodic traffic. Chat, position, telemetry, identity and waypoints ride stock portnums; `PortNum.PRIVATE_APP` carries MeshChat's event-only control messages (join hello, roster events, receipts, sealed room messages, live-location requests), one packet each — decision D-2 in the implementation guide
 - Live location on one room only, with interval scaling by duration and further backoff when channel utilization (ChUtil / AirUtilTX) runs high
 - Character counter in the composer — messages that fragment across packets are slower and less reliable
 - No app-invented polling or heartbeats. Only what Meshtastic already broadcasts
@@ -238,7 +266,7 @@ Encryption is always on. Nothing to configure, no way to turn it off.
 | Product name | **Firepit**; "MeshChat" stays the internal protocol name (channel, port, protobuf package). Scheme `firepit://`; domain `getfirepit.com` (available, not yet registered) | scope doc §3, §7 |
 | Firmware support | 2.7+ baseline; 2.8 features (signing badge) capability-gated | guide §2 |
 | Range mode (primary channel) | Group only (default) / Group + public relays; app-wide key; per node, carried in invites | guide §9 D-1, §6.1 |
-| Control messages | private port 300, `MeshChatControl` protobuf, event-only | guide §9 D-2, §6.8.5 |
+| Control messages | `PortNum.PRIVATE_APP` (256), `MeshChatControl` protobuf, event-only | guide §9 D-2, §6.8.5 |
 | Link + PIN | 8 digits, Argon2id, XChaCha20-Poly1305, 15-min soft expiry, single use | guide §9 D-4, §6.8.4 |
 | Roster trust chain | inviter broadcasts a JOINED event to the room | guide D-3 |
 | Room messages | sent with `want_ack` for the "heard by the mesh" tick; no delivery claim | guide D-5, UX §7.2 |

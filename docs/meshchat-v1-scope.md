@@ -50,7 +50,7 @@ Phone-battery sharing, environmental telemetry, custom E2E layer, store-and-forw
 | Hearth | warmth, home base | several small apps |
 | Kindling | spark of connection | taken by a dating app |
 
-Product name **Firepit**; internal protocol name **MeshChat** (primary channel name, control port 300, protobuf package). Custom URL scheme `firepit://`; universal/app-link domain to register (candidates checked in §7); iOS bundle id / Android application id follow the chosen domain (e.g. `app.firepit.ios`, `app.firepit.android`). The in-app title, tab and first-run copy say "Firepit"; the Figma frames still show "MeshChat" in the Chats header — update when the remaining screens are designed.
+Product name **Firepit**; internal protocol name **MeshChat** (primary channel name, control port `PRIVATE_APP`, protobuf package). Custom URL scheme `firepit://`; universal/app-link domain to register (candidates checked in §7); iOS bundle id / Android application id follow the chosen domain (e.g. `app.firepit.ios`, `app.firepit.android`). The in-app title, tab and first-run copy say "Firepit"; the Figma frames still show "MeshChat" in the Chats header — update when the remaining screens are designed.
 
 ---
 
