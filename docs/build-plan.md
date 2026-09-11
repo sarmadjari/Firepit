@@ -27,7 +27,7 @@ Firepit/
 │  │  ├─ model/                 [Stage 1] domain types
 │  │  ├─ transport/             [Stage 1] Kable BLE, PhoneAPI session FSM, FromRadio pump, ToRadio pacer
 │  │  ├─ crypto/                [Stage 4] PSK generation, invite HMAC, rotating QR token.
-│  │  │                         JDK primitives only; libsodium arrives with the Stage 8 link+PIN invite
+│  │  │                         JDK primitives only; invites are QR-only
 │  │  ├─ database/              [Stage 2] Room entities/DAOs/migrations
 │  │  └─ data/                  [Stage 2] repositories, single source of truth
 ├─ ios/                         [Stage 10]
@@ -193,7 +193,7 @@ sequences keep slots consecutive with `room_id → settings` intact.
 - `ChannelSlotManager` — slot allocation and reindex-on-leave, property-tested over 200 random
   leave sequences.
 - `RoomCrypto` / `InviteCodec` — PSK generation, HMAC-SHA256 invite key, 8 s rotating token,
-  `firepit://join?v=1&d=…`. JDK primitives only; libsodium arrives with the Stage 8 link+PIN invite.
+  `firepit://join?v=1&d=…`. JDK primitives only; invites are QR-only, so no Argon2 and no libsodium.
 - `NodeAdminClient` — session passkey, `set_channel`, `get_channel`, `set_owner`, favorites.
 - `RoomRepository` — create, invite, join (NodeInfo hello → 5 s → PKI DM on `PRIVATE_APP`), leave.
 - UI — create dialog with an 11-byte counter, rotating QR invite, CameraX + ZXing scanner.
@@ -479,14 +479,49 @@ the app's claims were ahead of its code.
 
 ---
 
+## Stage 7.6 — Sealed rooms, receipts, key rotation
+
+### Built
+
+- **Sealed room words.** A room mints its own key into the Android keystore, an invite carries it,
+  leaving forgets it. The radio never holds it. 171 bytes per packet once the version byte, nonce
+  and tag are paid for.
+- **One envelope for everything sealed.** Words and receipts are both an encrypted `MeshChatControl`
+  wrapped in another, so traffic shape does not distinguish a conversation from an acknowledgement.
+- **Receipts** — who holds a message and who has opened it, batched 40 to a packet, sealed where
+  they can be and **not sent at all** where they cannot. Shown on the sender's own bubble.
+- **Key rotation on removal** — new generation, new keys handed to each remaining member as a PKI
+  direct message, a notice on the old key for whoever missed it, and a line in the room naming who
+  was removed. Old generations are kept so history stays readable.
+- **Room lifetimes** — optionally leave a room after a month or three months of silence. Off by
+  default.
+- **The radio's clock** — measured from the packets themselves, offered for correction when it is
+  more than two minutes out.
+- **Location never on the primary.** Only a room may carry position.
+- **Invites are QR-only.** Link and PIN dropped; see design §6.
+
+### Not built
+
+- **Encrypted database.** Attempted with SQLCipher and reverted. The one-time migration of an
+  existing plaintext database uses `ATTACH` + `sqlcipher_export()`, and in `sqlcipher-android`
+  4.9.0 the attachment is not visible to the connection that runs the export
+  (`unknown database`), while running the export through `rawExecSQL` never steps the statement
+  and silently produces no file. Both failure modes leave plaintext in place while the code
+  believes it has encrypted it, which is worse than not shipping it. Needs the connection pinned
+  to a single connection, or a different migration strategy, plus the instrumented test that
+  caught this.
+- **Admin-signed invites.** `RoomAdmin` exists and is tested; nothing issues or verifies grants
+  yet. Depends on rotation, which now exists: grants are bound to a generation, so bumping the
+  generation is what demotes an admin.
+
+---
+
 ## Stage 8 — v1.0 features
 
-In dependency order: DMs (`add_contact` before every DM) → link+PIN invites (Argon2id 64 MiB,
-XChaCha20-Poly1305, 8-digit PIN) → alerts → reactions (6 fixed) → duration tiers + phone-GPS
+In dependency order: DMs (`add_contact` before every DM) → alerts → reactions (6 fixed) → duration tiers + phone-GPS
 fallback → Base/Router admin (roles, fixed position, favorites) → key rotation → Group + public
 relays mode → offline map packs → dark theme → diagnostics → 2.8 signing badge.
 
-Register the invite-link domain before the link+PIN work.
 
 ## Stage 9 — Release prep
 
@@ -521,7 +556,7 @@ Espresso Device API (`setDisplaySize`, `setScreenOrientation`) for automated fol
 | # | Decision | Status |
 |---|---|---|
 | 1 | **Licensing.** The vendored Meshtastic protobufs are GPL-3.0, so generated-and-linked code makes Firepit a derivative work. Every official Meshtastic client is GPL-3.0. Path of least resistance: license Firepit GPL-3.0. | **Needs owner decision before public release** |
-| 2 | Invite-link domain registration | Deferred to Stage 8 |
+| 2 | Invite-link domain registration | **Dropped.** Invites are QR-only; a link is forwardable and a QR has to be pointed at a camera |
 | 3 | Arabic copy translation (layouts are RTL-ready regardless) | Ships in v1 |
 | 4 | **Map engine.** MapLibre only. Google Maps and MapKit cannot pre-cache arbitrary regions, so they show a grey grid off-grid — the one occasion the app matters. Google Maps also needs Play Services and an API key, and a second SDK would double the marker, camera and fold/unfold handling. MapLibre has an iOS SDK, so one implementation serves both platforms. | **Decided** |
 | 5 | **Tile hosting.** OpenFreeMap is donation-funded. Offline downloads must be capped by area and zoom; self-hosting or a bundled base map is the responsible move if usage grows. | Revisit before public release |

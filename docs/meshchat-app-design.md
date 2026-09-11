@@ -7,7 +7,7 @@
 
 ## 1. The idea
 
-MeshChat is a simple mobile app for small groups of friends (festivals, hikes, off-grid trips) to chat and share location without internet or cellular signal. It runs on top of the Meshtastic LoRa mesh network. Anyone can create a private "room," invite friends with a QR code or a link + PIN, and chat and share location as a group — encrypted, no phone signal needed.
+MeshChat is a simple mobile app for small groups of friends (festivals, hikes, off-grid trips) to chat and share location without internet or cellular signal. It runs on top of the Meshtastic LoRa mesh network. Anyone can create a private "room," invite friends by showing them a QR code, and chat and share location as a group — encrypted, no phone signal needed.
 
 Kept intentionally simple: no accounts, no servers, no public directory. Just a room, a few friends, and a mesh.
 
@@ -18,8 +18,7 @@ Kept intentionally simple: no accounts, no servers, no public directory. Just a 
 ### Rooms
 - Create a room — maps to a Meshtastic secondary channel (name + PSK)
 - **Hard limit: 7 rooms per user.** Meshtastic has 8 channel slots; slot 0 is the reserved primary channel. Channels must be consecutive — no gaps — so leaving a room reindexes the ones after it
-- Join via rotating QR code — in-person, scan to join
-- Join via link + PIN — remote/async invites
+- Join via rotating QR code — in person, scan to join. **There is no other way in**
 - The room's PSK is what grants access; there is no separate access-control layer
 
 ### Chat
@@ -177,22 +176,39 @@ The display distrusts an implausible radio clock independently, since the radios
 ### How people join
 - The room creator makes the first invite — as the only member, they are necessarily the first gate
 - After that, any member can invite someone new
-- **Generating and sending an invite is the approval.** There is no separate approve-the-request step, because by the time someone holds a QR or link+PIN they already hold the key — a later confirmation tap would gate nothing
+- **Showing an invite is the approval.** There is no separate approve-the-request step, because by the time someone has scanned the code they already hold the key — a later confirmation tap would gate nothing
 - The roster shows who invited whom, so the trust chain stays visible
 
 ### QR invites — in-person, real-time
 - Rotates every 5–10 seconds, HMAC-SHA256-based, combining channel provisioning with identity exchange
 - Rotation narrows the *capture window* to whoever is physically present at that moment. It does not limit access afterward — once scanned, the joiner holds the room's PSK permanently
 
-### Link + PIN invites — remote, async
-- A fresh, unique URL + PIN pair per invite. Not on the QR's fast clock, which would kill async sharing. The PIN is 8 digits (shown 4-4) and the link payload is encrypted with a key derived from it (Argon2id + XChaCha20-Poly1305), so a captured link alone opens nothing
-- Expires after 10–15 minutes unused, or immediately once used — whichever comes first
-- Never extended. A stale invite means generating a new one, so every join traces to exactly one invite action
-- Sender sees status (pending / expired / joined). A dead link shows "ask for a new invite," not a generic error
+### Removing someone, and what that can and cannot mean
+
+Nothing takes a key back from a person who already holds it. Removing somebody is everyone else moving to a new key and not giving it to them, and the app says so in those words rather than implying a power it does not have.
+
+**What happens.** The room gets a new PSK, a new Firepit key, and its generation goes up by one. Same room, same name, same history. The person removed is dropped from the roster.
+
+**How the new keys travel.** One direct message per remaining member, encrypted to that member's node key by the firmware. That is the only part of this that is actually private, and it is why removal cannot be done by broadcast. Whoever is being removed is simply never sent one.
+
+**Who misses out.** A member who is offline or out of range receives nothing. They are counted, reported back, and can be invited again; the alternative — waiting for everyone — would mean a removal that never completes.
+
+**A notice goes out on the old key**, once, so a member who missed the handover sees a reason rather than a room that went quiet.
+
+**History survives.** Keys are kept per generation and a sealed message carries the generation that sealed it, so the conversation from before a rotation still opens. It also still opens for the person removed: they keep what they already received, and the UI says so instead of suggesting the past can be withdrawn.
+
+**What the room sees.** A line in the conversation naming who was removed and stating that the key changed — written by the room, not by anyone in it.
+
+### Why there is no remote invite
+
+Link-and-PIN invites were designed and then dropped. A link can be forwarded, screenshotted, left in a chat history, or read by whoever else has that phone, and no expiry window fixes any of that — it only narrows it. A PIN turns the problem into a second message that travels the same way as the first.
+
+A QR code has to be pointed at a camera. That is the whole security argument, and it is a stronger one than any expiry: **the two people are in the same place.** Everything downstream leans on it — the founder's signing key is trusted because you scanned it in person, and an invite carries the room key, so handing one over is handing over the room.
+
+The cost is real and accepted: you cannot add someone who is not with you. That is the trade, made on purpose.
 
 ### What this does and does not guarantee
 - The real access boundary is **who holds the PSK**. There is no per-person decryption gate on a shared broadcast key
-- Single-use tracking on link+PIN invites is soft enforcement — the app can flag reuse, but cannot cryptographically prevent a copied invite from working within its window
 - Group chat confidentiality depends on trusting everyone currently holding the room's key. Message *signing* (2.8+) proves who sent something; it does not stop a key-holder from reading everything
 - Possession of invite material is the trust decision. The app shows who vouched for whom; it cannot evaluate their judgement
 - Location requests are answered automatically at firmware level, with no prompt on the target's device. Room membership is the trust boundary here, consistent with everywhere else in this design
@@ -267,8 +283,10 @@ The display distrusts an implausible radio clock independently, since the radios
 | Firmware support | 2.7+ baseline; 2.8 features (signing badge) capability-gated | guide §2 |
 | Range mode (primary channel) | Group only (default) / Group + public relays; app-wide key; per node, carried in invites | guide §9 D-1, §6.1 |
 | Control messages | `PortNum.PRIVATE_APP` (256), `MeshChatControl` protobuf, event-only | guide §9 D-2, §6.8.5 |
-| Link + PIN | 8 digits, Argon2id, XChaCha20-Poly1305, 15-min soft expiry, single use | guide §9 D-4, §6.8.4 |
+| Invites | QR only, scanned in person. Link and PIN dropped — see §6 | design §6 |
 | Roster trust chain | inviter broadcasts a JOINED event to the room | guide D-3 |
+| Room words | sealed under a room key the radio never holds; 171 bytes per packet | design §6, guide §6.8.5 |
+| Removing someone | rotate to a new generation; new keys sent per member as PKI DMs | design §6 |
 | Room messages | sent with `want_ack` for the "heard by the mesh" tick; no delivery claim | guide D-5, UX §7.2 |
 | Live location | precision toggle per room for start/stop; duration tier change may restart the node; presets 15 min · 1 h · 8 h · Custom | guide D-6, UX U-6 |
 | Telemetry | device telemetry on, every 30 min, primary channel | guide D-7 |

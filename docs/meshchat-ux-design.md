@@ -70,7 +70,7 @@ flowchart LR
   C --> RC[Room chat] --> RI[Room info]
   C --> DC[Direct chat] --> MD[Member details]
   C -->|＋| NR[New room] --> INV[Invite: QR / Link]
-  C -->|＋| JR[Join room: scan / link + PIN]
+  C -->|＋| JR[Join room: scan a QR]
   C -->|＋| NM[Message a member]
   RI --> INV
   RI --> MEM[Members] --> MD
@@ -100,7 +100,7 @@ flowchart LR
 | 5 | Room chat | push | bubbles, composer, header with member count |
 | 6 | Direct chat | push | same as room chat, header shows node status |
 | 7 | Room info | push | members, invite, location precision, mute, leave, remove |
-| 8 | Invite (QR / link) | sheet or push | rotating QR; link + PIN generator; pending invites |
+| 8 | Invite (QR) | sheet or push | rotating QR; pending invites |
 | 9 | Join room | sheet | camera scan or pasted link, PIN entry |
 | 10 | Member details | sheet | identity, device, battery, signal, location, actions |
 | 11 | Map | tab root | markers, pins, room filter, share pill, people sheet |
@@ -692,7 +692,7 @@ Rules: platform-native navigation and gestures always win over visual parity; co
 | Battery and signal for everyone | PASS with condition | Telemetry only on the primary channel and only if enabled (IG §6.4, D-1) | Automation enables telemetry; shared private primary policy |
 | Remove someone | PASS with cost surfaced | No revocation on a shared key (design §6) | Rotate-key wizard with re-join checklist |
 | QR rotation 5–10 s | PASS | App-level HMAC (IG §6.8.3) | Ring countdown; joiner tolerance ±2 windows |
-| Link + PIN | PASS with change | 6-digit PIN is offline-brute-forceable; 8 digits + Argon2id recommended (IG §9 D-4) | 8-digit PIN in UI, shown separately |
+| Link + PIN | **DROPPED** | A link is forwardable and a PIN travels the same way as the link; a QR has to be pointed at a camera | QR only |
 | Room rename | FAIL → not offered | Channel name is part of the key hash on every member's node; no remote rename | Immutable name; local nickname only |
 | Offline maps | GAP in brief → added | No internet at events; markers need tiles | Auto-download around current location; tile indicator on Map |
 | Two phones sharing one node | FAIL by firmware | One PhoneAPI client per node | Scan error copy; Base/Router "Walk closer" card |
@@ -702,7 +702,7 @@ Rules: platform-native navigation and gestures always win over visual parity; co
 | Design feature | Screen(s) |
 |---|---|
 | Create room, 7-room limit, consecutive slots | New room (§5.2), Rooms (§6.8), automatic reindex (§5.11) |
-| Join via rotating QR / link + PIN | Invite (§6.4), Join (§5.3) |
+| Join via rotating QR | Invite (§6.4), Join (§5.3) |
 | Group chat, DMs only among co-members | Chats, Room chat, Direct chat (§5.4–5.5) |
 | Delivery indicators (two mechanisms) | Status glyphs (§7.2) |
 | Canned/quick replies | ⚡ in composer, Settings › Quick replies |

@@ -7,7 +7,7 @@
 
 ## 1. What "MeshChat" is, in one paragraph
 
-A native iOS + Android app that turns Meshtastic LoRa radios into a WhatsApp-like group chat and live map for small groups with no phone signal. Private rooms (QR or link+PIN invites), honest delivery ticks, live location, pins, alerts, battery and signal per person, and simple admin of a Personal node plus optional Base/Router nodes. Works on firmware 2.7+, uses 2.8 features when present. Internally the protocol/channel name stays **MeshChat** regardless of the store name (§3).
+A native iOS + Android app that turns Meshtastic LoRa radios into a WhatsApp-like group chat and live map for small groups with no phone signal. Private rooms (QR invites, scanned in person), honest delivery ticks, live location, pins, alerts, battery and signal per person, and simple admin of a Personal node plus optional Base/Router nodes. Works on firmware 2.7+, uses 2.8 features when present. Internally the protocol/channel name stays **MeshChat** regardless of the store name (§3).
 
 ---
 
@@ -18,7 +18,7 @@ A native iOS + Android app that turns Meshtastic LoRa radios into a WhatsApp-lik
 | Area | In | Out (later) |
 |---|---|---|
 | Nodes | Personal node only; first run (pair → region → name + 2-char tag); reconnect; node status line | Base/Router admin |
-| Rooms | create; join via **QR**; 7-room slot manager; leave | link+PIN invites; key rotation |
+| Rooms | create; join via **QR**; 7-room slot manager; leave; key rotation on removal | remote invites of any kind |
 | Chat | room text, honest ticks, quick replies, reply-to | DMs, reactions, alerts |
 | Map | members by tag/colour, live vs stale, share my location (one tier, 1 h default), pins | duration tiers, phone-GPS fallback, location requests |
 | Status | node battery + signal in member sheet | — |
@@ -30,7 +30,7 @@ Exit criteria: two phones + two nodes, create room → invite by QR → chat →
 
 ### v1.0 — public beta
 
-Everything in the design doc: link+PIN invites, DMs (PKI), reactions (6 fixed), alerts, location requests, duration tiers with phone-GPS fallback, Base/Router node admin with favorites and fixed position, key rotation flow, Group + public relays mode, offline map packs, dark theme, diagnostics, 2.8 signing badge.
+Everything in the design doc: DMs (PKI), reactions (6 fixed), alerts, location requests, duration tiers with phone-GPS fallback, Base/Router node admin with favorites and fixed position, Group + public relays mode, offline map packs, dark theme, diagnostics, 2.8 signing badge.
 
 ### Not in v1 (from the design doc)
 
@@ -50,7 +50,7 @@ Phone-battery sharing, environmental telemetry, custom E2E layer, store-and-forw
 | Hearth | warmth, home base | several small apps |
 | Kindling | spark of connection | taken by a dating app |
 
-Product name **Firepit**; internal protocol name **MeshChat** (primary channel name, control port `PRIVATE_APP`, protobuf package). Custom URL scheme `firepit://`; universal/app-link domain to register (candidates checked in §7); iOS bundle id / Android application id follow the chosen domain (e.g. `app.firepit.ios`, `app.firepit.android`). The in-app title, tab and first-run copy say "Firepit"; the Figma frames still show "MeshChat" in the Chats header — update when the remaining screens are designed.
+Product name **Firepit**; internal protocol name **MeshChat** (primary channel name, control port `PRIVATE_APP`, protobuf package). Custom URL scheme `firepit://` for the QR payload only, never a shared link; iOS bundle id / Android application id follow the chosen domain (e.g. `app.firepit.ios`, `app.firepit.android`). The in-app title, tab and first-run copy say "Firepit"; the Figma frames still show "MeshChat" in the Chats header — update when the remaining screens are designed.
 
 ---
 
@@ -105,4 +105,4 @@ Product name **Firepit**; internal protocol name **MeshChat** (primary channel n
 | firepitapp.com | taken | — |
 | firepit.io | taken | — |
 
-Not yet registered — register before the link+PIN feature is built (v1.0). Until then the custom scheme `firepit://` covers QR invites (MVP). Optional extras to check if wanted: `firepit.link`, `firepit.team`.
+No longer needed for invites. Invites are QR-only and use the custom scheme `firepit://`, which never leaves the screen it is displayed on. A domain is still wanted for a website and store listing, but nothing in the product waits on it.
