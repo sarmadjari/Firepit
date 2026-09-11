@@ -73,6 +73,11 @@ message Invite {
   // QR invites only; absent on link invites.
   uint32 window = 11;
   bytes token = 12;
+
+  // Exactly 32 bytes. The room's own key, which never reaches the radio: the
+  // PSK above is what the firmware encrypts with, and anyone holding the
+  // hardware has it. Words are sealed under this one instead.
+  bytes firepit_key = 13;
 }
 
 // ---------------------------------------------------------------------------
@@ -88,6 +93,7 @@ message MeshChatControl {
     RosterSync roster_sync = 5;
     Receipt receipt = 6;
     SealedMessage sealed_message = 7;
+    RoomText room_text = 8;
   }
 }
 
@@ -97,10 +103,17 @@ message MeshChatControl {
 // display it.
 message SealedMessage {
   fixed32 room_id = 1;
-  // SealedText: a version byte, a nonce, then ciphertext and tag.
+  // SealedText: a version byte, a nonce, then an encrypted MeshChatControl.
+  // One envelope for everything, so words and receipts travel alike and a
+  // listener cannot tell them apart by shape.
   bytes ciphertext = 2;
+}
+
+// What somebody typed. Only ever seen inside a SealedMessage.
+message RoomText {
+  string text = 1;
   // Mirrors MeshPacket.reply_id, which cannot be read without the key.
-  fixed32 reply_id = 3;
+  fixed32 reply_id = 2;
 }
 
 // Who in a room has received a message and who has opened it, batched so one

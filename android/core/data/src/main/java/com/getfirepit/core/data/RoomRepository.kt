@@ -119,6 +119,9 @@ class RoomRepository @Inject constructor(
         )
         Log.i(TAG, "created room $roomId in slot $slot")
 
+        // The radio holds the PSK; this one never leaves the phone's keystore.
+        roomKeys.generate(roomId)
+
         // Nobody vouches for the founder; they are in the room by construction.
         memberDao.record(roomId, myNodeNum, System.currentTimeMillis(), invitedBy = myNodeNum)
 
@@ -169,6 +172,9 @@ class RoomRepository @Inject constructor(
             issued_at = (nowMillis / 1000L).toInt(),
             window = window,
             token = RoomCrypto.token(inviteKey, myNodeNum, window).toByteString(),
+            // Handing over the room key is the whole point of an invite: without
+            // it a joiner can hear the room but not read a word of it.
+            firepit_key = (roomKeys.keyFor(roomId) ?: roomKeys.generate(roomId)).toByteString(),
         )
     }
 
@@ -196,6 +202,10 @@ class RoomRepository @Inject constructor(
             ),
         )
         Log.i(TAG, "joined room ${invite.room_id} in slot $slot")
+
+        invite.firepit_key.toByteArray()
+            .takeIf { it.size == RoomCipher.KEY_SIZE }
+            ?.let { roomKeys.remember(invite.room_id, it) }
 
         mesh.myNodeNum.value?.let { me ->
             val now = System.currentTimeMillis()
@@ -234,6 +244,7 @@ class RoomRepository @Inject constructor(
 
         Log.i(TAG, "left room $roomId")
         memberDao.deleteRoom(roomId)
+        roomKeys.forget(roomId)
         issuedInvites.entries.removeAll { it.value.roomId == roomId }
     }
 
@@ -354,6 +365,15 @@ class RoomRepository @Inject constructor(
             }
             receipts.handle(packet.from, receipt)
         }
+
+        control.room_text?.let { room ->
+            if (!authenticated) {
+                Log.w(TAG, "unsealed room text from ${packet.from}; ignored")
+                return@let
+            }
+            mesh.saveSealedText(packet, room.text, room.reply_id.takeIf { it != 0 })
+            receipts.received(packet.channel, packet.id)
+        }
     }
 
     /**
@@ -364,7 +384,7 @@ class RoomRepository @Inject constructor(
     private suspend fun handleSealed(packet: MeshPacket, sealed: SealedMessage, myNodeNum: Int) {
         val key = roomKeys.keyFor(sealed.room_id) ?: mesh.channelKeyFor(sealed.room_id) ?: return
         val context = SealedText.contextOf(sealed.room_id, packet.from)
-        val plain = RoomCipher.open(key, sealed.ciphertext.toByteArray(), context) ?: run {
+        val plain = SealedText.open(key, sealed.ciphertext.toByteArray(), context) ?: run {
             Log.w(TAG, "sealed payload for room ${sealed.room_id} would not open")
             return
         }

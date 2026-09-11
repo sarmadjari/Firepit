@@ -18,6 +18,10 @@ import com.getfirepit.core.model.MeshNode
 import com.getfirepit.core.model.MessageStatus
 import com.getfirepit.core.model.RoomChannel
 import com.getfirepit.core.protocol.ChannelLoad
+import com.getfirepit.core.crypto.SealedText
+import com.getfirepit.protocol.meshchat.MeshChatControl
+import com.getfirepit.protocol.meshchat.RoomText
+import com.getfirepit.protocol.meshchat.SealedMessage
 import com.getfirepit.core.protocol.MeshConstants
 import com.getfirepit.core.protocol.MeshPacketBuilder
 import com.getfirepit.core.protocol.MessageStatusRules
@@ -75,6 +79,7 @@ class MeshRepository @Inject constructor(
     private val messageDao: MessageDao,
     private val nodeDao: NodeDao,
     private val sessionStore: SessionStore,
+    private val roomKeys: RoomKeyStore,
     @param:ApplicationScope private val scope: CoroutineScope,
 ) {
     private val pacer = OutboundPacer(System::currentTimeMillis)
@@ -211,22 +216,45 @@ class MeshRepository @Inject constructor(
         to: Int = BROADCAST_NODE_NUM,
     ) {
         val myNodeNum = _myNodeNum.value ?: error("Not connected to a radio")
+
+        // A room with a key of its own keeps its words off the radio entirely.
+        val roomId = roomIdForChannel(channel)
+        val roomKey = roomId?.takeIf { to == BROADCAST_NODE_NUM }?.let { roomKeys.keyFor(it) }
+        val limit = if (roomKey == null) MeshConstants.MAX_TEXT_BYTES else SealedText.MAX_TEXT_BYTES
         val payload = text.encodeUtf8()
-        require(payload.size <= MeshConstants.MAX_TEXT_BYTES) {
-            "Message is ${payload.size} bytes, over the ${MeshConstants.MAX_TEXT_BYTES}-byte limit"
+        require(payload.size <= limit) {
+            "Message is ${payload.size} bytes, over the $limit-byte limit"
         }
 
-        val packet = MeshPacketBuilder.meshPacket(
-            to = to,
-            channel = channel,
-            portNum = PortNum.TEXT_MESSAGE_APP,
-            payload = payload,
-            hopLimit = hopLimit,
-            // Decision D-5: without this the firmware reports nothing back, so
-            // there would be no "heard by the mesh" signal at all.
-            wantAck = true,
-            replyId = replyId,
-        )
+        val packet = if (roomKey == null) {
+            MeshPacketBuilder.meshPacket(
+                to = to,
+                channel = channel,
+                portNum = PortNum.TEXT_MESSAGE_APP,
+                payload = payload,
+                hopLimit = hopLimit,
+                // Decision D-5: without this the firmware reports nothing back, so
+                // there would be no "heard by the mesh" signal at all.
+                wantAck = true,
+                replyId = replyId,
+            )
+        } else {
+            val sealed = SealedText.seal(
+                roomKey,
+                MeshChatControl(room_text = RoomText(text = text, reply_id = replyId ?: 0)).encode(),
+                SealedText.contextOf(roomId, myNodeNum),
+            )
+            MeshPacketBuilder.meshPacket(
+                to = to,
+                channel = channel,
+                portNum = PortNum.PRIVATE_APP,
+                payload = MeshChatControl(
+                    sealed_message = SealedMessage(room_id = roomId, ciphertext = sealed.toByteString()),
+                ).encode().let(ByteString::of),
+                hopLimit = hopLimit,
+                wantAck = true,
+            )
+        }
 
         messageDao.save(
             ChatMessage(
@@ -356,10 +384,25 @@ class MeshRepository @Inject constructor(
     }
 
     private suspend fun saveIncomingText(packet: MeshPacket, data: Data) {
+        saveText(
+            packet,
+            sanitizeMeshText(data.payload.utf8()),
+            replyId = data.reply_id.takeIf { it != 0 },
+            emoji = data.emoji.takeIf { it != 0 },
+        )
+    }
+
+    /**
+     * Words that arrived sealed. Stored exactly like any other message: the
+     * encryption is how it travelled, not what it is.
+     */
+    internal suspend fun saveSealedText(packet: MeshPacket, text: String, replyId: Int?) {
+        saveText(packet, sanitizeMeshText(text), replyId, emoji = null)
+    }
+
+    private suspend fun saveText(packet: MeshPacket, text: String, replyId: Int?, emoji: Int?) {
         val myNodeNum = _myNodeNum.value ?: return
         if (packet.from == myNodeNum) return
-
-        val text = sanitizeMeshText(data.payload.utf8())
         if (text.isEmpty()) return
 
         val message = ChatMessage(
@@ -376,8 +419,8 @@ class MeshRepository @Inject constructor(
             rxSnr = packet.rx_snr.takeIf { it != 0f },
             rxRssi = packet.rx_rssi?.takeIf { it != 0 },
             hopsAway = (packet.hop_start - packet.hop_limit).takeIf { packet.hop_start > 0 },
-            replyId = data.reply_id.takeIf { it != 0 },
-            emoji = data.emoji.takeIf { it != 0 },
+            replyId = replyId,
+            emoji = emoji,
             signed = packet.xeddsa_signed,
         )
 

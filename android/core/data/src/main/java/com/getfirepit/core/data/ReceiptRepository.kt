@@ -221,7 +221,7 @@ class ReceiptRepository @Inject constructor(
      */
     private fun seal(roomId: Int, myNodeNum: Int, control: MeshChatControl): ByteString? {
         val key = roomKeys.keyFor(roomId) ?: mesh.channelKeyFor(roomId) ?: return null
-        val sealed = RoomCipher.seal(key, control.encode(), SealedText.contextOf(roomId, myNodeNum))
+        val sealed = SealedText.seal(key, control.encode(), SealedText.contextOf(roomId, myNodeNum))
         return MeshChatControl(
             sealed_message = SealedMessage(room_id = roomId, ciphertext = sealed.toByteString()),
         ).encode().let(ByteString::of)
