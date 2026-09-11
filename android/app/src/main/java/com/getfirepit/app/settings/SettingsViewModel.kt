@@ -6,6 +6,7 @@ import com.getfirepit.core.data.MeshRepository
 import com.getfirepit.core.data.Owner
 import com.getfirepit.core.data.OwnerRepository
 import com.getfirepit.core.protocol.MessageRetention
+import com.getfirepit.core.protocol.RoomLifetime
 import com.getfirepit.core.protocol.Person
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -36,6 +37,12 @@ class SettingsViewModel @Inject constructor(
 
     fun chooseRetention(choice: MessageRetention) {
         viewModelScope.launch { retention.choose(choice) }
+    }
+
+    val roomLifetime: StateFlow<RoomLifetime> = retention.roomLifetime
+
+    fun chooseRoomLifetime(choice: RoomLifetime) {
+        viewModelScope.launch { retention.chooseRoomLifetime(choice) }
     }
 
     /** You. Needs no radio, and changing it changes no radio. */

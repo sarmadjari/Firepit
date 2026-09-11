@@ -44,6 +44,12 @@ interface MessageDao {
     suspend fun findEntity(id: Int): MessageEntity?
 
     /** Enforces the retention setting on this phone's copy. */
+    @Query(
+        "SELECT channel, MAX(sentAt) AS lastAt FROM messages " +
+            "WHERE toNodeNum = :broadcast GROUP BY channel",
+    )
+    suspend fun newestPerChannel(broadcast: Int): List<ChannelActivity>
+
     @Query("DELETE FROM messages WHERE sentAt < :cutoff")
     suspend fun deleteOlderThan(cutoff: Long): Int
 
@@ -382,3 +388,9 @@ suspend fun ReceiptDao.recordRead(messageId: Int, nodeNum: Int, at: Long) {
 
 fun ReceiptDao.observe(messageId: Int): Flow<List<Receipt>> =
     observeFor(messageId).map { rows -> rows.map { Receipt(it.nodeNum, it.state, it.at) } }
+
+/** When a channel last carried anything, for deciding whether a room has died. */
+data class ChannelActivity(val channel: Int, val lastAt: Long)
+
+suspend fun MessageDao.newestPerChannel(): Map<Int, Long> =
+    newestPerChannel(BROADCAST_NODE_NUM).associate { it.channel to it.lastAt }

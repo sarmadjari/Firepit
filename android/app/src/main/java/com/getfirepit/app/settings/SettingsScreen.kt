@@ -61,6 +61,7 @@ import com.getfirepit.core.designsystem.theme.identityColorFor
 import com.getfirepit.core.designsystem.theme.identityColorForSlot
 import com.getfirepit.core.designsystem.theme.onIdentityColorFor
 import com.getfirepit.core.protocol.MessageRetention
+import com.getfirepit.core.protocol.RoomLifetime
 import com.getfirepit.core.protocol.OwnerName
 import com.getfirepit.core.protocol.Person
 import com.getfirepit.core.transport.LinkState
@@ -80,6 +81,7 @@ fun SettingsScreen(
     val person by settingsViewModel.person.collectAsStateWithLifecycle()
     val connected by settingsViewModel.connected.collectAsStateWithLifecycle()
     val retention by settingsViewModel.retentionChoice.collectAsStateWithLifecycle()
+    val roomLifetime by settingsViewModel.roomLifetime.collectAsStateWithLifecycle()
     val showMessageText by settingsViewModel.showMessageText.collectAsStateWithLifecycle()
     val renameError by settingsViewModel.renameError.collectAsStateWithLifecycle()
 
@@ -122,6 +124,8 @@ fun SettingsScreen(
             connected = connected,
             retention = retention,
             onChooseRetention = settingsViewModel::chooseRetention,
+            roomLifetime = roomLifetime,
+            onChooseRoomLifetime = settingsViewModel::chooseRoomLifetime,
             showMessageText = showMessageText,
             onShowMessageText = settingsViewModel::setShowMessageText,
             onSavePerson = settingsViewModel::savePerson,
@@ -155,6 +159,8 @@ private fun SettingsList(
     connected: Boolean,
     retention: MessageRetention,
     onChooseRetention: (MessageRetention) -> Unit,
+    roomLifetime: RoomLifetime,
+    onChooseRoomLifetime: (RoomLifetime) -> Unit,
     showMessageText: Boolean,
     onShowMessageText: (Boolean) -> Unit,
     onSavePerson: (String, String) -> Unit,
@@ -228,6 +234,26 @@ private fun SettingsList(
                             label = choice.label,
                             selected = retention == choice,
                             onClick = { onChooseRetention(choice) },
+                        )
+                    }
+                }
+
+                Text(
+                    text = "Leave quiet rooms",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(top = FirepitSpacing.s),
+                )
+                Text(
+                    text = "Leaving takes the room's messages and its key with it, and cannot be undone.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FirepitTheme.colors.textSecondary,
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
+                    RoomLifetime.entries.forEach { choice ->
+                        FirepitChip(
+                            label = choice.label,
+                            selected = roomLifetime == choice,
+                            onClick = { onChooseRoomLifetime(choice) },
                         )
                     }
                 }
