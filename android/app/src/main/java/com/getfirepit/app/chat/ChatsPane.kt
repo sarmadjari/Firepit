@@ -95,6 +95,8 @@ import com.getfirepit.core.designsystem.theme.identityColorFor
 import com.getfirepit.core.model.ChannelRole
 import com.getfirepit.core.model.ChatMessage
 import com.getfirepit.core.model.MeshNode
+import com.getfirepit.core.model.Receipt
+import com.getfirepit.core.model.ReceiptState
 import com.getfirepit.core.protocol.Person
 import com.getfirepit.core.model.MessageStatus
 import com.getfirepit.core.model.RoomChannel
@@ -1023,9 +1025,12 @@ private fun ChannelChat(
     }
 
     state.inspecting?.let { message ->
+        val receipts by viewModel.inspectedReceipts.collectAsStateWithLifecycle()
         MessageInfoSheet(
             message = message,
             senderName = state.nodes[message.fromNodeNum]?.displayName,
+            receipts = receipts,
+            nameOf = { node -> state.nodes[node]?.displayName ?: "Unknown" },
             onDismiss = { viewModel.inspect(null) },
         )
     }
@@ -1191,7 +1196,13 @@ private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MessageInfoSheet(message: ChatMessage, senderName: String?, onDismiss: () -> Unit) {
+private fun MessageInfoSheet(
+    message: ChatMessage,
+    senderName: String?,
+    receipts: List<Receipt>,
+    nameOf: (Int) -> String,
+    onDismiss: () -> Unit,
+) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
@@ -1220,6 +1231,9 @@ private fun MessageInfoSheet(message: ChatMessage, senderName: String?, onDismis
             message.rxRssi?.let { InfoRow("Signal strength", "$it dBm") }
             if (message.signed) InfoRow("Signature", "Verified")
 
+            ReceiptList("Read by", receipts.filter { it.state == ReceiptState.READ }, nameOf)
+            ReceiptList("Received by", receipts.filter { it.state == ReceiptState.RECEIVED }, nameOf)
+
             Text(
                 text = "Delivery is only ever confirmed as far as the first node that heard it. " +
                     "The mesh cannot tell you who read it.",
@@ -1238,6 +1252,27 @@ private fun InfoRow(label: String, value: String) {
     ) {
         Text(label, style = MaterialTheme.typography.bodyMedium, color = FirepitTheme.colors.textSecondary)
         Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/**
+ * Who told us they have this message, and when.
+ *
+ * Only the phones that reported appear. Silence is not evidence of anything, so
+ * nobody is ever listed as not having read something.
+ */
+@Composable
+private fun ReceiptList(label: String, receipts: List<Receipt>, nameOf: (Int) -> String) {
+    if (receipts.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = FirepitTheme.colors.textSecondary,
+        )
+        receipts.sortedBy { it.at }.forEach { receipt ->
+            InfoRow(nameOf(receipt.nodeNum), formatTime(receipt.at))
+        }
     }
 }
 

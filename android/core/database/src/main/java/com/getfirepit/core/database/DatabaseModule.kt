@@ -22,6 +22,9 @@ object DatabaseModule {
     fun provideMessageDao(database: FirepitDatabase): MessageDao = database.messageDao()
 
     @Provides
+    fun provideReceiptDao(database: FirepitDatabase): ReceiptDao = database.receiptDao()
+
+    @Provides
     fun provideNodeDao(database: FirepitDatabase): NodeDao = database.nodeDao()
 
     @Provides

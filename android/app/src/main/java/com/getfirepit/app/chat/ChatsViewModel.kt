@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.getfirepit.core.data.ChatPresence
 import com.getfirepit.core.data.MeshRepository
+import com.getfirepit.core.data.ReceiptRepository
+import com.getfirepit.core.model.Receipt
 import com.getfirepit.core.database.ChannelStateDao
 import com.getfirepit.core.database.markRead
 import com.getfirepit.core.database.observeMuted
@@ -86,6 +88,7 @@ class ChatsViewModel @Inject constructor(
     private val channelState: ChannelStateDao,
     private val presence: ChatPresence,
     private val people: PersonStore,
+    private val receipts: ReceiptRepository,
 ) : ViewModel() {
 
     private val selected = MutableStateFlow<Int?>(null)
@@ -172,6 +175,28 @@ class ChatsViewModel @Inject constructor(
             directLatest = self.read.directLatest,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatsUiState())
+
+    /**
+     * Kept out of the main state because combine has typed overloads only to
+     * five flows, and only the info sheet reads this.
+     */
+    val inspectedReceipts: StateFlow<List<Receipt>> = inspecting
+        .flatMapLatest { message ->
+            message?.let { receipts.observe(it.id) } ?: flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    init {
+        // On screen and looked at is the only honest definition of read.
+        viewModelScope.launch {
+            combine(messages, selected, presence.foreground) { shown, channel, foreground ->
+                if (channel == null || !foreground) null
+                else channel to shown.filterNot { it.isOutgoing }.map { it.id }.toSet()
+            }.collect { open ->
+                open?.let { (channel, ids) -> receipts.read(channel, ids) }
+            }
+        }
+    }
 
     init {
         // Reading the open conversation is what marks it read, so a message

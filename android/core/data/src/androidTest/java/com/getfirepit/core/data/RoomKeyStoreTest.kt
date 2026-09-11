@@ -1,4 +1,4 @@
-package com.getfirepit.app.rooms
+package com.getfirepit.core.data
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry

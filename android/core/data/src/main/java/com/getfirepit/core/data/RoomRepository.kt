@@ -1,6 +1,8 @@
 package com.getfirepit.core.data
 
 import android.util.Log
+import com.getfirepit.core.crypto.RoomCipher
+import com.getfirepit.core.crypto.SealedText
 import com.getfirepit.core.crypto.InviteCodec
 import com.getfirepit.core.crypto.RoomCrypto
 import com.getfirepit.core.database.RoomMemberDao
@@ -19,6 +21,7 @@ import com.getfirepit.protocol.meshchat.Invite
 import com.getfirepit.protocol.meshchat.Inviter
 import com.getfirepit.protocol.meshchat.JoinHello
 import com.getfirepit.protocol.meshchat.MeshChatControl
+import com.getfirepit.protocol.meshchat.SealedMessage
 import com.getfirepit.protocol.meshchat.RosterEntry
 import com.getfirepit.protocol.meshchat.RosterEvent
 import com.getfirepit.protocol.meshchat.RosterSync
@@ -65,6 +68,8 @@ class RoomRepository @Inject constructor(
     private val admin: NodeAdminClient,
     private val memberDao: RoomMemberDao,
     private val messageDao: MessageDao,
+    private val receipts: ReceiptRepository,
+    private val roomKeys: RoomKeyStore,
     @param:ApplicationScope private val scope: CoroutineScope,
 ) {
 
@@ -317,6 +322,8 @@ class RoomRepository @Inject constructor(
             PortNum.PRIVATE_APP -> handleControl(packet, data.payload.toByteArray(), myNodeNum)
             else -> Unit
         }
+
+        if (data.portnum == PortNum.TEXT_MESSAGE_APP) receipts.received(packet.channel, packet.id)
     }
 
     private suspend fun handleControl(packet: MeshPacket, payload: ByteArray, myNodeNum: Int) {
@@ -324,6 +331,22 @@ class RoomRepository @Inject constructor(
         control.join_hello?.let { hello -> handleJoinHello(packet.from, hello, myNodeNum) }
         control.roster_event?.let { event -> handleRosterEvent(packet, event) }
         control.roster_sync?.let { sync -> handleRosterSync(packet, sync) }
+        control.receipt?.let { receipt -> receipts.handle(packet.from, receipt) }
+        control.sealed_message?.let { sealed -> handleSealed(packet, sealed, myNodeNum) }
+    }
+
+    /**
+     * Open it and treat what is inside as if it had arrived in the clear. The
+     * key is the room's, so a radio relaying this cannot do the same.
+     */
+    private suspend fun handleSealed(packet: MeshPacket, sealed: SealedMessage, myNodeNum: Int) {
+        val key = roomKeys.keyFor(sealed.room_id) ?: return
+        val context = SealedText.contextOf(sealed.room_id, packet.from)
+        val plain = RoomCipher.open(key, sealed.ciphertext.toByteArray(), context) ?: run {
+            Log.w(TAG, "sealed payload for room ${sealed.room_id} would not open")
+            return
+        }
+        handleControl(packet, plain, myNodeNum)
     }
 
     /**

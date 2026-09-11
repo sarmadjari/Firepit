@@ -6,6 +6,10 @@ plugins {
 
 android {
     namespace = "com.getfirepit.core.data"
+
+    defaultConfig {
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
 }
 
 dependencies {
@@ -20,4 +24,9 @@ dependencies {
 
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.turbine)
+
+    androidTestImplementation(libs.androidx.junit)
+    // Without Espresso the runner is absent and the suite silently reports zero tests.
+    androidTestImplementation(libs.androidx.espresso.core)
+    androidTestImplementation(libs.kotlinx.coroutines.test)
 }

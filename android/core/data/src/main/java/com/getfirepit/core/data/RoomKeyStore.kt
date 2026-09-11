@@ -1,4 +1,4 @@
-package com.getfirepit.app.rooms
+package com.getfirepit.core.data
 
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
