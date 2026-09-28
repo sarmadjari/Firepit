@@ -27,6 +27,7 @@ import com.getfirepit.core.protocol.MeshPacketBuilder
 import com.getfirepit.core.protocol.MessageStatusRules
 import com.getfirepit.core.protocol.OutboundPacer
 import com.getfirepit.core.protocol.PositionPrecision
+import com.getfirepit.core.protocol.RadioClock
 import com.getfirepit.core.protocol.phoneapi.RadioSnapshot
 import com.getfirepit.core.transport.LinkState
 import com.getfirepit.core.transport.RadioLink
@@ -312,6 +313,19 @@ class MeshRepository @Inject constructor(
         _clockSkewMillis.value = skew
     }
 
+    /**
+     * A stamp from our own radio, read in the phone's terms. See [RadioClock].
+     */
+    private fun Int.onPhoneClock(): Long? =
+        RadioClock.onPhoneClock(this, _clockSkewMillis.value, System.currentTimeMillis())
+
+    /**
+     * A stamp another node put on its own fix, kept only while it could be
+     * true. See [RadioClock].
+     */
+    private fun Int.ifPlausible(): Long? =
+        RadioClock.ifPlausible(this, System.currentTimeMillis())
+
     private suspend fun handlePacket(packet: MeshPacket) {
         val data = packet.decoded ?: return
         noteClockSkew(packet)
@@ -380,7 +394,9 @@ class MeshRepository @Inject constructor(
             latitudeI = latitude,
             longitudeI = longitude,
             altitude = position.altitude,
-            positionTime = position.time.toLong().times(1_000).takeIf { position.time != 0 },
+            // Their stamp while it holds up, otherwise the fact we can vouch
+            // for: it reached us now.
+            positionTime = position.time.ifPlausible() ?: System.currentTimeMillis(),
             positionPrecision = position.precision_bits.takeIf { it != 0 },
             groundSpeed = position.ground_speed,
             groundTrack = position.ground_track,
@@ -417,7 +433,7 @@ class MeshRepository @Inject constructor(
             text = text,
             sentAt = System.currentTimeMillis(),
             // Zero is a radio that has never been told the time, not 1970.
-            rxTime = packet.rx_time?.takeIf { it != 0 }?.toLong()?.times(1_000),
+            rxTime = packet.rx_time?.onPhoneClock(),
             status = MessageStatus.RECEIVED,
             isOutgoing = false,
             rxSnr = packet.rx_snr.takeIf { it != 0f },
@@ -475,7 +491,7 @@ class MeshRepository @Inject constructor(
                 role = user?.role?.name,
                 publicKey = user?.public_key?.takeIf { it.size > 0 }?.base64(),
                 isUnmessagable = user?.is_unmessagable == true,
-                lastHeard = info.last_heard.toLong().times(1_000).takeIf { info.last_heard != 0 },
+                lastHeard = info.last_heard.onPhoneClock(),
                 snr = info.snr.takeIf { it != 0f },
                 hopsAway = info.hops_away,
                 batteryLevel = info.device_metrics?.battery_level,
@@ -486,7 +502,9 @@ class MeshRepository @Inject constructor(
                 latitudeI = info.position?.latitude_i?.takeIf { it != 0 },
                 longitudeI = info.position?.longitude_i?.takeIf { it != 0 },
                 altitude = info.position?.altitude,
-                positionTime = info.position?.time?.toLong()?.times(1_000)?.takeIf { it != 0L },
+                // Nothing here says when this reached the radio, so an
+                // unbelievable stamp leaves no time at all rather than a wrong one.
+                positionTime = info.position?.time?.ifPlausible(),
                 positionPrecision = info.position?.precision_bits?.takeIf { it != 0 },
             ),
             System.currentTimeMillis(),
