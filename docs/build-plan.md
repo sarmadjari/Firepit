@@ -223,6 +223,10 @@ and whether 5 s is enough for the NodeInfo hello to propagate.
 Verified on hardware: DB migrations v1→v2→v3 against a live database with messages and nodes
 intact, and the rooms UI rendering on the Fold.
 
+> **Superseded by Stage 7.7.** Two phones arrived, the handshake ran, and it failed for a reason
+> the single-device build could not show. The NodeInfo-hello-then-wait ordering is gone, and the
+> invite no longer carries the PSK. Read Stage 7.7 for what actually ships.
+
 Two ways to close most of this without a second phone, both deferred by decision:
 
 - A loopback-transport integration test driving two `RoomRepository` instances, which would cover
@@ -521,6 +525,123 @@ the app's claims were ahead of its code.
   database`). Both leave plaintext in place while the code believes it has encrypted it. A fix
   needs the migration pinned to one connection, or a different strategy — and the instrumented
   test that caught this, which is the part actually worth keeping.
+
+---
+
+## Stage 7.7 — Two phones, and what they broke
+
+The first stage with two radios on a bench. Nearly everything here is a correction rather than a
+feature: the single-device build had been passing its tests while getting the join wrong.
+
+### The join handshake, redesigned
+
+The old flow broadcast a NodeInfo on the room, waited 5 s for it to propagate, then sent a PKI DM.
+On hardware the DM simply never arrived: the joiner logged "asked … to be let into room" three
+times and the inviter logged nothing. Both app databases held each other's public keys, and both
+radios had heard each other minutes earlier.
+
+**The app knowing a key is not the same as the radio knowing it.** The firmware encrypts from its
+own NodeDB, which is bounded and evicts, and the app's database has no bearing on it. The NodeInfo
+broadcast had been papering over this by chance.
+
+What ships instead — and it removed a security hole rather than just a bug:
+
+- **The invite carries no keys.** `room_psk` and `firepit_key` are `reserved` in `Invite`, with the
+  reason written next to them in the proto. A photograph of the code yields a room name and the
+  inviter's public key.
+- **Both sides seed their own radio** with `AdminMessage.add_contact` / `SharedContact` — the
+  joiner from the invite, the inviter on approval. No broadcast, no waiting.
+- **The grant is encrypted to a key carried inside the sealed hello** (`JoinHello.joiner_key`),
+  not to a NodeDB lookup that any radio can poison by claiming a node number.
+- **A person taps "Let in".** A token proves the invite is genuine; it cannot prove the bearer is
+  the person it was shown to. Declining sends `RoomGrant{ DECLINED }` so the joiner is told rather
+  than left waiting.
+- Rate limit of 5 attempts per node per minute, one-shot `invite_id`, and a zero-hop requirement:
+  a code is shown to somebody in front of you, so anything relayed was read somewhere you cannot
+  see.
+- The invite screen sets `FLAG_SECURE`.
+
+**Verified on hardware:** full handshake logged on both phones, room `-371805330` present in both
+databases with both members.
+
+### Built
+
+- **Person cards** — name, tag and colour, shared automatically on joining and on being joined,
+  jittered across `GREETING_SPREAD` so a join does not become a packet storm.
+- **Map freshness** — fix ages beside each name ("4 min", "2 h"), a live ring at 2 minutes and a
+  separate 15-minute staleness rule, sweeping only room members rather than every marker.
+- **Position requests** — tap a marker to ask. `PositionAnswer` names every way it can fail
+  (`NoFix`, `Silent`, `NotConnected`, `NoSharedRoom`) rather than spinning.
+- **Clock correction** (`RadioClock`) — the phone's clock wins when the radio's is implausible, so
+  messages are not filed in 1970 or next year.
+- **Message alerts** (`MessageAlerts`) — phone only, or phone and node buzzer, preserving the
+  GPIO pins already configured on the node.
+- **Firmware floor** — 2.7.0. Below it `RadioLink` enters a terminal `Unsupported` state and says
+  so, rather than failing later in a way that looks like a bug in the room.
+- **Radio takeover undo** (`PrimaryBackup`) — the original slot 0 is recorded before Firepit
+  claims it, so a borrowed radio can be given back.
+- **Settings, reorganised** — You / Radio / Notifications / Messages / Map / Appearance / About,
+  on shared `SettingsGroup`, `SettingsChoice` and `SettingRow` primitives.
+- **One app bar** (`FirepitTopBar`) across chat, map and settings; sheet shapes unified.
+- **Chat opening behaviour** — no keyboard on landing, and the list lands on the newest message.
+  The old scroll used `messages.lastIndex` against a list that also renders day separators, so it
+  was always short by the number of days.
+
+### Bugs this stage exposed
+
+- Chat showed **device names, not person names** — it read the node record instead of the card.
+- **Role icons overrode card tags** in the avatar precedence.
+- **Traceroute leaked on the public primary.** Now a `require()` in `MeshPacketBuilder`, alongside
+  three other guards, so it cannot be sent from the wrong channel at all.
+- Clearing focus on conversation change did not stop the keyboard — the detail pane's focus
+  hand-off ran after it. The composer now refuses focus until a real tap
+  (`focusProperties { canFocus = … }` flipped by `awaitFirstDown`).
+
+### Accepted, not fixed
+
+- **Room members can forge positions.** 2.7 does not sign channel traffic. The 2.8 signing badge
+  is the answer and it is in Stage 8.
+- **The primary key is community-wide**, by design (D-1). It protects against outsiders, not
+  against other Firepit users.
+- Six separate `OutboundPacer` instances. Correct today because each handles a distinct portnum;
+  worth consolidating into one injected singleton before that stops being true.
+
+### Two holes the second phone did not find
+
+Both came out of asking what a *third* node would change, and neither needed one to fix.
+
+- **The hop rule failed open.** It read `if (hop_start > 0 && hops > 0) reject`, so a packet with
+  `hop_start = 0` skipped the check entirely. Neither field is authenticated: a sender three hops
+  away can leave `hop_start` at zero to look unmeasurable while setting `hop_limit` high enough to
+  be relayed, and it arrives claiming a *negative* distance. Now `PacketOrigin.arrivedDirectly`,
+  which accepts only `hop_start == hop_limit` and is tested over every pair in 0..7.
+- **A grant was believed from anyone.** `handleRoomGrant` checked `room_id` and `invite_id` against
+  what we asked — but both of those travel in the QR code. Anyone who photographed it could answer
+  first with their own PSK, putting the scanner in *their* room under the name they expected. PKI
+  did not help: encrypting to a public key is something the public can do. The fix is to record
+  who we scanned (`AwaitedRoom.inviter`) and require the reply to come from them; because step A
+  seeds that node's key from the code, the firmware will only decrypt a reply its holder signed.
+
+The second one is the more serious: it was a room-substitution attack reachable by exactly the
+adversary the invite redesign was built around, and it survived the redesign because the checks
+that replaced the old ones looked sufficient in isolation.
+
+### Not verified
+
+Three or more phones. What that would still tell us, now that relayed joins are refused by
+construction:
+
+- that 2.7.3 populates `hop_start` / `hop_limit` the way the protocol documents, on real relayed
+  traffic — the rule is right given the documented semantics, but the semantics are assumed
+- that a join *correctly fails* across a relay rather than failing for some unrelated reason
+- roster sync against more than two members, though its worst case is pinned by
+  `ProtocolContractTest` at 208 of 233 bytes using max-length varint node numbers, so the cap is
+  arithmetic rather than hope
+
+**By design, and worth saying plainly: a join cannot cross a relay.** Both people must be in RF
+range of each other — the same requirement as pointing a camera at a screen. Out of range, the
+request times out. This is the security property working, not a bug, but it is the first thing a
+user will report.
 
 ---
 
