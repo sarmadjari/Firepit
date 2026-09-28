@@ -91,6 +91,7 @@ import com.getfirepit.core.designsystem.component.SystemChip
 import com.getfirepit.core.designsystem.component.UnreadBadge
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
+import com.getfirepit.core.designsystem.theme.SheetShape
 import com.getfirepit.core.designsystem.theme.identityColorFor
 import com.getfirepit.core.model.ChannelRole
 import com.getfirepit.core.model.ChatMessage
@@ -689,38 +690,24 @@ private fun DirectChat(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        IdentityAvatar(
-                            nodeNum = peer,
-                            tag = node?.shortName,
-                            name = name,
-                            size = 40.dp,
-                        )
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                text = name,
-                                style = MaterialTheme.typography.titleLarge,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                text = "Direct message",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = FirepitTheme.colors.textSecondary,
-                            )
-                        }
-                    }
+            FirepitTopBar(
+                title = name,
+                onBack = onBack,
+                leading = {
+                    IdentityAvatar(
+                        nodeNum = peer,
+                        tag = node?.shortName,
+                        name = name,
+                        size = 40.dp,
+                    )
                 },
-                navigationIcon = { onBack?.let { back -> BackButton(onClick = back) } },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                ),
+                subtitle = {
+                    Text(
+                        text = "Direct message",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FirepitTheme.colors.textSecondary,
+                    )
+                },
             )
         },
     ) { padding ->
@@ -730,7 +717,6 @@ private fun DirectChat(
                 .fillMaxSize(),
         ) {
             val items = remember(state.messages) { buildChatItems(state.messages) }
-
             if (state.messages.isEmpty()) {
                 EmptyState("No messages with $name yet.")
             } else {
@@ -1177,7 +1163,7 @@ private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
                 onClick = viewModel::send,
                 enabled = state.canSend,
                 shape = CircleShape,
-                modifier = Modifier.size(48.dp),
+                modifier = Modifier.size(FirepitSpacing.minTouchTarget),
                 colors = IconButtonDefaults.filledIconButtonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
@@ -1213,7 +1199,7 @@ private fun MessageInfoSheet(
     nameOf: (Int) -> String,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(onDismissRequest = onDismiss, shape = SheetShape) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

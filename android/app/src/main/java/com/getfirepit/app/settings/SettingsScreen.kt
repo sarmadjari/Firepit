@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -196,13 +197,50 @@ private fun SettingsList(
                 supportingContent = { Text(deviceSummary) },
                 modifier = Modifier.clickable { onOpen(SettingsSection.DEVICES) },
             )
-            HorizontalDivider()
-
             ListItem(
                 headlineContent = { Text("Nodes") },
                 supportingContent = { Text(nodeSummary) },
                 modifier = Modifier.clickable { onOpen(SettingsSection.NODES) },
             )
+            HorizontalDivider()
+
+            // Grouped by the question being asked — "how do I hear about a
+            // message" — rather than by which device the answer is written to.
+            SectionLabel("Notifications")
+            SettingsGroup {
+                SettingRow(
+                    label = "Show message text",
+                    caption = "Off shows only who it is from. A notification is read by " +
+                        "whoever is looking at the phone, which is not always you.",
+                ) {
+                    Switch(checked = showMessageText, onCheckedChange = onShowMessageText)
+                }
+            }
+            HorizontalDivider()
+
+            SectionLabel("Messages")
+            SettingsGroup {
+                SettingsChoice(
+                    label = "Keep messages for",
+                    caption = "Older messages are always deleted from this phone — there is no " +
+                        "keeping them. Everyone else holds their own copy, and nothing on a " +
+                        "mesh can delete theirs.",
+                    entries = MessageRetention.entries,
+                    selected = retention,
+                    labelOf = MessageRetention::label,
+                    onChoose = onChooseRetention,
+                )
+
+                SettingsChoice(
+                    label = "Leave quiet rooms",
+                    caption = "Leaving takes the room's messages and its key with it, and " +
+                        "cannot be undone.",
+                    entries = RoomLifetime.entries,
+                    selected = roomLifetime,
+                    labelOf = RoomLifetime::label,
+                    onChoose = onChooseRoomLifetime,
+                )
+            }
             HorizontalDivider()
 
             SectionLabel("Map")
@@ -211,8 +249,6 @@ private fun SettingsList(
                 supportingContent = { Text("Download map tiles so the map works with no signal") },
                 modifier = Modifier.clickable { onOpen(SettingsSection.OFFLINE_MAPS) },
             )
-            HorizontalDivider()
-
             ListItem(
                 headlineContent = { Text("Dropped pins") },
                 supportingContent = { Text("Rename or delete the pins on your map") },
@@ -220,98 +256,18 @@ private fun SettingsList(
             )
             HorizontalDivider()
 
-            SectionLabel("Privacy")
-            Column(
-                modifier = Modifier.padding(
-                    horizontal = FirepitSpacing.screenMargin,
-                    vertical = FirepitSpacing.s,
-                ),
-                verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
-            ) {
-                Text("Keep messages for", style = MaterialTheme.typography.bodyMedium)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
-                    MessageRetention.entries.forEach { choice ->
-                        FirepitChip(
-                            label = choice.label,
-                            selected = retention == choice,
-                            onClick = { onChooseRetention(choice) },
-                        )
-                    }
-                }
-
-                Text(
-                    text = "Leave quiet rooms",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(top = FirepitSpacing.s),
-                )
-                Text(
-                    text = "Leaving takes the room's messages and its key with it, and cannot be undone.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = FirepitTheme.colors.textSecondary,
-                )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
-                    RoomLifetime.entries.forEach { choice ->
-                        FirepitChip(
-                            label = choice.label,
-                            selected = roomLifetime == choice,
-                            onClick = { onChooseRoomLifetime(choice) },
-                        )
-                    }
-                }
-                Row(
-                    modifier = Modifier.padding(top = FirepitSpacing.s).fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            "Show message text in notifications",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        Text(
-                            text = "Off shows only who it is from",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = FirepitTheme.colors.textSecondary,
-                        )
-                    }
-                    Switch(checked = showMessageText, onCheckedChange = onShowMessageText)
-                }
-                Text(
-                    text = "Older messages are always deleted from this phone — there is no " +
-                        "keeping them. Everyone else holds their own copy, and nothing on " +
-                        "a mesh can delete theirs.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = FirepitTheme.colors.textSecondary,
-                )
-            }
-            HorizontalDivider()
-
             SectionLabel("Appearance")
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(
-                        horizontal = FirepitSpacing.screenMargin,
-                        vertical = FirepitSpacing.s,
-                    ),
-                horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
-            ) {
-                ThemeChoice.entries.forEach { option ->
-                    FirepitChip(
-                        label = option.label,
-                        selected = theme == option,
-                        onClick = { onChooseTheme(option) },
-                    )
-                }
+            SettingsGroup {
+                SettingsChoice(
+                    label = "Theme",
+                    caption = "Dark keeps a torch-lit camp readable and does not flare in " +
+                        "your eyes at night.",
+                    entries = ThemeChoice.entries,
+                    selected = theme,
+                    labelOf = ThemeChoice::label,
+                    onChoose = onChooseTheme,
+                )
             }
-            Text(
-                text = "Dark keeps a torch-lit camp readable and does not flare in your eyes at night.",
-                style = MaterialTheme.typography.bodySmall,
-                color = FirepitTheme.colors.textSecondary,
-                modifier = Modifier.padding(
-                    horizontal = FirepitSpacing.screenMargin,
-                    vertical = FirepitSpacing.xs,
-                ),
-            )
             HorizontalDivider()
 
             SectionLabel("About")
@@ -331,6 +287,90 @@ private fun SettingsList(
                 },
             )
         }
+    }
+}
+
+/**
+ * The inset a settings block sits in.
+ *
+ * A `ListItem` brings its own padding; a hand-built control does not, and every
+ * one of these was previously indenting itself by eye.
+ */
+@Composable
+private fun SettingsGroup(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier = Modifier.padding(
+            horizontal = FirepitSpacing.screenMargin,
+            vertical = FirepitSpacing.s,
+        ),
+        verticalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
+        content = content,
+    )
+}
+
+/**
+ * One question, its answers, and why it matters.
+ *
+ * Every chip setting in the app is this shape, so picking a theme and picking
+ * how long to keep messages read as the same gesture.
+ */
+@Composable
+private fun <T> SettingsChoice(
+    label: String,
+    entries: List<T>,
+    selected: T,
+    labelOf: (T) -> String,
+    onChoose: (T) -> Unit,
+    caption: String? = null,
+    enabled: Boolean = true,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
+        Text(label, style = MaterialTheme.typography.bodyMedium)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
+            entries.forEach { entry ->
+                FirepitChip(
+                    label = labelOf(entry),
+                    selected = selected == entry,
+                    enabled = enabled,
+                    onClick = { onChoose(entry) },
+                )
+            }
+        }
+        caption?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodySmall,
+                color = FirepitTheme.colors.textSecondary,
+            )
+        }
+    }
+}
+
+/** A setting whose answer is a control rather than a set of chips. */
+@Composable
+private fun SettingRow(
+    label: String,
+    caption: String? = null,
+    control: @Composable () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
+        ) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            caption?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FirepitTheme.colors.textSecondary,
+                )
+            }
+        }
+        control()
     }
 }
 

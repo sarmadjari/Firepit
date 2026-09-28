@@ -12,23 +12,24 @@ import android.graphics.Typeface
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.DrawableRes
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -51,6 +52,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -66,6 +68,7 @@ import com.getfirepit.core.designsystem.component.BackButton
 import com.getfirepit.core.designsystem.component.FirepitIcons
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
+import com.getfirepit.core.designsystem.theme.SheetShape
 import com.getfirepit.core.designsystem.theme.identityColorFor
 import com.getfirepit.core.model.MapPin
 import org.maplibre.android.camera.CameraUpdateFactory
@@ -133,6 +136,7 @@ fun MapScreen(
     var hasFramedMarkers by remember { mutableStateOf(false) }
     var droppingAt by remember { mutableStateOf<LatLng?>(null) }
     var openPin by remember { mutableStateOf<MapPin?>(null) }
+    var showingOptions by remember { mutableStateOf(false) }
     val offlineOnly by viewModel.offlineOnly.collectAsStateWithLifecycle()
     val areas by viewModel.areas.collectAsStateWithLifecycle()
 
@@ -204,74 +208,20 @@ fun MapScreen(
             }
 
             MapControl(
-                icon = FirepitIcons.Locate,
-                description = "Centre on everyone",
-                onClick = { markerLayer.frameAll(state.markers, force = true) },
+                icon = FirepitIcons.More,
+                description = "Map options",
+                onClick = { showingOptions = true },
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .statusBarsPadding()
                     .padding(FirepitSpacing.m),
             )
 
-            MapControl(
-                icon = FirepitIcons.Download,
-                description = "Offline areas",
-                onClick = onOpenOfflineAreas,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .statusBarsPadding()
-                    .padding(
-                        top = FirepitSpacing.m + CONTROL_SIZE + FirepitSpacing.s,
-                        end = FirepitSpacing.m,
-                    ),
-            )
-
-            MapControl(
-                icon = FirepitIcons.Pin,
-                description = "Drop a pin here",
-                onClick = { markerLayer.centre()?.let { droppingAt = it } },
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .statusBarsPadding()
-                    .padding(
-                        top = FirepitSpacing.m + (CONTROL_SIZE + FirepitSpacing.s) * 2,
-                        end = FirepitSpacing.m,
-                    ),
-            )
-
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
             ) {
-                Button(
-                    onClick = {
-                        if (state.isSharing) viewModel.shareWith(null) else pickingRoom = true
-                    },
-                    shape = RoundedCornerShape(FirepitSpacing.cardCorner),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary,
-                    ),
-                    contentPadding = PaddingValues(
-                        horizontal = FirepitSpacing.xl,
-                        vertical = FirepitSpacing.m,
-                    ),
-                ) {
-                    Icon(
-                        painter = painterResource(FirepitIcons.Locate),
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(FirepitSpacing.s))
-                    Text(
-                        text = if (state.isSharing) "Stop sharing" else "Share my location",
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                }
-
                 Surface(
                     color = FirepitTheme.colors.surface2,
                     shape = RoundedCornerShape(
@@ -294,6 +244,29 @@ fun MapScreen(
                 }
             }
         }
+
+    if (showingOptions) {
+        MapOptionsSheet(
+            state = state,
+            onDismiss = { showingOptions = false },
+            onShare = {
+                showingOptions = false
+                if (state.isSharing) viewModel.shareWith(null) else pickingRoom = true
+            },
+            onCentre = {
+                showingOptions = false
+                markerLayer.frameAll(state.markers, force = true)
+            },
+            onDropPin = {
+                showingOptions = false
+                markerLayer.centre()?.let { droppingAt = it }
+            },
+            onOfflineAreas = {
+                showingOptions = false
+                onOpenOfflineAreas()
+            },
+        )
+    }
 
     if (pickingRoom) {
         ShareRoomDialog(
@@ -377,7 +350,7 @@ private fun DropPinDialog(onDismiss: () -> Unit, onDrop: (String) -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PinSheet(pin: MapPin, canRemove: Boolean, onRemove: () -> Unit, onDismiss: () -> Unit) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(onDismissRequest = onDismiss, shape = SheetShape) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -426,6 +399,74 @@ private fun MapNotice(text: String) {
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(FirepitSpacing.m),
         )
+    }
+}
+
+/**
+ * Everything the map can do, in one place.
+ *
+ * Three floating buttons stacked down the corner covered the ground they were
+ * meant to help read; the map is the screen, and the controls are not.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MapOptionsSheet(
+    state: MapUiState,
+    onDismiss: () -> Unit,
+    onShare: () -> Unit,
+    onCentre: () -> Unit,
+    onDropPin: () -> Unit,
+    onOfflineAreas: () -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        shape = SheetShape,
+        // Left unconsumed so the column below can clear the gesture bar itself.
+        // Taking the default put the last action inside it, where a tap opened
+        // Recents instead.
+        contentWindowInsets = { WindowInsets(0) },
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .navigationBarsPadding()
+                .padding(horizontal = FirepitSpacing.screenMargin)
+                // Clears the gesture bar: the sheet is anchored to the bottom
+                // of the screen, so this is what lifts the last action out of
+                // it. A tap there opened Recents instead.
+                .padding(bottom = FirepitSpacing.minTouchTarget),
+            verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
+        ) {
+            SheetAction(
+                icon = FirepitIcons.Locate,
+                label = if (state.isSharing) "Stop sharing" else "Share my location",
+                onClick = onShare,
+            )
+            SheetAction(FirepitIcons.Map, "Centre on everyone", onCentre)
+            SheetAction(FirepitIcons.Pin, "Drop a pin here", onDropPin)
+            SheetAction(FirepitIcons.Download, "Offline areas", onOfflineAreas)
+        }
+    }
+}
+
+@Composable
+private fun SheetAction(@DrawableRes icon: Int, label: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(FirepitSpacing.chipCorner))
+            .clickable(onClick = onClick)
+            .padding(vertical = FirepitSpacing.s, horizontal = FirepitSpacing.s),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
+    ) {
+        Icon(
+            painter = painterResource(icon),
+            contentDescription = null,
+            tint = FirepitTheme.colors.textSecondary,
+        )
+        Text(label, style = MaterialTheme.typography.bodyLarge)
     }
 }
 
