@@ -126,4 +126,74 @@ class ReceiptRulesTest {
         assertTrue(ReceiptRules.batch(PendingReceipts()).isEmpty)
         assertFalse(ReceiptRules.received(PendingReceipts(), 1).isEmpty)
     }
+
+    // --- who gets a receipt at all -----------------------------------------
+
+    private val room = 0x0BADF00D
+    private val peer = -1181562854
+    private val slot = 3
+
+    @Test
+    fun `a firepit room gets a sealed receipt`() {
+        assertEquals(
+            ReceiptCarriage.SealedRoom(room, slot),
+            ReceiptRules.carriageFor(slot, roomId = room, peer = null, hasPeerKey = false),
+        )
+    }
+
+    @Test
+    fun `a direct message gets one encrypted to that node`() {
+        assertEquals(
+            ReceiptCarriage.ToOneNode(peer),
+            ReceiptRules.carriageFor(0, roomId = null, peer = peer, hasPeerKey = true),
+        )
+    }
+
+    /**
+     * The rule this exists for: a standard Meshtastic channel gets no receipt.
+     * No other client could read one, and putting it on the air would announce
+     * which nodes are running Firepit and what they have opened.
+     */
+    @Test
+    fun `a standard meshtastic channel gets nothing`() {
+        assertEquals(
+            ReceiptCarriage.None,
+            ReceiptRules.carriageFor(slot, roomId = null, peer = null, hasPeerKey = false),
+        )
+        assertFalse(ReceiptRules.tracks(roomId = null, peer = null))
+    }
+
+    @Test
+    fun `a direct message without the peer's key is not sent in the open`() {
+        assertEquals(
+            ReceiptCarriage.None,
+            ReceiptRules.carriageFor(0, roomId = null, peer = peer, hasPeerKey = false),
+        )
+    }
+
+    @Test
+    fun `nothing is collected for a conversation that could never send one`() {
+        assertTrue(ReceiptRules.tracks(roomId = room, peer = null))
+        assertTrue(ReceiptRules.tracks(roomId = null, peer = peer))
+        assertFalse(ReceiptRules.tracks(roomId = null, peer = null))
+    }
+
+    /** Every combination either encrypts or sends nothing. There is no open path. */
+    @Test
+    fun `no combination puts a receipt on the air unencrypted`() {
+        listOf(null, room).forEach { roomId ->
+            listOf(null, peer).forEach { peerNum ->
+                listOf(false, true).forEach { hasKey ->
+                    val carriage = ReceiptRules.carriageFor(slot, roomId, peerNum, hasKey)
+                    val label = "$roomId/$peerNum/$hasKey -> $carriage"
+
+                    when (carriage) {
+                        is ReceiptCarriage.SealedRoom -> assertTrue(label, roomId != null)
+                        is ReceiptCarriage.ToOneNode -> assertTrue(label, peerNum != null && hasKey)
+                        ReceiptCarriage.None -> Unit
+                    }
+                }
+            }
+        }
+    }
 }

@@ -12,6 +12,7 @@ import com.getfirepit.core.model.Receipt
 import com.getfirepit.core.protocol.MeshPacketBuilder
 import com.getfirepit.core.protocol.OutboundPacer
 import com.getfirepit.core.protocol.PendingReceipts
+import com.getfirepit.core.protocol.ReceiptCarriage
 import com.getfirepit.core.protocol.ReceiptRules
 import com.getfirepit.core.transport.RadioLink
 import com.getfirepit.protocol.meshchat.MeshChatControl
@@ -60,6 +61,20 @@ class ReceiptRepository @Inject constructor(
     /** A channel, or the one person a direct message came from. */
     private data class Conversation(val channel: Int, val peer: Int?)
 
+    /**
+     * Whether this conversation has receipts at all.
+     *
+     * The Firepit room id is what decides it: a standard Meshtastic channel
+     * carries none. [ReceiptRules.tracks] holds the rule; this only supplies
+     * what the radio and key store know.
+     */
+    private fun tracked(conversation: Conversation): Boolean =
+        ReceiptRules.tracks(firepitRoomFor(conversation.channel), conversation.peer)
+
+    /** The room a channel carries, only when we hold the key that seals it. */
+    private fun firepitRoomFor(channel: Int): Int? =
+        mesh.roomIdForChannel(channel)?.takeIf { roomKeys.keyFor(it) != null }
+
     /** Who has this message, and when they got it. */
     fun observe(messageId: Int): Flow<List<Receipt>> = receiptDao.observe(messageId)
 
@@ -72,6 +87,7 @@ class ReceiptRepository @Inject constructor(
     /** A message arrived. */
     suspend fun received(channel: Int, messageId: Int, peer: Int? = null) {
         val key = Conversation(channel, peer)
+        if (!tracked(key)) return
         mutex.withLock {
             if (messageId in reported.getOrPut(key) { mutableSetOf() }) return@withLock
             pending[key] = ReceiptRules.received(pending[key] ?: PendingReceipts(), messageId)
@@ -93,6 +109,7 @@ class ReceiptRepository @Inject constructor(
     suspend fun read(channel: Int, messageIds: Set<Int>, peer: Int? = null) {
         if (messageIds.isEmpty()) return
         val key = Conversation(channel, peer)
+        if (!tracked(key)) return
         mutex.withLock {
             val fresh = messageIds - reported.getOrPut(key) { mutableSetOf() }
             if (fresh.isEmpty()) return@withLock
@@ -170,7 +187,8 @@ class ReceiptRepository @Inject constructor(
      */
     private suspend fun send(conversation: Conversation, batch: PendingReceipts): Boolean {
         val myNodeNum = mesh.myNodeNum.value ?: return false
-        val roomId = mesh.roomIdForChannel(conversation.channel)
+        val roomId = firepitRoomFor(conversation.channel)
+        val publicKey = conversation.peer?.let(::publicKeyOf)
         val receipt = ReceiptProto(
             room_id = roomId ?: 0,
             delivered = batch.delivered.toList(),
@@ -178,12 +196,19 @@ class ReceiptRepository @Inject constructor(
         )
         val control = MeshChatControl(receipt = receipt)
 
-        val packet = when {
-            roomId != null -> {
-                val payload = seal(roomId, myNodeNum, control) ?: return false
+        val carriage = ReceiptRules.carriageFor(
+            channel = conversation.channel,
+            roomId = roomId,
+            peer = conversation.peer,
+            hasPeerKey = publicKey != null,
+        )
+
+        val packet = when (carriage) {
+            is ReceiptCarriage.SealedRoom -> {
+                val payload = seal(carriage.roomId, myNodeNum, control) ?: return false
                 MeshPacketBuilder.meshPacket(
                     to = BROADCAST_NODE_NUM,
-                    channel = conversation.channel,
+                    channel = carriage.channel,
                     portNum = PortNum.PRIVATE_APP,
                     payload = payload,
                     // Nobody is waiting on a receipt about a receipt.
@@ -191,20 +216,17 @@ class ReceiptRepository @Inject constructor(
                 )
             }
 
-            conversation.peer != null -> {
-                val publicKey = publicKeyOf(conversation.peer) ?: return false
-                MeshPacketBuilder.meshPacket(
-                    to = conversation.peer,
-                    channel = conversation.channel,
-                    portNum = PortNum.PRIVATE_APP,
-                    payload = control.encode().let(ByteString::of),
-                    pkiEncrypted = true,
-                    publicKey = publicKey,
-                    priority = MeshPacket.Priority.BACKGROUND,
-                )
-            }
+            is ReceiptCarriage.ToOneNode -> MeshPacketBuilder.meshPacket(
+                to = carriage.nodeNum,
+                channel = conversation.channel,
+                portNum = PortNum.PRIVATE_APP,
+                payload = control.encode().let(ByteString::of),
+                pkiEncrypted = true,
+                publicKey = requireNotNull(publicKey),
+                priority = MeshPacket.Priority.BACKGROUND,
+            )
 
-            else -> {
+            ReceiptCarriage.None -> {
                 Log.i(TAG, "no private way to send a receipt on channel ${conversation.channel}")
                 return false
             }
@@ -221,16 +243,24 @@ class ReceiptRepository @Inject constructor(
         ?.takeIf { it.size > 0 }
 
     /**
-     * Under the room's own key where there is one, otherwise under a key
-     * derived from the channel PSK every member already holds. The second is
-     * weaker — the radio knows that PSK — but it is what makes receipts work
-     * before room keys are distributed, and it still keeps relays out.
+     * Under the room's own key, which the radio never holds.
+     *
+     * Null when there is no such key, which means the channel is an ordinary
+     * Meshtastic one. Receipts are a Firepit concept: on a shared channel they
+     * would be unreadable noise to every other client, and would announce to
+     * everyone in earshot what this phone has been reading.
      */
     private fun seal(roomId: Int, myNodeNum: Int, control: MeshChatControl): ByteString? {
-        val key = roomKeys.keyFor(roomId) ?: mesh.channelKeyFor(roomId) ?: return null
+        val key = roomKeys.keyFor(roomId) ?: return null
         val sealed = SealedText.seal(key, control.encode(), SealedText.contextOf(roomId, myNodeNum))
         return MeshChatControl(
-            sealed_message = SealedMessage(room_id = roomId, ciphertext = sealed.toByteString()),
+            sealed_message = SealedMessage(
+                room_id = roomId,
+                ciphertext = sealed.toByteString(),
+                // Without this the receiver reaches for generation 1 and every
+                // receipt goes unreadable the moment a room rotates its key.
+                generation = roomKeys.generationOf(roomId),
+            ),
         ).encode().let(ByteString::of)
     }
 

@@ -30,7 +30,6 @@ object RoomCrypto {
     const val DEFAULT_LOOKBACK_WINDOWS = 15
 
     private const val INVITE_CONTEXT = "meshchat-invite-v1"
-    private const val CHANNEL_CONTEXT = "meshchat-channel-v1"
     private const val HMAC = "HmacSHA256"
 
     private val random = SecureRandom()
@@ -57,18 +56,6 @@ object RoomCrypto {
     fun inviteKey(roomPsk: ByteArray, roomId: Int, generation: Int): ByteArray {
         require(roomPsk.size == PSK_SIZE) { "room PSK must be $PSK_SIZE bytes, was ${roomPsk.size}" }
         return hmac(roomPsk, INVITE_CONTEXT.toByteArray() + roomId.toBytes() + generation.toBytes())
-    }
-
-    /**
-     * A sealing key every member can derive from the room's own PSK.
-     *
-     * Weaker than a key the radio never sees, and meant to be replaced by one:
-     * it hides metadata from relays and non-members, which is what it is for,
-     * but not from anyone holding the radio.
-     */
-    fun channelKey(roomPsk: ByteArray, roomId: Int, generation: Int): ByteArray {
-        require(roomPsk.size == PSK_SIZE) { "room PSK must be $PSK_SIZE bytes, was ${roomPsk.size}" }
-        return hmac(roomPsk, CHANNEL_CONTEXT.toByteArray() + roomId.toBytes() + generation.toBytes())
     }
 
     /** Which rotation window a moment falls in. */

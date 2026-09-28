@@ -20,12 +20,15 @@ import com.getfirepit.core.model.RoomChannel
 import com.getfirepit.core.model.RoomKind
 import com.getfirepit.core.protocol.ChannelKey
 import com.getfirepit.core.protocol.ChannelLoad
+import com.getfirepit.core.protocol.ChannelSlotManager
 import com.getfirepit.core.crypto.SealedText
 import com.getfirepit.protocol.meshchat.MeshChatControl
 import com.getfirepit.protocol.meshchat.RoomText
 import com.getfirepit.protocol.meshchat.SealedMessage
+import com.getfirepit.core.protocol.Carriage
 import com.getfirepit.core.protocol.MeshConstants
 import com.getfirepit.core.protocol.MeshPacketBuilder
+import com.getfirepit.core.protocol.MessagePrivacy
 import com.getfirepit.core.protocol.MessageStatusRules
 import com.getfirepit.core.protocol.OutboundPacer
 import com.getfirepit.core.protocol.PositionPrecision
@@ -68,6 +71,36 @@ import org.meshtastic.proto.Routing
 import org.meshtastic.proto.Telemetry
 import org.meshtastic.proto.ToRadio
 import org.meshtastic.proto.User
+
+/** Why a message was not put on the air, in terms the composer can show. */
+sealed class SendError(message: String) : Exception(message) {
+    data object NotConnected : SendError("Connect your node first")
+
+    /**
+     * The firmware cannot encrypt to a node whose public key it has never seen,
+     * and sending anyway would mean falling back to the channel key — which on
+     * the primary is a key every Meshtastic radio holds.
+     */
+    data object NoPeerKey : SendError(
+        "No secure channel to this person yet. Wait for their node to introduce " +
+            "itself, or say hello in a room you share.",
+    )
+
+    /** Nothing to seal with, so there is no private way to say it. */
+    data object NotARoom : SendError(
+        "This channel isn't a conversation. Create a room, or add a Meshtastic " +
+            "channel to talk to people outside Firepit.",
+    )
+
+    /** A channel with no key at all; Firepit has no reason to put words in the clear. */
+    data object NotEncrypted : SendError(
+        "This channel has no encryption at all, so anything sent on it is readable " +
+            "by every radio in range.",
+    )
+
+    data class TooLong(val bytes: Int, val limit: Int) :
+        SendError("Message is $bytes bytes, over the $limit-byte limit")
+}
 
 /**
  * Single source of truth for chat and node state.
@@ -257,8 +290,13 @@ class MeshRepository @Inject constructor(
     /**
      * Sends text to a room, or to one person when [to] names them.
      *
-     * A direct message still rides a channel: the index chooses the key the
-     * firmware encrypts it with, so it must be a channel both ends share.
+     * There is no unencrypted path out of here. A room's words are sealed under
+     * a key the radio never holds; one person's words are encrypted to that
+     * person's node key by the firmware. When neither is possible the message
+     * is refused rather than quietly downgraded to the channel key — on the
+     * primary that key is one every Meshtastic radio has, and a direct message
+     * sent that way is readable by the whole mesh. That is precisely what
+     * Meshtastic's own pre-2.5 direct messages did, and why they changed it.
      */
     suspend fun sendText(
         channel: Int,
@@ -266,20 +304,38 @@ class MeshRepository @Inject constructor(
         replyId: Int? = null,
         to: Int = BROADCAST_NODE_NUM,
     ) {
-        val myNodeNum = _myNodeNum.value ?: error("Not connected to a radio")
-
-        // A room with a key of its own keeps its words off the radio entirely.
-        val roomId = roomIdForChannel(channel)
-        val roomKey = roomId?.takeIf { to == BROADCAST_NODE_NUM }?.let { roomKeys.keyFor(it) }
-        val limit = if (roomKey == null) MeshConstants.MAX_TEXT_BYTES else SealedText.MAX_TEXT_BYTES
+        val myNodeNum = _myNodeNum.value ?: throw SendError.NotConnected
         val payload = text.encodeUtf8()
-        require(payload.size <= limit) {
-            "Message is ${payload.size} bytes, over the $limit-byte limit"
+
+        // A Firepit room only where we actually hold its key. Without one the
+        // slot is an ordinary Meshtastic channel, and pretending otherwise
+        // would seal words that the people on it cannot open.
+        val roomId = roomIdForChannel(channel)
+        val roomKey = roomId?.let { roomKeys.keyFor(it) }
+        val peerKey = to.takeIf { it != BROADCAST_NODE_NUM }?.let { publicKeyOf(it) }
+
+        val carriage = MessagePrivacy.carriageFor(
+            to = to,
+            channel = channel,
+            isRoomSlot = isRoomSlot(channel),
+            sealingRoomId = roomId.takeIf { roomKey != null },
+            hasPeerKey = peerKey != null,
+            channelKey = channelKeyOf(channel),
+        )
+        val limit = MessagePrivacy.textBudgetFor(carriage)
+        if (carriage !is Carriage.Refused && payload.size > limit) {
+            throw SendError.TooLong(payload.size, limit)
         }
 
-        val packet = if (roomKey == null) {
-            MeshPacketBuilder.meshPacket(
-                to = to,
+        val packet = when (carriage) {
+            is Carriage.Refused -> throw when (carriage.reason) {
+                Carriage.Reason.NO_PEER_KEY -> SendError.NoPeerKey
+                Carriage.Reason.NOT_A_ROOM -> SendError.NotARoom
+                Carriage.Reason.NOT_ENCRYPTED -> SendError.NotEncrypted
+            }
+
+            is Carriage.ToOneNode -> MeshPacketBuilder.meshPacket(
+                to = carriage.nodeNum,
                 channel = channel,
                 portNum = PortNum.TEXT_MESSAGE_APP,
                 payload = payload,
@@ -288,27 +344,43 @@ class MeshRepository @Inject constructor(
                 // there would be no "heard by the mesh" signal at all.
                 wantAck = true,
                 replyId = replyId,
+                pkiEncrypted = true,
+                publicKey = requireNotNull(peerKey),
             )
-        } else {
-            val sealed = SealedText.seal(
-                roomKey,
-                MeshChatControl(room_text = RoomText(text = text, reply_id = replyId ?: 0)).encode(),
-                SealedText.contextOf(roomId, myNodeNum),
-            )
-            MeshPacketBuilder.meshPacket(
+
+            // Plain text on a plain channel, because a stock Meshtastic client
+            // cannot open our envelope and this conversation exists to reach one.
+            is Carriage.OpenChannel -> MeshPacketBuilder.meshPacket(
                 to = to,
-                channel = channel,
-                portNum = PortNum.PRIVATE_APP,
-                payload = MeshChatControl(
-                    sealed_message = SealedMessage(
-                        room_id = roomId,
-                        ciphertext = sealed.toByteString(),
-                        generation = roomKeys.generationOf(roomId),
-                    ),
-                ).encode().let(ByteString::of),
+                channel = carriage.channel,
+                portNum = PortNum.TEXT_MESSAGE_APP,
+                payload = payload,
                 hopLimit = hopLimit,
                 wantAck = true,
+                replyId = replyId,
             )
+
+            is Carriage.SealedRoom -> {
+                val sealed = SealedText.seal(
+                    requireNotNull(roomKey),
+                    MeshChatControl(room_text = RoomText(text = text, reply_id = replyId ?: 0)).encode(),
+                    SealedText.contextOf(carriage.roomId, myNodeNum),
+                )
+                MeshPacketBuilder.meshPacket(
+                    to = to,
+                    channel = carriage.channel,
+                    portNum = PortNum.PRIVATE_APP,
+                    payload = MeshChatControl(
+                        sealed_message = SealedMessage(
+                            room_id = carriage.roomId,
+                            ciphertext = sealed.toByteString(),
+                            generation = roomKeys.generationOf(carriage.roomId),
+                        ),
+                    ).encode().let(ByteString::of),
+                    hopLimit = hopLimit,
+                    wantAck = true,
+                )
+            }
         }
 
         messageDao.save(
@@ -454,6 +526,14 @@ class MeshRepository @Inject constructor(
     }
 
     private suspend fun saveIncomingText(packet: MeshPacket, data: Data) {
+        // Firepit never converses on the primary, so anything broadcast there is
+        // either another app's traffic or public mesh chatter. Storing it would
+        // fill the database with a conversation nobody can reply to. A direct
+        // message is different: PKI puts a channel hash of 0 on the wire, and it
+        // is kept against the person rather than the slot.
+        if (packet.channel == ChannelSlotManager.PRIMARY_SLOT && packet.to != _myNodeNum.value) {
+            return
+        }
         saveText(
             packet,
             sanitizeMeshText(data.payload.utf8()),

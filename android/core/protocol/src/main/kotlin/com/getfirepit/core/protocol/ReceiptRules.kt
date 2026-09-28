@@ -15,12 +15,49 @@ data class PendingReceipts(
 }
 
 /**
+ * How a receipt may travel, or why it may not.
+ *
+ * A receipt says what this phone has been reading. On a shared Meshtastic
+ * channel there is nobody who could read one — no other client understands the
+ * format — and putting it on the air anyway would announce which nodes run
+ * Firepit and what they have opened. So it is sealed under a room key, or
+ * encrypted to one node, or not sent.
+ */
+sealed interface ReceiptCarriage {
+    /** Sealed under the room's own key, on the room's channel. */
+    data class SealedRoom(val roomId: Int, val channel: Int) : ReceiptCarriage
+
+    /** Encrypted by the firmware to the one person the message came from. */
+    data class ToOneNode(val nodeNum: Int) : ReceiptCarriage
+
+    /** No private way to say it, so nothing is sent and nothing is tracked. */
+    data object None : ReceiptCarriage
+}
+
+/**
  * When a receipt goes out and which ones fit.
  *
  * Receipts are held back rather than sent per message: one packet carries many,
  * and a member who replies carries theirs along for nothing.
  */
 object ReceiptRules {
+
+    /**
+     * How a receipt for this conversation would travel.
+     *
+     * [roomId] is the Firepit room the channel carries **and** whose key we
+     * hold — null for a standard Meshtastic channel, which gets no receipts at
+     * all. [peer] is set when the message was a direct one.
+     */
+    fun carriageFor(channel: Int, roomId: Int?, peer: Int?, hasPeerKey: Boolean): ReceiptCarriage =
+        when {
+            roomId != null -> ReceiptCarriage.SealedRoom(roomId, channel)
+            peer != null && hasPeerKey -> ReceiptCarriage.ToOneNode(peer)
+            else -> ReceiptCarriage.None
+        }
+
+    /** True when this conversation is worth collecting receipts for at all. */
+    fun tracks(roomId: Int?, peer: Int?): Boolean = roomId != null || peer != null
 
     /**
      * Ids per packet.

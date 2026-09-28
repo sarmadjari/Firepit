@@ -70,6 +70,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -432,7 +433,9 @@ private fun ChannelList(
 
             val visible = channels
                 .filter { it.role != ChannelRole.DISABLED }
-                .filter { filter != ChannelFilter.ROOMS || it.isRoom }
+                // The primary sets the radio's frequency and carries NodeInfo.
+                // Firepit never converses there, so it is not listed as a chat.
+                .filter { it.isRoom }
             val showRooms = filter != ChannelFilter.DIRECT
             val showDirect = filter != ChannelFilter.ROOMS
 
@@ -1132,6 +1135,31 @@ private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
             ReplyBanner(state = state, parent = parent, onCancel = viewModel::cancelReply)
         }
 
+        // Kept out of the field's own supportingText slot: that slot is part of
+        // the field, so the send button aligned to the bottom of the hint and
+        // shifted down whenever one appeared.
+        val hint: Pair<String, Color>? = when {
+            !state.hasPrivateTarget ->
+                "Firepit won't send here. Open a room, or a conversation with one person." to
+                    FirepitTheme.colors.warn
+
+            state.remainingBytes <= 0 ->
+                "Full — ${state.textBudget} bytes is the radio's limit" to FirepitTheme.colors.danger
+
+            // Said on every message, not once on joining: this is the
+            // difference between a room and a Meshtastic channel.
+            state.isOpenConversation -> state.kind?.summary.orEmpty() to FirepitTheme.colors.warn
+
+            state.losesSignature ->
+                "Over ${MeshConstants.SIGNED_BROADCAST_TEXT_BUDGET} bytes: sent unsigned" to
+                    FirepitTheme.colors.warn
+
+            state.draftBytes >= 150 ->
+                "${state.remainingBytes} bytes left" to FirepitTheme.colors.textSecondary
+
+            else -> null
+        }
+
         // Refused until the field is actually touched. When the detail pane
         // appears the focus system gives focus to the first thing that will
         // take it, and a composer that accepts opens the keyboard over the
@@ -1143,7 +1171,9 @@ private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(FirepitSpacing.s),
+                .padding(horizontal = FirepitSpacing.s, vertical = FirepitSpacing.s),
+            // Both are single-height until the field wraps, and the field grows
+            // upward from the baseline, so the two stay on one line.
             verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
         ) {
@@ -1165,25 +1195,6 @@ private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
                         }
                     },
                 placeholder = { Text("Message") },
-                supportingText = {
-                    // Only appears near a limit, so the composer stays quiet.
-                    when {
-                        state.remainingBytes <= 0 -> Text(
-                            text = "Full — 200 bytes is the radio's limit",
-                            color = FirepitTheme.colors.danger,
-                        )
-
-                        state.losesSignature -> Text(
-                            text = "Over ${MeshConstants.SIGNED_BROADCAST_TEXT_BUDGET} bytes: sent unsigned",
-                            color = FirepitTheme.colors.warn,
-                        )
-
-                        state.draftBytes >= 150 -> Text(
-                            text = "${state.remainingBytes} bytes left",
-                            color = FirepitTheme.colors.textSecondary,
-                        )
-                    }
-                },
                 maxLines = 4,
                 shape = RoundedCornerShape(24.dp),
                 colors = OutlinedTextFieldDefaults.colors(
@@ -1213,6 +1224,21 @@ private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
                     modifier = Modifier.size(20.dp),
                 )
             }
+        }
+
+        // Only appears near a limit, so the composer stays quiet. Indented to
+        // the field's text rather than its border.
+        hint?.let { (text, colour) ->
+            Text(
+                text = text,
+                color = colour,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(
+                    start = FirepitSpacing.s + FirepitSpacing.l,
+                    end = FirepitSpacing.s + FirepitSpacing.minTouchTarget,
+                    bottom = FirepitSpacing.s,
+                ),
+            )
         }
     }
 }

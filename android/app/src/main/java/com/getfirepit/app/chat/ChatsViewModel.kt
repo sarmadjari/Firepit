@@ -5,9 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.getfirepit.core.data.ChatPresence
 import com.getfirepit.core.data.MeshRepository
-import com.getfirepit.core.crypto.SealedText
 import com.getfirepit.core.data.ReceiptRepository
-import com.getfirepit.core.data.RoomKeyStore
 import com.getfirepit.core.model.Receipt
 import com.getfirepit.core.database.ChannelStateDao
 import com.getfirepit.core.database.markRead
@@ -20,6 +18,7 @@ import com.getfirepit.core.protocol.Person
 import com.getfirepit.core.model.RoomChannel
 import com.getfirepit.core.model.RoomKind
 import com.getfirepit.core.protocol.MeshConstants
+import com.getfirepit.core.protocol.MessagePrivacy
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -60,21 +59,45 @@ data class ChatsUiState(
     val directPeer: Int? = null,
     /** Newest message per person, for the Direct list. */
     val directLatest: List<ChatMessage> = emptyList(),
-    /** True when the open room seals its words, which costs part of the packet. */
-    val sealed: Boolean = false,
 ) {
     val selectedChannel: RoomChannel? get() = channels.firstOrNull { it.index == selected }
 
     /** What kind of conversation is open, or null for a direct one. */
     val kind: RoomKind? get() = selectedChannel?.takeIf { it.isRoom }?.kind
-    val draftBytes: Int get() = draft.toByteArray(Charsets.UTF_8).size
-    val textBudget: Int get() = if (sealed) SealedText.MAX_TEXT_BYTES else MeshConstants.MAX_TEXT_BYTES
-    val remainingBytes: Int get() = textBudget - draftBytes
-    val canSend: Boolean get() = connected && draft.isNotBlank() && remainingBytes >= 0
 
-    /** True when this message is long enough that the radio will send it unsigned. */
+    /**
+     * True when the open room seals its own words, which costs part of the
+     * packet. An interoperable channel does not, because a stock Meshtastic
+     * client could not open the envelope.
+     */
+    val sealed: Boolean get() = kind == RoomKind.FIREPIT
+
+    /** A room Firepit will send on, or one person. Anything else has no way to carry words. */
+    val hasPrivateTarget: Boolean
+        get() = directPeer != null || (kind != null && kind != RoomKind.UNENCRYPTED)
+
+    /** True when the open conversation is readable by people outside Firepit. */
+    val isOpenConversation: Boolean get() = kind?.isInteroperable == true
+
+    val draftBytes: Int get() = draft.toByteArray(Charsets.UTF_8).size
+    val textBudget: Int
+        get() = if (sealed) {
+            MeshConstants.MAX_TEXT_BYTES - MessagePrivacy.SEALED_OVERHEAD
+        } else {
+            MeshConstants.MAX_TEXT_BYTES
+        }
+    val remainingBytes: Int get() = textBudget - draftBytes
+    val canSend: Boolean
+        get() = connected && hasPrivateTarget && draft.isNotBlank() && remainingBytes >= 0
+
+    /**
+     * True when this message is long enough that the radio will send it
+     * unsigned. Only ever asked of an unsealed broadcast; a direct message is
+     * authenticated by the key it was encrypted to, whatever its length.
+     */
     val losesSignature: Boolean
-        get() = !sealed && signingAvailable && draftBytes > MeshConstants.SIGNED_BROADCAST_TEXT_BUDGET
+        get() = directPeer == null && !sealed && signingAvailable &&
+            draftBytes > MeshConstants.SIGNED_BROADCAST_TEXT_BUDGET
 
     /** Looks up what a message was replying to, if it is still in this channel. */
     fun repliedTo(message: ChatMessage): ChatMessage? =
@@ -99,7 +122,6 @@ class ChatsViewModel @Inject constructor(
     private val presence: ChatPresence,
     private val people: PersonStore,
     private val receipts: ReceiptRepository,
-    private val roomKeys: RoomKeyStore,
 ) : ViewModel() {
 
     private val selected = MutableStateFlow<Int?>(null)
@@ -184,9 +206,6 @@ class ChatsViewModel @Inject constructor(
             channelLoad = self.read.channelLoad,
             directPeer = self.read.directPeer,
             directLatest = self.read.directLatest,
-            sealed = channels.firstOrNull { it.index == selected }
-                ?.id
-                ?.let { roomKeys.keyFor(it) != null } == true,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatsUiState())
 
@@ -306,8 +325,9 @@ class ChatsViewModel @Inject constructor(
 
     fun updateDraft(text: String) {
         // Hard stop rather than a warning: the radio would reject the send, and
-        // truncating at a byte index would split Arabic or emoji.
-        draft.value = MeshConstants.truncateToBytes(text)
+        // truncating at a byte index would split Arabic or emoji. A room's
+        // budget is smaller than the radio's, because sealing costs bytes.
+        draft.value = MeshConstants.truncateToBytes(text, uiState.value.textBudget)
         error.value = null
     }
 

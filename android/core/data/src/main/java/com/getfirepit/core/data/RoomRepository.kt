@@ -647,7 +647,6 @@ class RoomRepository @Inject constructor(
         // The generation it was sealed under, not the one we have moved on to:
         // history stays readable across a rotation.
         val key = roomKeys.keyFor(sealed.room_id, sealed.generation.takeIf { it > 0 } ?: RoomKeyStore.FIRST)
-            ?: mesh.channelKeyFor(sealed.room_id)
             ?: return
         val context = SealedText.contextOf(sealed.room_id, packet.from)
         val plain = SealedText.open(key, sealed.ciphertext.toByteArray(), context) ?: run {

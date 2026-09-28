@@ -1,6 +1,7 @@
 package com.getfirepit.core.crypto
 
 import com.getfirepit.core.protocol.MeshConstants
+import com.getfirepit.core.protocol.MessagePrivacy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
@@ -11,6 +12,22 @@ class SealedTextTest {
     private val key = RoomCipher.generateKey()
     private val other = RoomCipher.generateKey()
     private val context = SealedText.contextOf(roomId = 7, senderNodeNum = 42)
+
+    /**
+     * `:core:protocol` cannot see this module — the dependency runs the other
+     * way — so it mirrors the figure and this is where the two are held
+     * together. If they drift, the composer's byte count lies.
+     */
+    @Test
+    fun `the budget the sender plans with matches what sealing actually costs`() {
+        assertEquals(SealedText.OVERHEAD, MessagePrivacy.SEALED_OVERHEAD)
+
+        val plaintext = ByteArray(SealedText.MAX_TEXT_BYTES)
+        assertEquals(
+            MeshConstants.MAX_TEXT_BYTES,
+            SealedText.seal(key, plaintext, context).size,
+        )
+    }
 
     @Test
     fun `a member reads the message back`() {

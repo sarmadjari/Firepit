@@ -66,27 +66,6 @@ class RoomCryptoTest {
     }
 
     @Test
-    fun `every member derives the same channel key, and a different one per room`() {
-        val psk = ByteArray(RoomCrypto.PSK_SIZE) { it.toByte() }
-        assertArrayEquals(
-            RoomCrypto.channelKey(psk, roomId = 42, generation = 1),
-            RoomCrypto.channelKey(psk, roomId = 42, generation = 1),
-        )
-        assertFalse(
-            RoomCrypto.channelKey(psk, roomId = 42, generation = 1)
-                .contentEquals(RoomCrypto.channelKey(psk, roomId = 43, generation = 1)),
-        )
-    }
-
-    @Test
-    fun `a channel key is not the invite key for the same room`() {
-        val psk = ByteArray(RoomCrypto.PSK_SIZE) { it.toByte() }
-        assertFalse(
-            RoomCrypto.channelKey(psk, 42, 1).contentEquals(RoomCrypto.inviteKey(psk, 42, 1)),
-        )
-    }
-
-    @Test
     fun `the token changes every window`() {
         val key = RoomCrypto.inviteKey(RoomCrypto.generatePsk(), 42, 1)
 
