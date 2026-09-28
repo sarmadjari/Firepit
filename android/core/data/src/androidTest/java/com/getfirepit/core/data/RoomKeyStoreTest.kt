@@ -95,9 +95,39 @@ class RoomKeyStoreTest {
     fun aStoredKeyStillOpensWhatItSealed() {
         val key = store.generate(room)
         val context = SealedText.contextOf(room, senderNodeNum = 7)
-        val sealed = SealedText.seal(key, "meet at the north gate", context)
+        val sealed = SealedText.seal(key, "meet at the north gate".encodeToByteArray(), context)
 
-        assertEquals("meet at the north gate", SealedText.open(store.keyFor(room)!!, sealed, context))
+        assertEquals(
+            "meet at the north gate",
+            SealedText.open(store.keyFor(room)!!, sealed, context)?.decodeToString(),
+        )
+    }
+
+    /**
+     * Keys are cached so the Keystore is not asked once per message, but each
+     * caller must get its own array: leaving a room wipes the cached copy, and
+     * a send part-way through sealing must not have its key blanked.
+     */
+    @Test
+    fun eachReadGetsItsOwnCopy() {
+        val key = store.generate(room)
+        val first = store.keyFor(room)!!
+
+        first.fill(0)
+
+        assertArrayEquals(key, store.keyFor(room))
+    }
+
+    @Test
+    fun leavingWipesTheCachedCopyTooAndNotTheCallersHand() {
+        val key = store.generate(room)
+
+        store.forget(room)
+
+        // The caller's own array is untouched; the store simply has nothing left.
+        assertEquals(RoomCipher.KEY_SIZE, key.size)
+        assertFalse("the key was zeroed in the caller's hand", key.all { it == 0.toByte() })
+        assertNull(store.keyFor(room))
     }
 
     private fun ByteArray.toBase64() =

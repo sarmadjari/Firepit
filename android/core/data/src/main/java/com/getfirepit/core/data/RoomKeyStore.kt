@@ -1,19 +1,12 @@
 package com.getfirepit.core.data
 
 import android.content.Context
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.util.Log
 import androidx.core.content.edit
 import com.getfirepit.core.crypto.RoomCipher
 import dagger.hilt.android.qualifiers.ApplicationContext
-import java.security.GeneralSecurityException
-import java.security.KeyStore
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-import javax.crypto.spec.GCMParameterSpec
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -32,6 +25,13 @@ class RoomKeyStore @Inject constructor(
     private val preferences =
         context.getSharedPreferences("firepit_room_keys", Context.MODE_PRIVATE)
 
+    /**
+     * Unwrapped keys, so the Keystore is asked once per room rather than once
+     * per message. A busy room decrypts on every arrival, and the platform asks
+     * that its Keystore not be used on hot paths or the main thread.
+     */
+    private val unwrapped = ConcurrentHashMap<String, ByteArray>()
+
     /** The key a room is sealing with now, or null when it is not sealed. */
     fun keyFor(roomId: Int): ByteArray? = keyFor(roomId, generationOf(roomId))
 
@@ -43,8 +43,12 @@ class RoomKeyStore @Inject constructor(
      * would delete the conversation rather than protect it.
      */
     fun keyFor(roomId: Int, generation: Int): ByteArray? {
-        val stored = preferences.getString(slot(roomId, generation), null) ?: return null
-        return unwrap(Base64.decode(stored, Base64.NO_WRAP))
+        val slot = slot(roomId, generation)
+        // A copy every time: the cached array is wiped when the room is left,
+        // and a caller part-way through sealing must not have its key blanked.
+        unwrapped[slot]?.let { return it.copyOf() }
+        val stored = preferences.getString(slot, null) ?: return null
+        return unwrap(Base64.decode(stored, Base64.NO_WRAP))?.also { unwrapped[slot] = it.copyOf() }
     }
 
     /** Which generation this room is sealing with. */
@@ -58,76 +62,41 @@ class RoomKeyStore @Inject constructor(
             // newer one that has already been applied.
             if (generation >= generationOf(roomId)) putInt(current(roomId), generation)
         }
+        unwrapped[slot(roomId, generation)] = key.copyOf()
     }
 
     fun generate(roomId: Int, generation: Int = FIRST): ByteArray =
         RoomCipher.generateKey().also { remember(roomId, it, generation) }
 
     /** Leaving a room takes every key it ever had, or leaving would not mean much. */
-    fun forget(roomId: Int) = preferences.edit {
-        preferences.all.keys
-            .filter { it == current(roomId) || it.startsWith("$roomId/") }
-            .forEach { remove(it) }
+    fun forget(roomId: Int) {
+        preferences.edit {
+            preferences.all.keys
+                .filter { it == current(roomId) || it.startsWith("$roomId/") }
+                .forEach { remove(it) }
+        }
+        // Leaving has to take the copies in memory too, or the room stays
+        // readable for the life of the process.
+        unwrapped.keys.filter { it.startsWith("$roomId/") }.forEach { slot ->
+            unwrapped.remove(slot)?.fill(0)
+        }
     }
 
     private fun slot(roomId: Int, generation: Int) = "$roomId/$generation"
 
     private fun current(roomId: Int) = "$roomId.generation"
 
-    private fun wrap(key: ByteArray): ByteArray {
-        val cipher = Cipher.getInstance(TRANSFORMATION).apply { init(Cipher.ENCRYPT_MODE, master()) }
-        return cipher.iv + cipher.doFinal(key)
-    }
+    private fun wrap(key: ByteArray): ByteArray = KeystoreWrapping.wrap(ALIAS, key)
 
-    /**
-     * Null rather than throwing when the wrapping cannot be undone.
-     *
-     * The master key is gone if the screen lock was removed or the app's data
-     * restored elsewhere. That makes the room unreadable, which is the correct
-     * outcome, but it is not a reason to take the app down.
-     */
-    private fun unwrap(stored: ByteArray): ByteArray? = try {
-        Cipher.getInstance(TRANSFORMATION).run {
-            init(
-                Cipher.DECRYPT_MODE,
-                master(),
-                GCMParameterSpec(RoomCipher.TAG_SIZE * 8, stored, 0, NONCE_SIZE),
-            )
-            doFinal(stored, NONCE_SIZE, stored.size - NONCE_SIZE)
-        }
-    } catch (cause: GeneralSecurityException) {
-        Log.w(TAG, "a room key could not be unwrapped", cause)
-        null
-    }
-
-    private fun master(): SecretKey {
-        val keystore = KeyStore.getInstance(PROVIDER).apply { load(null) }
-        (keystore.getEntry(ALIAS, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
-
-        return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, PROVIDER).apply {
-            init(
-                KeyGenParameterSpec.Builder(
-                    ALIAS,
-                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
-                )
-                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                    .setKeySize(256)
-                    .build(),
-            )
-        }.generateKey()
-    }
+    private fun unwrap(stored: ByteArray): ByteArray? = KeystoreWrapping.unwrap(ALIAS, stored)
 
     companion object {
         /** Rooms start here; a rotation is always one more. */
         const val FIRST = 1
 
         const val TAG = "FirepitRoomKeys"
-        const val PROVIDER = "AndroidKeyStore"
-        const val ALIAS = "firepit_room_key_wrapping"
-        const val TRANSFORMATION = "AES/GCM/NoPadding"
 
-        /** What the Keystore's GCM implementation generates. */
-        const val NONCE_SIZE = 12
+        /** Unchanged since the first release: renaming it would orphan every stored key. */
+        const val ALIAS = "firepit_room_key_wrapping"
     }
 }
