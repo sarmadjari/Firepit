@@ -157,6 +157,27 @@ class ChannelSlotManagerTest {
         assertNull(ChannelSlotManager.slotOf(channels, 99))
     }
 
+    /**
+     * A write names the slot a room is moving *to*, so its key has to be read
+     * from the slot it is leaving. Reading the destination instead gave every
+     * room above the one left the key of the room below it.
+     */
+    @Test
+    fun `every room that moves can be traced back to the slot it holds now`() {
+        val channels = listOf(room(1, 11), room(2, 22), room(3, 33), room(4, 44))
+        val from = ChannelSlotManager.slotMovesForLeaving(channels, 22).associate { (from, to) -> to to from }
+
+        val moving = ChannelSlotManager.writesForLeaving(channels, 22).mapNotNull { write ->
+            write.channel?.let { write.index to it }
+        }
+
+        assertEquals(2, moving.size)
+        moving.forEach { (target, room) ->
+            val source = from.getValue(target)
+            assertEquals("slot $source holds a different room", room.id, channels.single { it.index == source }.id)
+        }
+    }
+
     private companion object {
         const val PRIMARY_ID = 0x4D455348
 

@@ -1,10 +1,14 @@
 package com.getfirepit.core.data
 
 import android.util.Log
+import com.getfirepit.core.crypto.KeyEnvelope
 import com.getfirepit.core.crypto.RoomCipher
 import com.getfirepit.core.crypto.SealedText
 import com.getfirepit.core.crypto.InviteCodec
 import com.getfirepit.core.crypto.RoomCrypto
+import com.getfirepit.core.database.MapPinDao
+import com.getfirepit.core.database.PeerKeyDao
+import com.getfirepit.core.database.PeerKeyEntity
 import com.getfirepit.core.database.RoomMemberDao
 import com.getfirepit.core.database.PersonCardDao
 import com.getfirepit.core.database.PersonCardEntity
@@ -25,12 +29,14 @@ import com.getfirepit.core.model.ChatMessage
 import com.getfirepit.core.model.MessageStatus
 import com.getfirepit.core.protocol.ChannelSlotManager
 import com.getfirepit.core.protocol.ChannelUrl
+import com.getfirepit.core.protocol.KeyFingerprint
 import com.getfirepit.core.protocol.MeshConstants
 import com.getfirepit.core.protocol.MeshPacketBuilder
 import com.getfirepit.core.protocol.MeshtasticChannel
 import com.getfirepit.core.protocol.PacketOrigin
 import com.getfirepit.core.protocol.PositionPrecision
 import com.getfirepit.core.protocol.RangeMode
+import com.getfirepit.core.protocol.TrustRules
 import com.getfirepit.protocol.meshchat.Invite
 import com.getfirepit.protocol.meshchat.Inviter
 import com.getfirepit.protocol.meshchat.JoinHello
@@ -62,6 +68,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import okio.ByteString
+import okio.ByteString.Companion.decodeBase64
 import okio.ByteString.Companion.toByteString
 import org.meshtastic.proto.Channel
 import org.meshtastic.proto.ChannelSettings
@@ -69,7 +76,6 @@ import org.meshtastic.proto.MeshPacket
 import org.meshtastic.proto.ModuleSettings
 import org.meshtastic.proto.PortNum
 import org.meshtastic.proto.ToRadio
-import org.meshtastic.proto.User
 
 /** Why a room operation could not be carried out, in terms the UI can show. */
 sealed class RoomError(message: String) : Exception(message) {
@@ -85,6 +91,19 @@ sealed class RoomError(message: String) : Exception(message) {
     data object NotAFirepitRoom : RoomError(
         "This is a standard Meshtastic channel, so it only does what Meshtastic does. " +
             "Create a private room for Firepit's own features.",
+    )
+
+    /** The code claims a radio this one already knows, under a key that is not that radio's. */
+    data object KeyMismatch : RoomError(
+        "This code names a radio yours already knows, but with a different key. Ask them to " +
+            "show a fresh code, and check the key their screen shows.",
+    )
+
+    data object AlreadyInRoom : RoomError("You're already in this room")
+
+    /** A channel read timed out; writing on regardless would rewrite a room with no key. */
+    data object RadioUnreadable : RoomError(
+        "Couldn't read the radio's channels, so nothing was changed. Try again.",
     )
 }
 
@@ -105,6 +124,9 @@ class RoomRepository @Inject constructor(
     private val roomKeys: RoomKeyStore,
     private val range: RangeRepository,
     private val personCardDao: PersonCardDao,
+    private val phoneKeys: PhoneKeyStore,
+    private val peerKeyDao: PeerKeyDao,
+    private val pinDao: MapPinDao,
     @param:ApplicationScope private val scope: CoroutineScope,
 ) {
 
@@ -187,14 +209,13 @@ class RoomRepository @Inject constructor(
 
     /** Re-sends whatever was last set, for when a new room appears. */
     private suspend fun sharePersonCard() {
-        latestCard?.let { shareCard(it, ChannelSlotManager.rooms(mesh.channels.value)) }
+        shareCard(latestCard ?: NO_NAME, ChannelSlotManager.rooms(mesh.channels.value))
     }
 
     /** Introduces us to one room, for when somebody new turns up in it. */
     private suspend fun shareCardWith(roomId: Int) {
-        val card = latestCard ?: return
         val room = ChannelSlotManager.findByRoomId(mesh.channels.value, roomId) ?: return
-        shareCard(card, listOf(room))
+        shareCard(latestCard ?: NO_NAME, listOf(room))
     }
 
     /**
@@ -211,6 +232,13 @@ class RoomRepository @Inject constructor(
 
     private data class Card(val name: String, val tag: String, val colourSlot: Int?)
 
+    /**
+     * Sent when nobody has chosen a name, so the card carries only the phone
+     * key. Without it, somebody who never opened the settings — typically the
+     * room's founder — could never be handed a new room key.
+     */
+    private val NO_NAME = Card(name = "", tag = "", colourSlot = null)
+
     private suspend fun shareCard(card: Card, rooms: List<RoomChannel>) {
         val control = MeshChatControl(
             version = InviteCodec.VERSION,
@@ -219,6 +247,8 @@ class RoomRepository @Inject constructor(
                 tag = OwnerName.shortName(card.tag),
                 // Plus one, because proto3 cannot tell an unset 0 from slot 0.
                 colour_slot_plus_one = card.colourSlot?.plus(1) ?: 0,
+                // Where members seal the next room key, should the room move on.
+                phone_key = phoneKeys.publicKey(),
             ),
         )
         val myNodeNum = mesh.myNodeNum.value ?: return
@@ -226,12 +256,7 @@ class RoomRepository @Inject constructor(
         rooms.forEach { room ->
             // Firepit rooms only: on an interoperable channel this would be
             // unreadable noise to every other client on it.
-            val key = roomKeys.keyFor(room.id) ?: return@forEach
-            val sealed = SealedText.seal(
-                key,
-                control.encode(),
-                SealedText.contextOf(room.id, myNodeNum),
-            )
+            val sealed = sealFor(room.id, myNodeNum, control) ?: return@forEach
             runCatching {
                 link.send(
                     ToRadio(
@@ -239,13 +264,7 @@ class RoomRepository @Inject constructor(
                             to = MeshConstants.BROADCAST_NODENUM,
                             channel = room.index,
                             portNum = PortNum.PRIVATE_APP,
-                            payload = MeshChatControl(
-                                sealed_message = SealedMessage(
-                                    room_id = room.id,
-                                    ciphertext = sealed.toByteString(),
-                                    generation = roomKeys.generationOf(room.id),
-                                ),
-                            ).encode().let(ByteString::of),
+                            payload = MeshChatControl(sealed_message = sealed).encode().let(ByteString::of),
                             // Nobody is waiting on it, and it must never delay words.
                             priority = MeshPacket.Priority.BACKGROUND,
                         ),
@@ -254,6 +273,38 @@ class RoomRepository @Inject constructor(
             }.onFailure { cause -> Log.w(TAG, "could not share card to room ${room.id}", cause) }
         }
         Log.i(TAG, "shared person card with ${rooms.size} rooms")
+    }
+
+    /**
+     * [control] sealed under one generation of [roomId]'s own key, ready to
+     * travel. Null when this phone holds no such key, which means the slot is
+     * not a Firepit room.
+     */
+    private fun sealFor(
+        roomId: Int,
+        myNodeNum: Int,
+        control: MeshChatControl,
+        generation: Int = roomKeys.generationOf(roomId),
+    ): SealedMessage? {
+        val key = roomKeys.keyFor(roomId, generation) ?: return null
+        val sealed = SealedText.seal(key, control.encode(), SealedText.contextOf(roomId, myNodeNum))
+        return SealedMessage(room_id = roomId, ciphertext = sealed.toByteString(), generation = generation)
+    }
+
+    /**
+     * Keeps a phone key per [TrustRules.shouldStorePhoneKey]: learned on first
+     * sight, replaced only by a join a person approved.
+     */
+    private suspend fun learnPhoneKey(nodeNum: Int, key: ByteString, vouched: Boolean) {
+        if (!KeyEnvelope.isValidPublicKey(key.toByteArray())) return
+        val known = peerKeyDao.find(nodeNum)?.phoneKey?.decodeBase64()
+        if (!TrustRules.shouldStorePhoneKey(known, key, vouched)) {
+            if (known != null && known != key) {
+                Log.w(TAG, "a different phone key was offered for $nodeNum; kept the one first seen")
+            }
+            return
+        }
+        peerKeyDao.upsert(PeerKeyEntity(nodeNum, key.base64(), System.currentTimeMillis()))
     }
 
     /** Starts listening for join and roster traffic. Safe to call once per process. */
@@ -343,7 +394,11 @@ class RoomRepository @Inject constructor(
         val nameBytes = trimmed.toByteArray().size
         if (nameBytes > InviteCodec.MAX_ROOM_NAME_BYTES) throw RoomError.NameTooLong(nameBytes)
 
-        val existing = ChannelSlotManager.rooms(mesh.channels.value).firstOrNull { it.name == trimmed }
+        // Only an ordinary channel of the same name is updated in place. A
+        // Firepit room is never taken over this way: a link naming one would
+        // otherwise replace a sealed room with a plain one under a stranger's key.
+        val existing = ChannelSlotManager.rooms(mesh.channels.value)
+            .firstOrNull { it.name == trimmed && it.kind != RoomKind.FIREPIT }
         val slot = existing?.index
             ?: ChannelSlotManager.nextFreeSlot(mesh.channels.value)
             ?: throw RoomError.NoFreeSlot
@@ -418,9 +473,10 @@ class RoomRepository @Inject constructor(
 
         // Stable for as long as this room keeps being offered, so a hello that
         // arrives several rotations later still points at the right room. The
-        // rotating token, not this id, is what limits a stolen code.
+        // rotating token, not this id, is what limits a stolen code. A spent id
+        // is never reissued: that is what makes one code let one person in.
         val inviteId = issuedInvites.entries
-            .firstOrNull { it.value.roomId == roomId }
+            .firstOrNull { it.value.roomId == roomId && it.value.usedBy == null }
             ?.key
             ?: RoomCrypto.generateRoomId()
         issuedInvites[inviteId] = IssuedInvite(roomId, inviteKey, nowMillis)
@@ -454,9 +510,14 @@ class RoomRepository @Inject constructor(
     suspend fun joinRoom(invite: Invite, nowMillis: Long = System.currentTimeMillis()) {
         mesh.myNodeNum.value ?: throw RoomError.NotConnected
         verify(invite, nowMillis)
-        if (ChannelSlotManager.findByRoomId(mesh.channels.value, invite.room_id) == null &&
-            ChannelSlotManager.nextFreeSlot(mesh.channels.value) == null
-        ) {
+        val inviter = invite.inviter?.node_num ?: throw RoomError.InviteInvalid
+
+        // A code naming a room we already hold is only worth answering from a
+        // member of it, bringing us up to date after a missed key change. From
+        // anyone else it is an attempt to replace that room with theirs.
+        if (ChannelSlotManager.findByRoomId(mesh.channels.value, invite.room_id) != null) {
+            if (memberDao.findEntity(invite.room_id, inviter) == null) throw RoomError.AlreadyInRoom
+        } else if (ChannelSlotManager.nextFreeSlot(mesh.channels.value) == null) {
             throw RoomError.NoFreeSlot
         }
 
@@ -468,17 +529,22 @@ class RoomRepository @Inject constructor(
             roomId = invite.room_id,
             roomName = invite.room_name,
             inviteId = invite.invite_id,
-            inviter = invite.inviter?.node_num ?: throw RoomError.InviteInvalid,
+            inviter = inviter,
+            ownFingerprint = ownFingerprint(),
         )
         askToJoin(invite)
     }
+
+    /** This radio's key, short enough to read aloud to the person being asked. */
+    fun ownFingerprint(): String? =
+        mesh.myUser?.public_key?.takeIf { it.size == PUBLIC_KEY_SIZE }?.let { KeyFingerprint.of(it.base64()) }
 
     /**
      * Sends the hello, encrypted to the key in the invite.
      *
      * Straight to PKI with no NodeInfo broadcast first: the inviter's public
      * key came with the code, so nothing has to propagate before we can speak
-     * privately. Our own key rides inside, where only they can read it.
+     * privately. Our own keys ride inside, where only they can read them.
      */
     private suspend fun askToJoin(invite: Invite) {
         val inviter = invite.inviter ?: throw RoomError.InviteInvalid
@@ -489,7 +555,19 @@ class RoomRepository @Inject constructor(
 
         // The radio encrypts from its own NodeDB, which is bounded and may never
         // have heard of this inviter. The code carried their key, so hand it
-        // over rather than broadcasting and hoping they answer in time.
+        // over rather than broadcasting and hoping they answer in time. Judged
+        // against what the radio itself reported, not the phone's own history
+        // of nodes, which outlives evictions and other radios: the only thing
+        // refused is a code that would overwrite a key the radio really holds,
+        // which would redirect everything we send that node to whoever printed
+        // the code. Re-adding the same key is harmless, and repairs an eviction.
+        val radioKnows = mesh.snapshot.value?.nodes?.get(inviter.node_num)?.user?.public_key
+            ?.takeIf { it.size == PUBLIC_KEY_SIZE }
+        if (TrustRules.contactFor(radioKnows, publicKey) == TrustRules.Contact.MISMATCH) {
+            _awaiting.value = null
+            Log.w(TAG, "code for ${inviter.node_num} carries a key that is not the one the radio holds")
+            throw RoomError.KeyMismatch
+        }
         inviter.user?.let { user ->
             runCatching { admin.addContact(inviter.node_num, user) }
                 .onFailure { cause -> Log.w(TAG, "could not add ${inviter.node_num} as a contact", cause) }
@@ -503,6 +581,7 @@ class RoomRepository @Inject constructor(
                 generation = invite.generation,
                 app_version = InviteCodec.VERSION,
                 joiner_key = mine,
+                phone_key = phoneKeys.publicKey(),
             ),
         )
         link.send(
@@ -542,7 +621,8 @@ class RoomRepository @Inject constructor(
         // channel has no such key and no way to receive one.
         if (roomKeys.keyFor(roomId) == null) throw RoomError.NotAFirepitRoom
 
-        val generation = roomKeys.generationOf(roomId) + 1
+        val previous = roomKeys.generationOf(roomId)
+        val generation = previous + 1
         val psk = RoomCrypto.generatePsk()
         val firepitKey = RoomCipher.generateKey()
 
@@ -552,17 +632,17 @@ class RoomRepository @Inject constructor(
 
         remove.forEach { memberDao.remove(roomId, it) }
 
-        val rotation = KeyRotation(
-            room_id = roomId,
+        val handover = Handover(
+            roomId = roomId,
+            roomName = room.name,
+            previous = previous,
             generation = generation,
-            room_psk = psk.toByteString(),
-            firepit_key = firepitKey.toByteString(),
-            room_name = room.name,
+            psk = psk,
+            firepitKey = firepitKey,
             removed = remove.toList(),
         )
-
         val keeping = memberDao.nodeNumsIn(roomId).filter { it != myNodeNum }
-        val reached = keeping.filter { sendRotation(it, rotation) }
+        val reached = keeping.filter { sendRotation(it, myNodeNum, handover) }
 
         // On the old key, so the people who did not get the new one hear why
         // the room went quiet instead of being left to guess.
@@ -573,12 +653,61 @@ class RoomRepository @Inject constructor(
         return RotationResult(generation, reached.toSet(), (keeping - reached.toSet()).toSet())
     }
 
-    private suspend fun sendRotation(member: Int, rotation: KeyRotation): Boolean {
-        val publicKey = mesh.snapshot.value?.nodes?.get(member)?.user?.public_key
-        if (publicKey == null || publicKey.size != 32) {
-            Log.w(TAG, "no public key for $member; cannot hand over the new room key")
+    /** Everything a rotation hands each remaining member, before it is sealed to them. */
+    private class Handover(
+        val roomId: Int,
+        val roomName: String,
+        val previous: Int,
+        val generation: Int,
+        val psk: ByteArray,
+        val firepitKey: ByteArray,
+        val removed: List<Int>,
+    )
+
+    /**
+     * Hands one member the new keys.
+     *
+     * The new room key is sealed to their phone, so the radio in between cannot
+     * read it, and the whole rotation is sealed under the key it replaces, so
+     * only somebody who holds the room can move it on. Members whose phone key
+     * we never learned cannot be handed one, and count as missed.
+     */
+    private suspend fun sendRotation(member: Int, myNodeNum: Int, handover: Handover): Boolean {
+        val radioKey = mesh.publicKeyOf(member) ?: run {
+            Log.w(TAG, "no radio key for $member; cannot hand over the new room key")
             return false
         }
+        val phoneKey = peerKeyDao.find(member)?.phoneKey?.decodeBase64()?.toByteArray()
+            ?.takeIf(KeyEnvelope::isValidPublicKey)
+            ?: run {
+                Log.w(TAG, "no phone key for $member; cannot hand over the new room key")
+                return false
+            }
+
+        val rotation = KeyRotation(
+            room_id = handover.roomId,
+            generation = handover.generation,
+            room_psk = handover.psk.toByteString(),
+            room_name = handover.roomName,
+            removed = handover.removed,
+            sealed_key = KeyEnvelope.seal(
+                phoneKey,
+                handover.firepitKey,
+                KeyEnvelope.contextOf(handover.roomId, handover.generation, member),
+            ).toByteString(),
+        )
+        val sealed = sealFor(
+            handover.roomId,
+            myNodeNum,
+            MeshChatControl(version = InviteCodec.VERSION, key_rotation = rotation),
+            generation = handover.previous,
+        ) ?: return false
+        val payload = MeshChatControl(sealed_message = sealed).encode()
+        if (payload.size > PKI_PAYLOAD_BUDGET) {
+            Log.w(TAG, "rotation for $member is ${payload.size} bytes, too big to send privately")
+            return false
+        }
+
         return runCatching {
             link.send(
                 ToRadio(
@@ -586,9 +715,9 @@ class RoomRepository @Inject constructor(
                         to = member,
                         channel = 0,
                         portNum = PortNum.PRIVATE_APP,
-                        payload = MeshChatControl(key_rotation = rotation).encode().let(ByteString::of),
+                        payload = payload.toByteString(),
                         pkiEncrypted = true,
-                        publicKey = publicKey,
+                        publicKey = radioKey,
                         wantAck = true,
                     ),
                 ),
@@ -618,32 +747,46 @@ class RoomRepository @Inject constructor(
         }.onFailure { Log.w(TAG, "could not announce the rotation", it) }
     }
 
-    /** Applies a rotation somebody else performed. */
-    private suspend fun handleKeyRotation(packet: MeshPacket, rotation: KeyRotation, authenticated: Boolean) {
-        if (!authenticated) {
-            Log.w(TAG, "unauthenticated key rotation from ${packet.from}; ignored")
-            return
-        }
-        // Only somebody already in the room may change its locks.
-        if (memberDao.findEntity(rotation.room_id, packet.from) == null) {
-            Log.w(TAG, "key rotation for ${rotation.room_id} from a non-member ${packet.from}; ignored")
-            return
-        }
-        if (rotation.generation <= roomKeys.generationOf(rotation.room_id)) {
-            Log.i(TAG, "key rotation for ${rotation.room_id} is not newer than ours; ignored")
+    /** Applies a rotation somebody else performed. See [TrustRules.rotationAcceptable]. */
+    private suspend fun handleKeyRotation(
+        packet: MeshPacket,
+        rotation: KeyRotation,
+        sealedRoomId: Int?,
+        sealedGeneration: Int?,
+        myNodeNum: Int,
+    ) {
+        val roomId = rotation.room_id
+        val acceptable = TrustRules.rotationAcceptable(
+            sealedUnderRoom = sealedRoomId,
+            sealedUnderGeneration = sealedGeneration,
+            rotationRoom = roomId,
+            rotationGeneration = rotation.generation,
+            currentGeneration = roomKeys.generationOf(roomId),
+            privatelyToUs = packet.pki_encrypted && packet.to == myNodeNum,
+            // Only somebody already in the room may change its locks.
+            senderIsMember = memberDao.findEntity(roomId, packet.from) != null,
+        )
+        if (!acceptable) {
+            Log.w(TAG, "key rotation for $roomId from ${packet.from} does not prove it holds the room; ignored")
             return
         }
         val psk = rotation.room_psk.toByteArray()
-        val firepitKey = rotation.firepit_key.toByteArray()
-        if (psk.size != RoomCrypto.PSK_SIZE || firepitKey.size != RoomCipher.KEY_SIZE) return
+        val firepitKey = phoneKeys.open(
+            rotation.sealed_key.toByteArray(),
+            KeyEnvelope.contextOf(roomId, rotation.generation, myNodeNum),
+        )?.takeIf { it.size == RoomCipher.KEY_SIZE }
+        if (psk.size != RoomCrypto.PSK_SIZE || firepitKey == null) {
+            Log.w(TAG, "key rotation for $roomId from ${packet.from} would not open; ignored")
+            return
+        }
 
-        val slot = ChannelSlotManager.slotOf(mesh.channels.value, rotation.room_id) ?: return
-        admin.setChannel(channelFor(slot, rotation.room_name, psk, rotation.room_id))
-        roomKeys.remember(rotation.room_id, firepitKey, rotation.generation)
-        rotation.removed.forEach { memberDao.remove(rotation.room_id, it) }
+        val slot = ChannelSlotManager.slotOf(mesh.channels.value, roomId) ?: return
+        admin.setChannel(channelFor(slot, rotation.room_name, psk, roomId))
+        roomKeys.remember(roomId, firepitKey, rotation.generation)
+        rotation.removed.forEach { memberDao.remove(roomId, it) }
 
         noticeInRoom(slot, rotationNotice(rotation.removed.toSet()))
-        Log.i(TAG, "took the new key for room ${rotation.room_id}, generation ${rotation.generation}")
+        Log.i(TAG, "took the new key for room $roomId, generation ${rotation.generation}")
     }
 
     private fun rotationNotice(removed: Set<Int>): String = when {
@@ -682,25 +825,41 @@ class RoomRepository @Inject constructor(
         val channels = mesh.channels.value
         val leavingSlot = ChannelSlotManager.slotOf(channels, roomId)
         val moves = ChannelSlotManager.slotMovesForLeaving(channels, roomId)
+        // A write names where a room is going; its key has to be read from
+        // where it is now, or every room above the one left would take on the
+        // key of the room below it.
+        val movingFrom = moves.associate { (from, to) -> to to from }
 
-        ChannelSlotManager.writesForLeaving(channels, roomId).forEach { write ->
+        // Every slot that moves is read before any is written. A read that
+        // timed out used to write the room back with an empty key, which the
+        // firmware takes as "use the primary's" — a published key — while the
+        // app went on calling it a sealed room.
+        val planned = ChannelSlotManager.writesForLeaving(channels, roomId).map { write ->
             val channel = write.channel
-            admin.setChannel(
-                if (channel == null) {
-                    Channel(index = write.index, role = Channel.Role.DISABLED, settings = ChannelSettings())
-                } else {
-                    // Carry the key across with the room; a slot move must not
-                    // change what the room is.
-                    val settings = admin.getChannel(channel.index)?.settings
-                    channelFor(write.index, channel.name, settings?.psk?.toByteArray() ?: ByteArray(0), channel.id)
-                },
-            )
+            if (channel == null) {
+                Channel(index = write.index, role = Channel.Role.DISABLED, settings = ChannelSettings())
+            } else {
+                // Carry the key across with the room; a slot move must not
+                // change what the room is.
+                val source = movingFrom[write.index] ?: throw RoomError.RadioUnreadable
+                val psk = admin.getChannel(source)?.settings?.psk ?: throw RoomError.RadioUnreadable
+                if (channel.kind == RoomKind.FIREPIT && psk.size != RoomCrypto.PSK_SIZE) {
+                    throw RoomError.RadioUnreadable
+                }
+                channelFor(write.index, channel.name, psk.toByteArray(), channel.id)
+            }
         }
-        // History is stored per slot, and the firmware makes the remaining
-        // rooms shuffle down, so it has to be moved with them.
-        leavingSlot?.let { messageDao.deleteChannel(it, BROADCAST_NODE_NUM) }
+        planned.forEach { admin.setChannel(it) }
+        // History and pins are stored per slot, and the firmware makes the
+        // remaining rooms shuffle down, so they have to move with them. A pin
+        // left on its old slot would refuse every later edit from its owner.
+        leavingSlot?.let { slot ->
+            messageDao.deleteChannel(slot, BROADCAST_NODE_NUM)
+            pinDao.deleteChannel(slot)
+        }
         moves.forEach { (from, to) ->
             messageDao.moveChannel(from, to, BROADCAST_NODE_NUM)
+            pinDao.moveChannel(from, to)
         }
 
         Log.i(TAG, "left room $roomId")
@@ -750,29 +909,25 @@ class RoomRepository @Inject constructor(
         val myNodeNum = mesh.myNodeNum.value ?: return
         if (packet.from == myNodeNum) return
 
-        when (data.portnum) {
-            // Anyone talking in a room is evidently in it, whatever we were told.
-            PortNum.TEXT_MESSAGE_APP, PortNum.TEXT_MESSAGE_COMPRESSED_APP, PortNum.NODEINFO_APP ->
-                firepitRoomFor(packet.channel)?.let { roomId ->
-                    memberDao.record(roomId, packet.from, System.currentTimeMillis())
-                }
-
-            PortNum.PRIVATE_APP -> handleControl(
+        // Membership is not inferred from anything unsealed: on a room's slot
+        // that is somebody holding a member's radio, not a member. Opening a
+        // sealed message under the room's current key is what counts.
+        if (data.portnum == PortNum.PRIVATE_APP) {
+            handleControl(
                 packet,
                 data.payload.toByteArray(),
                 myNodeNum,
                 // Anyone on a shared channel can put bytes on it under any name.
                 authenticated = packet.pki_encrypted,
             )
-            else -> Unit
         }
 
         if (data.portnum == PortNum.TEXT_MESSAGE_APP) {
-            val direct = packet.to == myNodeNum
-            // A receipt is a Firepit message. On a standard channel there is
-            // nobody to read one and no private way to send it.
-            if (direct || firepitRoomFor(packet.channel) != null) {
-                receipts.received(packet.channel, packet.id, peer = packet.from.takeIf { direct })
+            // Unsealed text is only kept as a direct message that came under
+            // PKI; on a room's slot it is dropped. A receipt goes where the
+            // message was kept.
+            if (packet.to == myNodeNum && packet.pki_encrypted) {
+                receipts.received(packet.channel, packet.id, peer = packet.from)
             }
         }
     }
@@ -782,21 +937,32 @@ class RoomRepository @Inject constructor(
         payload: ByteArray,
         myNodeNum: Int,
         authenticated: Boolean,
+        sealedRoomId: Int? = null,
+        sealedGeneration: Int? = null,
     ) {
         val control = runCatching { MeshChatControl.ADAPTER.decode(payload) }.getOrNull() ?: return
+        // Identity and roster news only count under the room's current key: an
+        // older generation's key is exactly what a removed member still holds.
+        val sealedUnderCurrent = sealedRoomId != null && sealedGeneration == roomKeys.generationOf(sealedRoomId)
         control.join_hello?.let { hello -> handleJoinHello(packet, hello, myNodeNum) }
 
         // Answered only over PKI: a grant is the one message that carries a
         // room's keys, and a channel anyone holds is not where it may arrive.
         control.room_grant?.let { grant ->
             if (packet.pki_encrypted) {
-                handleRoomGrant(packet, grant)
+                handleRoomGrant(packet, grant, myNodeNum)
             } else {
                 Log.w(TAG, "unencrypted room grant from ${packet.from}; ignored")
             }
         }
-        control.roster_event?.let { event -> handleRosterEvent(packet, event) }
-        control.roster_sync?.let { sync -> handleRosterSync(packet, sync) }
+        control.roster_event?.let { event ->
+            if (sealedRoomId == null || !sealedUnderCurrent) {
+                Log.w(TAG, "roster event from ${packet.from} not sealed under the room's current key; ignored")
+                return@let
+            }
+            handleRosterEvent(packet, event, sealedRoomId)
+        }
+        control.roster_sync?.let { sync -> handleRosterSync(packet, sync, myNodeNum) }
         control.sealed_message?.let { sealed -> handleSealed(packet, sealed, myNodeNum) }
 
         control.receipt?.let { receipt ->
@@ -807,11 +973,15 @@ class RoomRepository @Inject constructor(
             receipts.handle(packet.from, receipt)
         }
 
-        control.key_rotation?.let { rotation -> handleKeyRotation(packet, rotation, authenticated) }
+        control.key_rotation?.let { rotation ->
+            handleKeyRotation(packet, rotation, sealedRoomId, sealedGeneration, myNodeNum)
+        }
 
         control.room_text?.let { room ->
-            if (!authenticated) {
-                Log.w(TAG, "unsealed room text from ${packet.from}; ignored")
+            // Only as a sealed message on the room's own slot: that is where
+            // room words live, and nowhere else can show them as the room's.
+            if (sealedRoomId == null || firepitRoomFor(packet.channel) != sealedRoomId) {
+                Log.w(TAG, "room text from ${packet.from} outside its room; ignored")
                 return@let
             }
             mesh.saveSealedText(packet, room.text, room.reply_id.takeIf { it != 0 })
@@ -819,16 +989,28 @@ class RoomRepository @Inject constructor(
         }
 
         control.person_card?.let { card ->
-            if (!authenticated) {
-                // Unsealed, this is an open invitation to wear someone else's name.
-                Log.w(TAG, "unsealed person card from ${packet.from}; ignored")
+            if (!sealedUnderCurrent) {
+                // Unsealed, this is an open invitation to wear someone else's
+                // name. PKI alone is not enough either: anyone can encrypt to
+                // us, so only somebody holding a room key we share, as it is
+                // now, may say who they are.
+                Log.w(TAG, "person card from ${packet.from} not sealed under a current room key; ignored")
+                return@let
+            }
+            learnPhoneKey(packet.from, card.phone_key, vouched = false)
+            val name = sanitizeMeshText(card.name)
+            val tag = sanitizeMeshText(card.tag)
+            // A card with no name is somebody who never chose one, or who took
+            // theirs back: they are drawn as their radio names itself.
+            if (name.isBlank() && tag.isBlank()) {
+                personCardDao.forget(packet.from)
                 return@let
             }
             personCardDao.upsert(
                 PersonCardEntity(
                     nodeNum = packet.from,
-                    name = sanitizeMeshText(card.name),
-                    tag = sanitizeMeshText(card.tag),
+                    name = name,
+                    tag = tag,
                     colourSlot = card.colour_slot_plus_one.takeIf { it > 0 }?.minus(1),
                     updatedAt = System.currentTimeMillis(),
                 ),
@@ -843,16 +1025,36 @@ class RoomRepository @Inject constructor(
      * opening it is itself proof the sender holds the key.
      */
     private suspend fun handleSealed(packet: MeshPacket, sealed: SealedMessage, myNodeNum: Int) {
+        val privatelyToUs = packet.pki_encrypted && packet.to == myNodeNum
+        if (!TrustRules.sealedPlacementOk(firepitRoomFor(packet.channel), sealed.room_id, privatelyToUs)) {
+            Log.w(TAG, "sealed payload for room ${sealed.room_id} arrived on channel ${packet.channel}; ignored")
+            return
+        }
+
         // The generation it was sealed under, not the one we have moved on to:
         // history stays readable across a rotation.
-        val key = roomKeys.keyFor(sealed.room_id, sealed.generation.takeIf { it > 0 } ?: RoomKeyStore.FIRST)
-            ?: return
+        val generation = sealed.generation.takeIf { it > 0 } ?: RoomKeyStore.FIRST
+        val key = roomKeys.keyFor(sealed.room_id, generation) ?: return
         val context = SealedText.contextOf(sealed.room_id, packet.from)
         val plain = SealedText.open(key, sealed.ciphertext.toByteArray(), context) ?: run {
             Log.w(TAG, "sealed payload for room ${sealed.room_id} would not open")
             return
         }
-        handleControl(packet, plain, myNodeNum, authenticated = true)
+
+        // Holding the current key is what makes somebody a member. An older
+        // generation's key is exactly what a removed member still has, so it
+        // reads history but vouches for nobody.
+        if (generation == roomKeys.generationOf(sealed.room_id)) {
+            memberDao.record(sealed.room_id, packet.from, System.currentTimeMillis())
+        }
+        handleControl(
+            packet,
+            plain,
+            myNodeNum,
+            authenticated = true,
+            sealedRoomId = sealed.room_id,
+            sealedGeneration = generation,
+        )
     }
 
     /**
@@ -868,6 +1070,20 @@ class RoomRepository @Inject constructor(
         Log.i(TAG, "join hello from $from for invite ${hello.invite_id}")
         if (!admitAttempt(from)) {
             Log.w(TAG, "too many join attempts from $from; ignored")
+            return
+        }
+
+        // Only a hello the firmware decrypted with the very key it names. The
+        // grant goes to that key, so a claimed one would let a spoofed hello
+        // point the room's keys at somebody else.
+        val bound = TrustRules.helloIsBound(
+            pkiEncrypted = packet.pki_encrypted,
+            addressedToUs = packet.to == myNodeNum,
+            decryptedWith = packet.public_key,
+            claimed = hello.joiner_key,
+        )
+        if (!bound) {
+            Log.w(TAG, "join hello from $from was not encrypted under the key it names; ignored")
             return
         }
 
@@ -899,8 +1115,14 @@ class RoomRepository @Inject constructor(
             return
         }
 
-        val joinerKey = hello.joiner_key.takeIf { it.size == PUBLIC_KEY_SIZE } ?: run {
-            Log.w(TAG, "join hello from $from carried no usable key to answer with")
+        val phoneKey = hello.phone_key.takeIf { KeyEnvelope.isValidPublicKey(it.toByteArray()) } ?: run {
+            Log.w(TAG, "join hello from $from carried no usable phone key to seal the room key to")
+            return
+        }
+
+        val waiting = _pendingJoins.value.firstOrNull { it.nodeNum == from }
+        if (!TrustRules.mayReplacePending(waiting?.joinerKey, waiting?.phoneKey, hello.joiner_key, phoneKey)) {
+            Log.w(TAG, "a second hello from $from named different keys; kept the first")
             return
         }
 
@@ -911,8 +1133,9 @@ class RoomRepository @Inject constructor(
                     roomId = issued.roomId,
                     inviteId = hello.invite_id,
                     generation = hello.generation,
-                    joinerKey = joinerKey,
-                    askedAt = System.currentTimeMillis(),
+                    joinerKey = hello.joiner_key,
+                    phoneKey = phoneKey,
+                    askedAt = waiting?.askedAt ?: System.currentTimeMillis(),
                 )
         }
         Log.i(TAG, "$from is asking to join room ${issued.roomId}; waiting on an answer")
@@ -921,9 +1144,10 @@ class RoomRepository @Inject constructor(
     /**
      * Lets [nodeNum] in, handing over the room's keys.
      *
-     * Encrypted to the key that came inside their sealed hello rather than one
-     * looked up in the NodeDB, which any radio can write to by claiming a node
-     * number.
+     * The room's own key is sealed to the phone key that came inside their
+     * hello, so the radios between us carry it without being able to read it.
+     * The radio layer goes to the key the firmware decrypted that hello with,
+     * which its own NodeDB therefore already holds: nothing needs adding.
      */
     suspend fun approveJoin(nodeNum: Int) {
         val myNodeNum = mesh.myNodeNum.value ?: throw RoomError.NotConnected
@@ -932,17 +1156,7 @@ class RoomRepository @Inject constructor(
             ?: throw RoomError.InviteInvalid
         val psk = admin.getChannel(room.index)?.settings?.psk ?: throw RoomError.NotConnected
         val firepitKey = roomKeys.keyFor(request.roomId) ?: roomKeys.generate(request.roomId)
-
-        // Same reason as the joiner's side: the key came in their sealed hello,
-        // so the radio need not have heard of them to be answered.
-        if (mesh.publicKeyOf(nodeNum) == null) {
-            runCatching {
-                admin.addContact(
-                    nodeNum,
-                    User(id = MeshConstants.formatNodeId(nodeNum), public_key = request.joinerKey),
-                )
-            }.onFailure { cause -> Log.w(TAG, "could not add $nodeNum as a contact", cause) }
-        }
+        val generation = roomKeys.generationOf(request.roomId)
 
         sendGrant(
             to = nodeNum,
@@ -953,9 +1167,15 @@ class RoomRepository @Inject constructor(
                 room_id = request.roomId,
                 room_name = room.name,
                 room_psk = psk,
-                firepit_key = firepitKey.toByteString(),
-                generation = request.generation,
+                // The generation in use now, not the one the code was drawn
+                // under: it is the key that opens what the room seals next.
+                generation = generation,
                 position_precision = ROOM_POSITION_PRECISION,
+                sealed_key = KeyEnvelope.seal(
+                    request.phoneKey.toByteArray(),
+                    firepitKey,
+                    KeyEnvelope.contextOf(request.roomId, generation, nodeNum),
+                ).toByteString(),
             ),
         )
 
@@ -965,9 +1185,12 @@ class RoomRepository @Inject constructor(
         clearPending(nodeNum)
 
         memberDao.record(request.roomId, nodeNum, System.currentTimeMillis(), invitedBy = myNodeNum)
+        // A person just checked this one in front of them, so it may replace
+        // whatever we held for that node before.
+        learnPhoneKey(nodeNum, request.phoneKey, vouched = true)
         Log.i(TAG, "let $nodeNum into room ${request.roomId}")
 
-        announceJoined(request.roomId, nodeNum, myNodeNum, request.generation)
+        announceJoined(request.roomId, nodeNum, myNodeNum, generation, request.phoneKey)
         sendRosterTo(nodeNum, request.roomId)
         shareCardWith(request.roomId)
     }
@@ -1013,24 +1236,40 @@ class RoomRepository @Inject constructor(
         _pendingJoins.update { pending -> pending.filterNot { it.nodeNum == nodeNum } }
     }
 
-    /** Tells the room who was vouched for, so every roster shows the same chain. */
-    private suspend fun announceJoined(roomId: Int, joiner: Int, myNodeNum: Int, generation: Int) {
+    /**
+     * Tells the room who was vouched for, so every roster shows the same chain,
+     * and where to seal them a future key. Sealed under the room's own key: on
+     * the channel alone, anybody holding a member's radio could vouch too.
+     */
+    private suspend fun announceJoined(
+        roomId: Int,
+        joiner: Int,
+        myNodeNum: Int,
+        generation: Int,
+        phoneKey: ByteString,
+    ) {
         val slot = ChannelSlotManager.findByRoomId(mesh.channels.value, roomId)?.index ?: return
+        val sealed = sealFor(
+            roomId,
+            myNodeNum,
+            MeshChatControl(
+                version = InviteCodec.VERSION,
+                roster_event = RosterEvent(
+                    kind = RosterEvent.Kind.JOINED,
+                    node_num = joiner,
+                    invited_by = myNodeNum,
+                    generation = generation,
+                    phone_key = phoneKey,
+                ),
+            ),
+        ) ?: return
         link.send(
             ToRadio(
                 packet = MeshPacketBuilder.meshPacket(
                     to = MeshConstants.BROADCAST_NODENUM,
                     channel = slot,
                     portNum = PortNum.PRIVATE_APP,
-                    payload = MeshChatControl(
-                        version = InviteCodec.VERSION,
-                        roster_event = RosterEvent(
-                            kind = RosterEvent.Kind.JOINED,
-                            node_num = joiner,
-                            invited_by = myNodeNum,
-                            generation = generation,
-                        ),
-                    ).encode().let(ByteString::of),
+                    payload = MeshChatControl(sealed_message = sealed).encode().let(ByteString::of),
                     priority = MeshPacket.Priority.BACKGROUND,
                 ),
             ),
@@ -1044,7 +1283,7 @@ class RoomRepository @Inject constructor(
      * still waiting: an unsolicited grant is somebody trying to put a room on
      * our radio that we never asked for.
      */
-    private suspend fun handleRoomGrant(packet: MeshPacket, grant: RoomGrant) {
+    private suspend fun handleRoomGrant(packet: MeshPacket, grant: RoomGrant, myNodeNum: Int) {
         val awaited = _awaiting.value ?: run {
             Log.w(TAG, "grant from ${packet.from} for a room we did not ask about; ignored")
             return
@@ -1068,16 +1307,33 @@ class RoomRepository @Inject constructor(
             return
         }
 
+        val generation = grant.generation.takeIf { it > 0 } ?: RoomKeyStore.FIRST
+        val held = ChannelSlotManager.findByRoomId(mesh.channels.value, grant.room_id)
+        val acceptable = TrustRules.mayTakeGrant(
+            alreadyHeld = held != null,
+            senderIsMember = memberDao.findEntity(grant.room_id, packet.from) != null,
+            grantGeneration = generation,
+            currentGeneration = roomKeys.generationOf(grant.room_id),
+        )
+        if (!acceptable) {
+            _awaiting.value = null
+            Log.w(TAG, "grant for room ${grant.room_id}, which we already hold, would not move it forward; ignored")
+            return
+        }
+
         val psk = grant.room_psk.takeIf { it.size == RoomCrypto.PSK_SIZE } ?: run {
             Log.w(TAG, "grant for room ${grant.room_id} carried no usable channel key; ignored")
             return
         }
-        val firepitKey = grant.firepit_key.toByteArray().takeIf { it.size == RoomCipher.KEY_SIZE } ?: run {
-            Log.w(TAG, "grant for room ${grant.room_id} carried no usable sealing key; ignored")
+        val firepitKey = phoneKeys.open(
+            grant.sealed_key.toByteArray(),
+            KeyEnvelope.contextOf(grant.room_id, generation, myNodeNum),
+        )?.takeIf { it.size == RoomCipher.KEY_SIZE } ?: run {
+            Log.w(TAG, "grant for room ${grant.room_id} carried no sealing key we could open; ignored")
             return
         }
 
-        val slot = ChannelSlotManager.findByRoomId(mesh.channels.value, grant.room_id)?.index
+        val slot = held?.index
             ?: ChannelSlotManager.nextFreeSlot(mesh.channels.value)
             ?: run {
                 Log.w(TAG, "no free slot for room ${grant.room_id}")
@@ -1086,7 +1342,7 @@ class RoomRepository @Inject constructor(
 
         // Before the channel write, so the slot is never briefly taken for an
         // ordinary Meshtastic one.
-        roomKeys.remember(grant.room_id, firepitKey)
+        roomKeys.remember(grant.room_id, firepitKey, generation)
         admin.setChannel(
             channelFor(
                 index = slot,
@@ -1171,10 +1427,25 @@ class RoomRepository @Inject constructor(
     /**
      * Somebody's view of the room. Stored without a last-heard time, because we
      * have not heard these members ourselves — only been told about them.
+     *
+     * Only the inviter who let us in may tell us, only privately, and only
+     * while they are still a member. Anyone else naming a room id is somebody
+     * trying to put themselves on the roster, which is the list new keys are
+     * handed to — and an inviter since removed is exactly such a somebody.
      */
-    private suspend fun handleRosterSync(packet: MeshPacket, sync: RosterSync) {
+    private suspend fun handleRosterSync(packet: MeshPacket, sync: RosterSync, myNodeNum: Int) {
         val roomId = sync.room_id.takeIf { it != 0 } ?: return
         if (ChannelSlotManager.findByRoomId(mesh.channels.value, roomId) == null) return
+        val acceptable = TrustRules.rosterSyncAcceptable(
+            privatelyToUs = packet.pki_encrypted && packet.to == myNodeNum,
+            sender = packet.from,
+            ourInviter = memberDao.findEntity(roomId, myNodeNum)?.invitedBy,
+            senderIsMember = memberDao.findEntity(roomId, packet.from) != null,
+        )
+        if (!acceptable) {
+            Log.w(TAG, "roster sync for $roomId from ${packet.from}, who did not let us in; ignored")
+            return
+        }
 
         val now = System.currentTimeMillis()
         sync.entries
@@ -1186,12 +1457,13 @@ class RoomRepository @Inject constructor(
     }
 
     /**
-     * The inviter is vouching for somebody. Only believed when it arrives on
-     * the room's own channel and the sender claims themselves as the inviter:
-     * anyone in the room could otherwise fabricate a trust chain.
+     * The inviter is vouching for somebody. Only believed sealed under the
+     * room's own key, on the room's own channel, with the sender claiming
+     * themselves as the inviter: anyone in the room could otherwise fabricate a
+     * trust chain, and anyone holding a member's radio could join the roster.
      */
-    private suspend fun handleRosterEvent(packet: MeshPacket, event: RosterEvent) {
-        val roomId = firepitRoomFor(packet.channel) ?: return
+    private suspend fun handleRosterEvent(packet: MeshPacket, event: RosterEvent, sealedRoomId: Int) {
+        val roomId = firepitRoomFor(packet.channel)?.takeIf { it == sealedRoomId } ?: return
         if (event.kind != RosterEvent.Kind.JOINED) return
         if (event.invited_by != packet.from) {
             Log.w(TAG, "roster event from ${packet.from} claims inviter ${event.invited_by}; ignored")
@@ -1200,6 +1472,12 @@ class RoomRepository @Inject constructor(
         val joiner = event.node_num.takeIf { it != 0 } ?: return
         val isNews = memberDao.findEntity(roomId, joiner) == null
         memberDao.record(roomId, joiner, System.currentTimeMillis(), invitedBy = event.invited_by)
+        // Vouched: whoever sent this compared fingerprints with the newcomer in
+        // person. It may replace a key we held, which is how somebody who comes
+        // back with a new phone stays reachable by the next rotation. Anyone
+        // abusing it gains nothing to read — a rotation still travels PKI to
+        // the member's own radio — and can only make one member miss a key.
+        learnPhoneKey(joiner, event.phone_key, vouched = true)
         // Only the inviter has introduced themselves so far. Without this the
         // newcomer sees radio names for everyone else already in the room.
         if (isNews && joiner != mesh.myNodeNum.value) greet(roomId)
@@ -1236,6 +1514,9 @@ class RoomRepository @Inject constructor(
 
         /** Curve25519 public key length; anything else cannot encrypt to a node. */
         const val PUBLIC_KEY_SIZE = 32
+
+        /** What a PKI direct message leaves for the payload once the firmware adds its tag and nonce. */
+        const val PKI_PAYLOAD_BUDGET = MeshConstants.DATA_PAYLOAD_LEN - MeshConstants.PKC_OVERHEAD
 
         /** Enough for a fumbled scan, not enough to grind the token check. */
         const val MAX_ATTEMPTS = 5

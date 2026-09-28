@@ -29,9 +29,11 @@ fun RoomJoinPrompts(viewModel: RoomsViewModel = hiltViewModel()) {
             title = { Text("Let them in?") },
             text = {
                 Text(
-                    "${request.nodeId} scanned your code and is asking to join.\n\n" +
-                        "Only say yes if that is the person in front of you. Letting them " +
-                        "in hands over the room's key, and nothing can take it back.",
+                    "${request.nodeId} scanned your code and is asking to join." +
+                        (request.fingerprint?.let { "\n\nTheir key: $it" } ?: "") + "\n\n" +
+                        "Ask them to read the key on their screen, and only say yes if it " +
+                        "matches and they are the person in front of you. Letting them in " +
+                        "hands over the room's key, and nothing can take it back.",
                 )
             },
             confirmButton = {
@@ -57,7 +59,8 @@ fun RoomJoinPrompts(viewModel: RoomsViewModel = hiltViewModel()) {
                         "Whoever showed you the code said no. Nothing was added to your radio."
                     } else {
                         "Waiting for them to let you in. The code carries no key, so the room " +
-                            "only arrives once they say yes."
+                            "only arrives once they say yes." +
+                            (room.ownFingerprint?.let { "\n\nYour key: $it — read it out so they can check it." } ?: "")
                     },
                 )
             },

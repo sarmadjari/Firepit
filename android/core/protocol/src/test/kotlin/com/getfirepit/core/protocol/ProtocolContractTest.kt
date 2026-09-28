@@ -1,10 +1,14 @@
 package com.getfirepit.core.protocol
 
 import com.getfirepit.protocol.meshchat.JoinHello
+import com.getfirepit.protocol.meshchat.KeyRotation
 import com.getfirepit.protocol.meshchat.MeshChatControl
+import com.getfirepit.protocol.meshchat.PersonCard
 import com.getfirepit.protocol.meshchat.Receipt
+import com.getfirepit.protocol.meshchat.RoomGrant
 import com.getfirepit.protocol.meshchat.RosterEntry
 import com.getfirepit.protocol.meshchat.RosterSync
+import com.getfirepit.protocol.meshchat.SealedMessage
 import okio.ByteString.Companion.toByteString
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -153,6 +157,100 @@ class ProtocolContractTest {
         )
     }
 
+    // --- keys sealed to phones travel inside PKI direct messages -------------
+
+    @Test
+    fun `a join hello with both keys fits a direct message`() {
+        val control = MeshChatControl(
+            version = 1,
+            join_hello = JoinHello(
+                invite_id = -1,
+                token = bytes(8),
+                generation = Int.MAX_VALUE,
+                app_version = Int.MAX_VALUE,
+                joiner_key = bytes(32),
+                phone_key = bytes(PHONE_KEY),
+            ),
+        )
+
+        assertFitsDirect(MeshChatControl.ADAPTER.encode(control).size, "join hello")
+    }
+
+    @Test
+    fun `a grant with its sealed key fits a direct message`() {
+        val control = MeshChatControl(
+            version = 1,
+            room_grant = RoomGrant(
+                answer = RoomGrant.Answer.GRANTED,
+                invite_id = -1,
+                room_id = -1,
+                room_name = "a".repeat(MAX_ROOM_NAME_BYTES),
+                room_psk = bytes(32),
+                generation = Int.MAX_VALUE,
+                position_precision = 32,
+                sealed_key = bytes(SEALED_KEY),
+            ),
+        )
+
+        assertFitsDirect(MeshChatControl.ADAPTER.encode(control).size, "room grant")
+    }
+
+    /**
+     * The heaviest thing Firepit sends: a new key sealed to the phone, the
+     * rotation sealed again under the key it replaces, all inside a PKI direct
+     * message. Rotations remove one member at a time.
+     */
+    @Test
+    fun `a rotation sealed under the old key fits a direct message`() {
+        val rotation = MeshChatControl(
+            version = 1,
+            key_rotation = KeyRotation(
+                room_id = -1,
+                generation = Int.MAX_VALUE,
+                room_psk = bytes(32),
+                room_name = "a".repeat(MAX_ROOM_NAME_BYTES),
+                removed = listOf(Int.MIN_VALUE),
+                sealed_key = bytes(SEALED_KEY),
+            ),
+        )
+        val sealedSize = MeshChatControl.ADAPTER.encode(rotation).size + SEALING_OVERHEAD
+        val carried = MeshChatControl(
+            sealed_message = SealedMessage(room_id = -1, generation = Int.MAX_VALUE, ciphertext = bytes(sealedSize)),
+        )
+
+        assertFitsDirect(MeshChatControl.ADAPTER.encode(carried).size, "sealed key rotation")
+    }
+
+    @Test
+    fun `a person card with its phone key fits one sealed packet`() {
+        val card = MeshChatControl(
+            version = 1,
+            person_card = PersonCard(
+                name = "a".repeat(39),
+                tag = "abcd",
+                colour_slot_plus_one = Int.MAX_VALUE,
+                phone_key = bytes(PHONE_KEY),
+            ),
+        )
+        val sealedSize = MeshChatControl.ADAPTER.encode(card).size + SEALING_OVERHEAD
+        val carried = MeshChatControl(
+            sealed_message = SealedMessage(room_id = -1, generation = Int.MAX_VALUE, ciphertext = bytes(sealedSize)),
+        )
+        val size = MeshChatControl.ADAPTER.encode(carried).size
+
+        assertTrue(
+            "A sealed person card is $size bytes, over the ${Constants.DATA_PAYLOAD_LEN.value}-byte payload",
+            size <= Constants.DATA_PAYLOAD_LEN.value,
+        )
+    }
+
+    private fun assertFitsDirect(size: Int, what: String) {
+        val budget = Constants.DATA_PAYLOAD_LEN.value - MeshConstants.PKC_OVERHEAD
+        assertTrue("A $what is $size bytes, over the $budget bytes a PKI direct message leaves", size <= budget)
+    }
+
+    private fun bytes(count: Int) = ByteArray(count) { 0x7F }.toByteString()
+
     private companion object {
         const val MESHCHAT_CONTROL_PORT = 300
         const val BROADCAST_NODENUM = -1 // 0xFFFFFFFF as a signed uint32
@@ -162,5 +260,12 @@ class ProtocolContractTest {
 
         /** SealedText.OVERHEAD, restated so core:protocol need not see core:crypto. */
         const val SEALING_OVERHEAD = 29
+
+        /** KeyEnvelope.PUBLIC_KEY_SIZE and SEALED_SIZE, restated for the same reason. */
+        const val PHONE_KEY = 33
+        const val SEALED_KEY = 93
+
+        /** InviteCodec.MAX_ROOM_NAME_BYTES. */
+        const val MAX_ROOM_NAME_BYTES = 11
     }
 }

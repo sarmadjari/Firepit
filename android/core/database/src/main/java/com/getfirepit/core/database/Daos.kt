@@ -218,6 +218,9 @@ interface MapPinDao {
     @Query("SELECT * FROM map_pins WHERE expire = 0 OR expire > :nowSeconds")
     fun observeLiveEntities(nowSeconds: Long): Flow<List<MapPinEntity>>
 
+    @Query("SELECT * FROM map_pins WHERE id = :id")
+    suspend fun findEntity(id: Int): MapPinEntity?
+
     @Upsert
     suspend fun upsert(pin: MapPinEntity)
 
@@ -232,6 +235,13 @@ interface MapPinDao {
 
     @Query("SELECT * FROM deleted_pins WHERE deletedAt > :since")
     suspend fun recentlyDeleted(since: Long): List<DeletedPinEntity>
+
+    /** Pins follow their room when it shifts slot, the way its messages do. */
+    @Query("UPDATE map_pins SET channel = :to WHERE channel = :from")
+    suspend fun moveChannel(from: Int, to: Int)
+
+    @Query("DELETE FROM map_pins WHERE channel = :channel")
+    suspend fun deleteChannel(channel: Int)
 }
 
 /** Expired pins are filtered in SQL so a stale one never reaches the map. */
@@ -239,6 +249,8 @@ fun MapPinDao.observeLive(nowMillis: Long = System.currentTimeMillis()): Flow<Li
     observeLiveEntities(nowMillis / 1000L).map { entities -> entities.map(MapPinEntity::toDomain) }
 
 suspend fun MapPinDao.save(pin: MapPin) = upsert(pin.toEntity())
+
+suspend fun MapPinDao.find(id: Int): MapPin? = findEntity(id)?.toDomain()
 
 @Dao
 interface ChannelStateDao {
@@ -415,6 +427,16 @@ interface PersonCardDao {
 
 fun PersonCardDao.observeAll(): Flow<Map<Int, PersonCard>> =
     observeAllEntities().map { rows -> rows.associate { it.nodeNum to it.toDomain() } }
+
+@Dao
+interface PeerKeyDao {
+
+    @Query("SELECT * FROM peer_keys WHERE nodeNum = :nodeNum")
+    suspend fun find(nodeNum: Int): PeerKeyEntity?
+
+    @Upsert
+    suspend fun upsert(key: PeerKeyEntity)
+}
 
 /** When a channel last carried anything, for deciding whether a room has died. */
 data class ChannelActivity(val channel: Int, val lastAt: Long)

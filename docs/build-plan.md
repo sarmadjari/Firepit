@@ -645,6 +645,62 @@ user will report.
 
 ---
 
+## Stage 7.8 — Security review
+
+A full review of what the mesh can make the app believe. Ten findings, all fixed; the rules now
+live in `TrustRules` as data, each with the attack it stops written beside it as a test.
+
+### The one that mattered most
+
+**Anyone could join a room's roster, then take over its keys.** A `RosterSync` was accepted from
+anybody who named a room id — and the room id is printed in every invite. The roster is the list a
+rotation hands new keys to, and a rotation was accepted from anyone on it. A stock radio and the
+python CLI were enough. Now a roster sync is only believed privately from the inviter who let us in,
+`JOINED` only sealed on the room's slot, membership never from unsealed traffic, and a rotation only
+when it is sealed under the key it replaces.
+
+### Phone keys
+
+The firepit key travelled inside PKI direct messages, which the receiving *radio* decrypts — and the
+firmware hands a radio's private key to any phone that connects. Whoever held a member's radio could
+therefore recover the room key from any recorded grant or rotation, which is exactly the person the
+firepit key exists to shut out. Each phone now has its own P-256 key pair (`PhoneKeyStore`, wrapped
+by the Keystore), and the firepit key only ever travels sealed to one (`KeyEnvelope`: ECDH, HKDF,
+AES-GCM, all platform). `JoinHello`, `PersonCard` and sealed `JOINED` events carry phone keys;
+`RoomGrant` and `KeyRotation` carry `sealed_key` instead of `firepit_key`. DB v11 adds `peer_keys`.
+Wire-incompatible with builds before it — acceptable before release.
+
+### Also fixed
+
+- A join hello had to be PKI but its key was never checked against the key it came under, so a
+  spoofed hello could redirect the grant. Now bound (`MeshPacket.public_key`), a second hello cannot
+  swap keys, and both phones show the joiner's key fingerprint before anyone taps "Let in".
+- Scanning a code acted at once and rewrote the radio's key for whatever node the code named. Now a
+  scan is confirmed against the inviter's fingerprint first, a known key is never overwritten, and a
+  grant cannot replace a room already held unless a member moves it forward.
+- Invites were never actually spent: every redraw reset `usedBy`.
+- Unsealed text on a room's slot was shown as the room's words, and plain-text DMs under the channel
+  key as authenticated. Both dropped. Sealed messages are only believed on their own room's slot.
+- Pins were taken from any channel, including the published primary, and locks were ignored.
+- A Meshtastic link could silently replace a Firepit room with the same name.
+- A radio read that timed out rewrote a moving room with an empty key — which the firmware reads as
+  the primary's, a published one — and could forget a sharing deadline while the radio kept
+  broadcasting.
+- Leaving a room gave every room above it the key of the room below: each write named the slot a room
+  was moving to, and the key was read from that slot rather than the one it was leaving. Pins now
+  move with their rooms too, where before they stayed on the old slot number.
+- Anyone could add themselves to a message's "read by" list.
+- Notifications had no public version for a secure lock screen.
+
+### Accepted, not fixed
+
+Written up in `docs/security.md` §1: a member can forge sealed text as another member; sealed
+messages can be replayed by someone with the room PSK; positions and telemetry are accepted from any
+channel; a member can announce a false phone key for someone else, which cannot let them read that
+person's next key but can make that person miss it.
+
+---
+
 ## Stage 8 — v1.0 features
 
 In dependency order: DMs (`add_contact` before every DM) → alerts → reactions (6 fixed) → duration tiers + phone-GPS

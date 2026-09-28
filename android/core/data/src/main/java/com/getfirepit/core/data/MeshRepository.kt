@@ -33,6 +33,7 @@ import com.getfirepit.core.protocol.MessageStatusRules
 import com.getfirepit.core.protocol.OutboundPacer
 import com.getfirepit.core.protocol.PositionPrecision
 import com.getfirepit.core.protocol.RadioClock
+import com.getfirepit.core.protocol.TrustRules
 import com.getfirepit.core.protocol.phoneapi.RadioSnapshot
 import com.getfirepit.core.transport.LinkState
 import com.getfirepit.core.transport.RadioLink
@@ -529,9 +530,19 @@ class MeshRepository @Inject constructor(
         // Firepit never converses on the primary, so anything broadcast there is
         // either another app's traffic or public mesh chatter. Storing it would
         // fill the database with a conversation nobody can reply to. A direct
-        // message is different: PKI puts a channel hash of 0 on the wire, and it
-        // is kept against the person rather than the slot.
-        if (packet.channel == ChannelSlotManager.PRIMARY_SLOT && packet.to != _myNodeNum.value) {
+        // message is kept against the person rather than the slot, but only
+        // when the firmware decrypted it with their key: under the channel key
+        // it could have been sent by anyone holding that key, under any name.
+        // And a Firepit room's words only ever arrive sealed; anything unsealed
+        // on its slot was typed by whoever holds a member's radio.
+        val acceptable = TrustRules.plainTextAcceptable(
+            direct = packet.to == _myNodeNum.value,
+            pkiEncrypted = packet.pki_encrypted,
+            onPrimary = packet.channel == ChannelSlotManager.PRIMARY_SLOT,
+            onFirepitRoom = roomIdForChannel(packet.channel)?.let { roomKeys.keyFor(it) } != null,
+        )
+        if (!acceptable) {
+            Log.w(TAG, "dropped unsealed text from ${packet.from} on channel ${packet.channel}")
             return
         }
         saveText(

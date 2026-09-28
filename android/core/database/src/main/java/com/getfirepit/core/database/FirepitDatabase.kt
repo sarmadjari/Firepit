@@ -36,8 +36,9 @@ internal class Converters {
         DeletedPinEntity::class,
         ReceiptEntity::class,
         PersonCardEntity::class,
+        PeerKeyEntity::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -49,6 +50,7 @@ abstract class FirepitDatabase : RoomDatabase() {
     abstract fun mapPinDao(): MapPinDao
     abstract fun receiptDao(): ReceiptDao
     abstract fun personCardDao(): PersonCardDao
+    abstract fun peerKeyDao(): PeerKeyDao
 
     companion object {
         /** Adds the roster table. Messages and nodes are left untouched. */
@@ -225,6 +227,25 @@ abstract class FirepitDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds the phone keys of the people in our rooms, which a new room key
+         * is sealed to so the radios carrying it cannot read it.
+         */
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS peer_keys (
+                        nodeNum INTEGER NOT NULL,
+                        phoneKey TEXT NOT NULL,
+                        learnedAt INTEGER NOT NULL,
+                        PRIMARY KEY(nodeNum)
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
         fun create(context: Context): FirepitDatabase =
             Room.databaseBuilder(context, FirepitDatabase::class.java, "firepit.db")
                 .addMigrations(
@@ -237,6 +258,7 @@ abstract class FirepitDatabase : RoomDatabase() {
                     MIGRATION_7_8,
                     MIGRATION_8_9,
                     MIGRATION_9_10,
+                    MIGRATION_10_11,
                 )
                 .build()
     }

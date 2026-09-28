@@ -4,7 +4,10 @@ import android.util.Log
 import com.getfirepit.core.crypto.RoomCipher
 import com.getfirepit.core.crypto.RoomCrypto
 import com.getfirepit.core.crypto.SealedText
+import com.getfirepit.core.database.MessageDao
 import com.getfirepit.core.database.ReceiptDao
+import com.getfirepit.core.database.RoomMemberDao
+import com.getfirepit.core.database.find
 import com.getfirepit.core.database.observe
 import com.getfirepit.core.database.recordRead
 import com.getfirepit.core.model.BROADCAST_NODE_NUM
@@ -14,6 +17,7 @@ import com.getfirepit.core.protocol.OutboundPacer
 import com.getfirepit.core.protocol.PendingReceipts
 import com.getfirepit.core.protocol.ReceiptCarriage
 import com.getfirepit.core.protocol.ReceiptRules
+import com.getfirepit.core.protocol.TrustRules
 import com.getfirepit.core.transport.RadioLink
 import com.getfirepit.protocol.meshchat.MeshChatControl
 import com.getfirepit.protocol.meshchat.Receipt as ReceiptProto
@@ -48,6 +52,8 @@ class ReceiptRepository @Inject constructor(
     private val mesh: MeshRepository,
     private val roomKeys: RoomKeyStore,
     private val receiptDao: ReceiptDao,
+    private val messageDao: MessageDao,
+    private val memberDao: RoomMemberDao,
     @param:ApplicationScope private val scope: CoroutineScope,
 ) {
 
@@ -118,10 +124,24 @@ class ReceiptRepository @Inject constructor(
         schedule(READ_WINDOW_MILLIS)
     }
 
-    /** Someone told us what they have. */
+    /**
+     * Someone told us what they have.
+     *
+     * Only believed about our own messages, and only from someone who was
+     * meant to see them: the person a direct message went to, or a member of
+     * the room it was sent in. Packet ids are in every header, so without this
+     * anybody could put themselves on a message's "read by" list.
+     */
     suspend fun handle(from: Int, receipt: ReceiptProto, at: Long = System.currentTimeMillis()) {
-        receipt.delivered.forEach { receiptDao.recordReceived(it, from, at) }
-        receipt.read.forEach { receiptDao.recordRead(it, from, at) }
+        receipt.delivered.filter { mayReport(it, from) }.forEach { receiptDao.recordReceived(it, from, at) }
+        receipt.read.filter { mayReport(it, from) }.forEach { receiptDao.recordRead(it, from, at) }
+    }
+
+    private suspend fun mayReport(messageId: Int, from: Int): Boolean {
+        val message = messageDao.find(messageId) ?: return false
+        val isRoomMember = message.toNodeNum == BROADCAST_NODE_NUM &&
+            firepitRoomFor(message.channel)?.let { memberDao.findEntity(it, from) } != null
+        return TrustRules.receiptAllowed(message.isOutgoing, message.toNodeNum, from, isRoomMember)
     }
 
     /**
@@ -240,7 +260,9 @@ class ReceiptRepository @Inject constructor(
 
     private fun publicKeyOf(node: Int): ByteString? = mesh.snapshot.value
         ?.nodes?.get(node)?.user?.public_key
-        ?.takeIf { it.size > 0 }
+        // Exactly the size PKI needs: a malformed key from the mesh would
+        // otherwise fail every receipt flush, for every conversation after it.
+        ?.takeIf { it.size == TrustRules.RADIO_KEY_SIZE }
 
     /**
      * Under the room's own key, which the radio never holds.

@@ -52,8 +52,6 @@ message Inviter {
   meshtastic.User user = 2;
 }
 
-// Everything needed to join a room. QR form is signed with a rotating token;
-// link form is encrypted under a PIN-derived key, so neither is useful alone.
 // Everything needed to ask to join a room. Carries no key material at all: a
 // photographed code is a request to be let in, not a way in. The keys arrive
 // in a RoomGrant, encrypted to the joiner, once the inviter approves.
@@ -119,6 +117,11 @@ message PersonCard {
   // derived from the node number as before; proto3 cannot tell an unset 0 from
   // a deliberately chosen slot 0.
   uint32 colour_slot_plus_one = 3;
+  // 33 bytes, a compressed P-256 point: this phone's own key, so a member who
+  // later moves the room to a new key can seal it to this phone rather than
+  // only to the radio. Learned on first sight and kept, so a card cannot
+  // quietly replace somebody's key.
+  bytes phone_key = 4;
 }
 
 // A room message with its words already encrypted under the room key, which the
@@ -155,17 +158,20 @@ message Receipt {
   repeated fixed32 read = 3;
 }
 
-// Joiner -> inviter, as a PKI direct message, after the NodeInfo hello has had
-// time to propagate. Proves which invite was used so the roster can show who
-// vouched for whom.
+// Joiner -> inviter, as a PKI direct message. Proves which invite was used so
+// the roster can show who vouched for whom. Refused unless it arrives PKI
+// encrypted, addressed to the inviter.
 message JoinHello {
   fixed32 invite_id = 1;
   bytes token = 2;
   uint32 generation = 3;
   uint32 app_version = 4;
-  // Exactly 32 bytes. Where to encrypt the grant, taken from inside this
-  // sealed hello rather than from the NodeDB, which anyone can write to.
+  // Exactly 32 bytes: the joiner's radio key. Must equal the key the firmware
+  // decrypted this hello with, so a spoofed hello cannot name somebody else's.
   bytes joiner_key = 5;
+  // 33 bytes, a compressed P-256 point: the joiner's phone key. The room's own
+  // key is sealed to it in the grant, so the radios in between cannot read it.
+  bytes phone_key = 6;
 }
 
 // Inviter -> joiner, as a PKI direct message, once the inviter has approved.
@@ -176,19 +182,29 @@ message RoomGrant {
     GRANTED = 0;
     DECLINED = 1;
   }
+  // Held open: the room's own key travelled here in the clear to the radio,
+  // which anyone holding that radio could then read.
+  reserved 6;
+  reserved "firepit_key";
+
   Answer answer = 1;
   fixed32 invite_id = 2;
   fixed32 room_id = 3;
   string room_name = 4;
   // Exactly 32 bytes. What the radio will encrypt the channel with.
   bytes room_psk = 5;
-  // Exactly 32 bytes. What the phone seals words with; the radio never sees it.
-  bytes firepit_key = 6;
+  // The generation of the key being handed over, which opens what the room
+  // seals from now on.
   uint32 generation = 7;
   uint32 position_precision = 8;
+  // What the phone seals words with, sealed in turn to the joiner's phone key
+  // (KeyEnvelope, bound to room_id, generation and the joiner's node). The
+  // radio carries it but cannot open it.
+  bytes sealed_key = 9;
 }
 
 // Inviter -> room broadcast, so every member's roster shows the trust chain.
+// JOINED is only believed inside a SealedMessage on the room's own channel.
 message RosterEvent {
   enum Kind {
     JOINED = 0;
@@ -198,6 +214,9 @@ message RosterEvent {
   uint32 node_num = 2;
   uint32 invited_by = 3;
   uint32 generation = 4;
+  // For JOINED: the newcomer's phone key, vouched for by whoever let them in,
+  // so any member can hand them a future room key.
+  bytes phone_key = 5;
 }
 
 // Member -> member, as a PKI direct message. Asking only; the recipient's app
@@ -232,16 +251,25 @@ message RosterEntry {
 // New keys for a room, sent to one member at a time as a PKI direct message so
 // that whoever is being removed simply never receives one. There is no way to
 // take a key back from someone; the room moves to a new one instead.
+//
+// Always travels inside a SealedMessage under the key it replaces, so only
+// somebody holding the room's current key can move the room on.
 message KeyRotation {
+  // Held open: the new key travelled here in the clear to the radio.
+  reserved 4;
+  reserved "firepit_key";
+
   fixed32 room_id = 1;
   // Always one more than the generation being replaced.
   uint32 generation = 2;
   // Exactly 32 bytes. What the radio will encrypt the channel with.
   bytes room_psk = 3;
-  // Exactly 32 bytes. What the phone seals words with; the radio never sees it.
-  bytes firepit_key = 4;
   string room_name = 5;
   // Who is no longer in the room, so every member's roster agrees and the
   // reason the key changed can be shown rather than left mysterious.
   repeated fixed32 removed = 6;
+  // The new key the phone seals words with, sealed in turn to the recipient's
+  // phone key (KeyEnvelope, bound to room_id, generation and the recipient's
+  // node). The radio carries it but cannot open it.
+  bytes sealed_key = 7;
 }

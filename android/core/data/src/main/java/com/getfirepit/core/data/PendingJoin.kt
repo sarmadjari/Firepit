@@ -1,5 +1,6 @@
 package com.getfirepit.core.data
 
+import com.getfirepit.core.protocol.KeyFingerprint
 import okio.ByteString
 
 /**
@@ -13,12 +14,23 @@ data class PendingJoin(
     val roomId: Int,
     val inviteId: Int,
     val generation: Int,
-    /** Where the grant will be encrypted to. Came inside their sealed hello. */
+    /**
+     * Their radio's key: the one the firmware decrypted their hello with, and
+     * so the one the grant's outer layer goes to.
+     */
     val joinerKey: ByteString,
+    /** Their phone's key, which the room's own key is sealed to. Came inside their hello. */
+    val phoneKey: ByteString,
     val askedAt: Long,
 ) {
     /** The only identity the mesh attests. Anyone can claim any name. */
     val nodeId: String get() = "!%08x".format(nodeNum)
+
+    /**
+     * Their radio's key, short enough to read aloud. Their own screen shows the
+     * same line; if the two differ, the hello is not from the phone in front of you.
+     */
+    val fingerprint: String? get() = KeyFingerprint.of(joinerKey.base64())
 }
 
 /** A room we have asked to join, while the answer is still outstanding. */
@@ -32,6 +44,8 @@ data class AwaitedRoom(
      * node whose key we seeded from that same code.
      */
     val inviter: Int,
+    /** Our own radio's key, for reading aloud so the inviter can check it. */
+    val ownFingerprint: String? = null,
     /** Set when the answer came back and it was no. */
     val declined: Boolean = false,
 )

@@ -181,9 +181,9 @@ fun InviteScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-    // The code on screen carries the room's key, so it must not be capturable
-    // by anything on the phone. A camera pointed at it is still a camera, but
-    // a screenshot would outlive the rotation and reach a photo backup.
+    // The code on screen is a way to ask in, so it must not be capturable by
+    // anything on the phone. A camera pointed at it is still a camera, but a
+    // screenshot would outlive the rotation and reach a photo backup.
     val window = (LocalContext.current as? Activity)?.window
     DisposableEffect(window) {
         window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -244,12 +244,23 @@ fun InviteScreen(
 
             Text(
                 text = "Show this to people next to you. It refreshes every few seconds and only " +
-                    "works while they are here. Anyone who photographs it can read the room, so " +
-                    "keep it off camera.",
+                    "works while they are here. It carries no key: a photograph of it only lets " +
+                    "someone ask, and you still decide who comes in.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = FirepitTheme.colors.textSecondary,
                 textAlign = TextAlign.Center,
             )
+
+            // What the scanning phone checks the code against before it asks:
+            // a code is anyone's to print, and this is the part they cannot fake.
+            val fingerprint = remember { viewModel.ownFingerprint() }
+            fingerprint?.let {
+                Text(
+                    text = "Your key: $it",
+                    style = MaterialTheme.typography.titleMedium,
+                    textAlign = TextAlign.Center,
+                )
+            }
 
             state.error?.let {
                 Text(it, color = FirepitTheme.colors.danger, style = MaterialTheme.typography.bodySmall)
@@ -267,6 +278,7 @@ fun JoinRoomScreen(
     viewModel: RoomsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val scanned by viewModel.scanned.collectAsStateWithLifecycle()
 
     LaunchedEffect(state.joinedRoomName) {
         if (state.joinedRoomName != null) {
@@ -274,6 +286,9 @@ fun JoinRoomScreen(
             onBack()
         }
     }
+
+    // Leaving the screen abandons a code nobody confirmed.
+    DisposableEffect(Unit) { onDispose { viewModel.cancelScan() } }
 
     Scaffold(
         modifier = modifier,
@@ -289,8 +304,8 @@ fun JoinRoomScreen(
             QrScanner(
                 onScanned = viewModel::joinFromScan,
                 // Ignore frames while a join is in flight so the radio isn't
-                // asked to do two things at once.
-                enabled = !state.busy,
+                // asked to do two things at once, or while one waits to be checked.
+                enabled = !state.busy && scanned == null,
             )
 
             Column(
@@ -318,5 +333,22 @@ fun JoinRoomScreen(
                 )
             }
         }
+    }
+
+    scanned?.let { code ->
+        AlertDialog(
+            onDismissRequest = viewModel::cancelScan,
+            title = { Text("Ask to join ${code.roomName}?") },
+            text = {
+                Text(
+                    "This code says it is from ${code.inviterId}" +
+                        (code.fingerprint?.let { ", with the key $it" } ?: "") + ".\n\n" +
+                        "Their screen shows their key under the code. Only ask if the two " +
+                        "match: a code is anyone's to print.",
+                )
+            },
+            confirmButton = { TextButton(onClick = viewModel::confirmScan) { Text("Ask to join") } },
+            dismissButton = { TextButton(onClick = viewModel::cancelScan) { Text("Cancel") } },
+        )
     }
 }

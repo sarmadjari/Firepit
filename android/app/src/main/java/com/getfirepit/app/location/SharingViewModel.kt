@@ -1,5 +1,6 @@
 package com.getfirepit.app.location
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.getfirepit.core.data.LocationRepository
@@ -50,11 +51,25 @@ class SharingViewModel @Inject constructor(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SharingUiState())
 
     fun share(roomId: Int, choice: ShareDuration) {
-        viewModelScope.launch { location.shareWith(roomId, choice) }
+        viewModelScope.launch {
+            runCatching { location.shareWith(roomId, choice) }
+                .onFailure { cause -> Log.w(TAG, "could not start sharing", cause) }
+        }
     }
 
+    /**
+     * On failure the radio is still sharing and the deadline is kept, so the
+     * banner goes on saying so and the stop can simply be tried again.
+     */
     fun stop() {
-        viewModelScope.launch { location.stopSharing() }
+        viewModelScope.launch {
+            runCatching { location.stopSharing() }
+                .onFailure { cause -> Log.w(TAG, "could not stop sharing", cause) }
+        }
+    }
+
+    private companion object {
+        const val TAG = "FirepitSharing"
     }
 }
 

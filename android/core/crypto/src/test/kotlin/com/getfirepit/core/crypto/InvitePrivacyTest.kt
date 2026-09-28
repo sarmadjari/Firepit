@@ -5,9 +5,9 @@ import com.getfirepit.protocol.meshchat.Inviter
 import com.getfirepit.protocol.meshchat.JoinHello
 import com.getfirepit.protocol.meshchat.RoomGrant
 import okio.ByteString.Companion.toByteString
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -85,22 +85,35 @@ class InvitePrivacyTest {
 
     // --- the grant ---------------------------------------------------------
 
+    /**
+     * The radio on the other end decrypts the grant, and anyone holding that
+     * radio can read its private key. So the room's own key rides sealed to
+     * the joiner's phone, where the radio cannot open it.
+     */
     @Test
-    fun `a grant is what carries the keys`() {
+    fun `a grant carries the room key sealed to the joiner's phone, never in the clear`() {
+        val phone = KeyEnvelope.generateKeyPair()
+        val phonePublic = KeyEnvelope.publicBytes(phone.public)
+        val context = KeyEnvelope.contextOf(roomId = 0x0BADF00D, generation = 1, recipientNodeNum = 42)
         val grant = RoomGrant(
             answer = RoomGrant.Answer.GRANTED,
             invite_id = 0x1234_5678,
             room_id = 0x0BADF00D,
             room_name = "camp",
             room_psk = roomPsk.toByteString(),
-            firepit_key = firepitKey.toByteString(),
             generation = 1,
+            sealed_key = KeyEnvelope.seal(phonePublic, firepitKey, context).toByteString(),
         )
 
-        val decoded = RoomGrant.ADAPTER.decode(grant.encode())
+        val bytes = grant.encode()
+        val decoded = RoomGrant.ADAPTER.decode(bytes)
 
+        assertFalse("the sealing key travels in the clear", bytes.containsRun(firepitKey))
         assertEquals(roomPsk.toByteString(), decoded.room_psk)
-        assertEquals(firepitKey.toByteString(), decoded.firepit_key)
+        assertArrayEquals(
+            firepitKey,
+            KeyEnvelope.open(phone.private, phonePublic, decoded.sealed_key.toByteArray(), context),
+        )
     }
 
     @Test
@@ -117,19 +130,20 @@ class InvitePrivacyTest {
         assertFalse(bytes.containsRun(firepitKey))
     }
 
-    /** The grant is encrypted to this, so a hello without one cannot be answered. */
+    /** The grant is encrypted to these, so a hello without them cannot be answered. */
     @Test
-    fun `a hello carries the key its answer is encrypted to`() {
+    fun `a hello carries the keys its answer is encrypted to`() {
         val hello = JoinHello(
             invite_id = 0x1234_5678,
             token = ByteArray(RoomCrypto.TOKEN_SIZE) { 1 }.toByteString(),
             joiner_key = ByteArray(32) { 5 }.toByteString(),
+            phone_key = KeyEnvelope.publicBytes(KeyEnvelope.generateKeyPair().public).toByteString(),
         )
 
         val decoded = JoinHello.ADAPTER.decode(hello.encode())
 
-        assertNotNull(decoded.joiner_key)
         assertEquals(32, decoded.joiner_key.size)
+        assertTrue(KeyEnvelope.isValidPublicKey(decoded.phone_key.toByteArray()))
     }
 
     // --- the window --------------------------------------------------------

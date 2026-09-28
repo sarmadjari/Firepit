@@ -19,7 +19,9 @@ import com.getfirepit.core.model.PersonCard
 import com.getfirepit.core.model.RoomChannel
 import com.getfirepit.core.model.RoomMember
 import com.getfirepit.core.protocol.ChannelSlotManager
+import com.getfirepit.core.protocol.KeyFingerprint
 import com.getfirepit.core.protocol.MeshConstants
+import com.getfirepit.protocol.meshchat.Invite
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.seconds
@@ -56,6 +58,21 @@ sealed interface TraceState {
     data class Running(val nodeNum: Int) : TraceState
     data class Done(val nodeNum: Int, val summary: String) : TraceState
 }
+
+/**
+ * A Firepit code that has been scanned but not acted on.
+ *
+ * Nothing is sent, and nothing is written to the radio, until the person holding
+ * this phone has checked who the code claims to be from: a code is anyone's to
+ * print, and the key it carries is what the radio will trust.
+ */
+data class ScannedInvite(
+    val roomName: String,
+    val inviterId: String,
+    /** The inviter's key as the code states it. Their own screen shows theirs. */
+    val fingerprint: String?,
+    val invite: Invite,
+)
 
 /** A roster row: who they are, plus who vouched for them if anyone did. */
 data class MemberRow(
@@ -243,17 +260,29 @@ class RoomsViewModel @Inject constructor(
         }
     }
 
+    private val _scanned = MutableStateFlow<ScannedInvite?>(null)
+
+    /** A scanned invite waiting for the reader to check it before anything is sent. */
+    val scanned: StateFlow<ScannedInvite?> = _scanned.asStateFlow()
+
     /**
      * One scanner for both worlds, routed by Firepit's own scheme before any
      * decoding happens. Which format a code is decides how private the room can
      * be, so the notice says which one arrived.
      */
     fun joinFromScan(scanned: String) = run("Could not join") {
+        // The same code is seen on every frame; one is enough to ask about.
+        if (_scanned.value != null) return@run
         when (val code = CodeScanner.classify(scanned)) {
             is ScannedCode.Firepit -> {
-                rooms.joinRoom(code.invite)
-                // Not joined yet: the code carries no keys, so this is a
-                // request the inviter still has to answer.
+                // Not sent yet: who the code claims to be from is checked first.
+                val inviter = code.invite.inviter
+                _scanned.value = ScannedInvite(
+                    roomName = code.invite.room_name,
+                    inviterId = MeshConstants.formatNodeId(inviter?.node_num ?: 0),
+                    fingerprint = inviter?.user?.public_key?.let { KeyFingerprint.of(it.base64()) },
+                    invite = code.invite,
+                )
                 notice.value = null
             }
 
@@ -282,6 +311,25 @@ class RoomsViewModel @Inject constructor(
                 error("That isn't a Firepit invite or a Meshtastic channel link")
         }
     }
+
+    /**
+     * Asks to be let in, now the reader has checked the code.
+     *
+     * Not joined yet even then: the code carries no keys, so this is a request
+     * the inviter still has to answer.
+     */
+    fun confirmScan() {
+        val pending = _scanned.value ?: return
+        _scanned.value = null
+        run("Could not join") { rooms.joinRoom(pending.invite) }
+    }
+
+    fun cancelScan() {
+        _scanned.value = null
+    }
+
+    /** This radio's own key, shown beside an invite so the joiner can check the code is ours. */
+    fun ownFingerprint(): String? = rooms.ownFingerprint()
 
     /**
      * A channel shared with particular people who are not running Firepit. The

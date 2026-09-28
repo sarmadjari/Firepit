@@ -3,12 +3,14 @@ package com.getfirepit.core.data
 import android.util.Log
 import com.getfirepit.core.database.DeletedPinEntity
 import com.getfirepit.core.database.MapPinDao
+import com.getfirepit.core.database.find
 import com.getfirepit.core.database.observeLive
 import com.getfirepit.core.database.save
 import com.getfirepit.core.model.BROADCAST_NODE_NUM
 import com.getfirepit.core.model.MapPin
 import com.getfirepit.core.protocol.MeshPacketBuilder
 import com.getfirepit.core.protocol.OutboundPacer
+import com.getfirepit.core.protocol.TrustRules
 import com.getfirepit.core.transport.RadioLink
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -34,6 +36,7 @@ class WaypointRepository @Inject constructor(
     private val link: RadioLink,
     private val mesh: MeshRepository,
     private val pinDao: MapPinDao,
+    private val roomKeys: RoomKeyStore,
     @param:ApplicationScope private val scope: CoroutineScope,
 ) {
 
@@ -125,6 +128,25 @@ class WaypointRepository @Inject constructor(
         val longitude = waypoint.longitude_i ?: return
         if (latitude == 0 && longitude == 0) return
 
+        // Pins go to one private room, so that is the only place one is taken
+        // from. On the primary, or any channel whose key the radio alone holds,
+        // anyone in range could plant one. And a pin's lock and its room are
+        // its owner's: nobody else may move it, rename it, expire it or carry
+        // it into another room by re-sending its id.
+        val existing = pinDao.find(waypoint.id)
+        val allowed = TrustRules.pinUpdateAllowed(
+            onFirepitRoom = mesh.roomIdForChannel(packet.channel)?.let { roomKeys.keyFor(it) } != null,
+            sender = packet.from,
+            claimedLock = waypoint.locked_to,
+            existingLock = existing?.lockedTo,
+            existingChannel = existing?.channel,
+            channel = packet.channel,
+        )
+        if (!allowed) {
+            Log.w(TAG, "ignoring pin ${waypoint.id} from ${packet.from} on channel ${packet.channel}")
+            return
+        }
+
         // Somebody who missed our expiry is still holding this one. Take it off
         // our map again and re-expire it, so the deletion keeps spreading.
         if (pinDao.wasDeleted(waypoint.id)) {
@@ -147,7 +169,8 @@ class WaypointRepository @Inject constructor(
             expire = waypoint.expire.toLong(),
             lockedTo = waypoint.locked_to,
             icon = waypoint.icon.takeIf { it != 0 }?.let { String(Character.toChars(it)) },
-            createdBy = packet.from,
+            // Whoever dropped it stays its author, whoever last edited it.
+            createdBy = existing?.createdBy ?: packet.from,
             receivedAt = System.currentTimeMillis(),
         )
 

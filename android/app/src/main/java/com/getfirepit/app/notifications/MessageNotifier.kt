@@ -83,9 +83,19 @@ class MessageNotifier @Inject constructor(
             .setContentTitle(room?.let { "$name in $it" } ?: name)
             .setContentText(body)
             .apply { if (showText) setStyle(NotificationCompat.BigTextStyle().bigText(message.text)) }
-            // Even when the words are shown, they are held back from a locked
-            // screen: the phone's owner chose to show them, not a passer-by.
+            // Private, with a public version that names nobody: on a secure lock
+            // screen set to hide sensitive content, that is all a passer-by
+            // sees. Whether sensitive content shows there at all is the phone
+            // owner's own lock screen setting, which no app can override.
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(
+                NotificationCompat.Builder(context, CHANNEL_ID)
+                    .setSmallIcon(R.drawable.ic_radio_notification)
+                    .setContentTitle(context.getString(R.string.app_name))
+                    .setContentText("New message")
+                    .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                    .build(),
+            )
             .setContentIntent(open)
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)

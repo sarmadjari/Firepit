@@ -231,8 +231,13 @@ class LocationRepository @Inject constructor(
         if (writes.isEmpty()) return
 
         writes.forEach { write ->
-            val channel = admin.getChannel(write.index) ?: return@forEach
-            val settings = channel.settings ?: return@forEach
+            // Thrown rather than skipped: a channel we could not read is one we
+            // could not change, and a caller told "done" would forget a deadline
+            // for a radio that is still broadcasting where you are.
+            val channel = admin.getChannel(write.index)
+                ?: throw IllegalStateException("could not read channel ${write.index} from the radio")
+            val settings = channel.settings
+                ?: throw IllegalStateException("channel ${write.index} came back without settings")
             admin.setChannel(
                 channel.copy(
                     settings = settings.copy(
