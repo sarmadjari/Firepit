@@ -37,7 +37,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -64,6 +63,9 @@ import androidx.core.graphics.withRotation
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.getfirepit.app.location.ShareLocationSheet
+import com.getfirepit.app.location.SharingBanner
+import com.getfirepit.app.location.SharingViewModel
 import com.getfirepit.core.designsystem.component.BackButton
 import com.getfirepit.core.designsystem.component.FirepitIcons
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
@@ -72,6 +74,7 @@ import com.getfirepit.core.designsystem.theme.SheetShape
 import com.getfirepit.core.designsystem.theme.identityColorFor
 import com.getfirepit.core.designsystem.theme.onIdentityColorFor
 import com.getfirepit.core.protocol.NodeRole
+import com.getfirepit.core.protocol.ShareDuration
 import com.getfirepit.core.model.MapPin
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
@@ -91,8 +94,10 @@ fun MapScreen(
     viewModel: MapViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val sharingViewModel: SharingViewModel = hiltViewModel()
+    val sharing by sharingViewModel.state.collectAsStateWithLifecycle()
     var pickingRoom by remember { mutableStateOf(false) }
-    var pendingRoomId by remember { mutableStateOf<Int?>(null) }
+    var pendingShare by remember { mutableStateOf<PendingShare?>(null) }
     var locationDenied by remember { mutableStateOf(false) }
     val dark = FirepitTheme.colors.isDark
     val context = LocalContext.current
@@ -103,12 +108,12 @@ fun MapScreen(
         // Coarse is enough to publish a position; fine simply makes it better.
         if (granted.values.any { it }) {
             viewModel.setMapVisible(true)
-            pendingRoomId?.let(viewModel::shareWith)
+            pendingShare?.let { sharingViewModel.share(it.roomId, it.choice) }
         } else {
             locationDenied = true
-            if (pendingRoomId != null) viewModel.reportPermissionDenied()
+            if (pendingShare != null) viewModel.reportPermissionDenied()
         }
-        pendingRoomId = null
+        pendingShare = null
     }
 
     // Asked on opening the map, not on sharing: showing yourself is local and
@@ -224,6 +229,16 @@ fun MapScreen(
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth(),
             ) {
+                SharingBanner(
+                    state = sharing,
+                    onChange = { pickingRoom = true },
+                    onStop = sharingViewModel::stop,
+                    modifier = Modifier.padding(
+                        horizontal = FirepitSpacing.m,
+                        vertical = FirepitSpacing.s,
+                    ),
+                )
+
                 Surface(
                     color = FirepitTheme.colors.surface2,
                     shape = RoundedCornerShape(
@@ -253,7 +268,7 @@ fun MapScreen(
             onDismiss = { showingOptions = false },
             onShare = {
                 showingOptions = false
-                if (state.isSharing) viewModel.shareWith(null) else pickingRoom = true
+                pickingRoom = true
             },
             onCentre = {
                 showingOptions = false
@@ -271,15 +286,19 @@ fun MapScreen(
     }
 
     if (pickingRoom) {
-        ShareRoomDialog(
-            state = state,
+        ShareLocationSheet(
+            state = sharing,
             onDismiss = { pickingRoom = false },
-            onPick = { roomId ->
+            onStop = {
+                pickingRoom = false
+                sharingViewModel.stop()
+            },
+            onShare = { roomId, choice ->
                 pickingRoom = false
                 if (hasLocationPermission(context)) {
-                    viewModel.shareWith(roomId)
+                    sharingViewModel.share(roomId, choice)
                 } else {
-                    pendingRoomId = roomId
+                    pendingShare = PendingShare(roomId, choice)
                     locationPermission.launch(
                         arrayOf(
                             Manifest.permission.ACCESS_FINE_LOCATION,
@@ -442,7 +461,7 @@ private fun MapOptionsSheet(
         ) {
             SheetAction(
                 icon = FirepitIcons.Locate,
-                label = if (state.isSharing) "Stop sharing" else "Share my location",
+                label = if (state.isSharing) "Change location sharing" else "Share my location",
                 onClick = onShare,
             )
             SheetAction(FirepitIcons.Map, "Centre on everyone", onCentre)
@@ -472,68 +491,8 @@ private fun SheetAction(@DrawableRes icon: Int, label: String, onClick: () -> Un
     }
 }
 
-@Composable
-private fun ShareRoomDialog(state: MapUiState, onDismiss: () -> Unit, onPick: (Int) -> Unit) {
-    var chosen by remember { mutableStateOf(state.rooms.firstOrNull()?.id) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Share your location") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
-                when {
-                    !state.connected -> Text(
-                        text = "Connect to your node first — Settings, then Nodes.",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-
-                    state.rooms.isEmpty() -> Text(
-                        // Slot 0 is deliberately never used for position: it
-                        // would broadcast to every Meshtastic node in range.
-                        text = "You need a room first. Location is only ever shared with one room, " +
-                            "never on the public channel, so there is nothing to share with yet.\n\n" +
-                            "Create or join a room from Chats, then come back.",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-
-                    else -> {
-                        Text(
-                            text = "Your position goes to one room only. Choosing a room here stops " +
-                                "sharing with every other.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = FirepitTheme.colors.textSecondary,
-                        )
-                        state.rooms.forEach { room ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                RadioButton(selected = chosen == room.id, onClick = { chosen = room.id })
-                                Text(room.displayName, style = MaterialTheme.typography.bodyLarge)
-                            }
-                        }
-                        Text(
-                            text = "Anyone holding the room's key can see it, including people " +
-                                "invited later.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = FirepitTheme.colors.warn,
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            if (state.rooms.isNotEmpty() && state.connected) {
-                TextButton(onClick = { chosen?.let(onPick) }, enabled = chosen != null) { Text("Share") }
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(if (state.rooms.isEmpty() || !state.connected) "Close" else "Cancel")
-            }
-        },
-    )
-}
+/** A share waiting on the location permission dialog. */
+private data class PendingShare(val roomId: Int, val choice: ShareDuration)
 
 /** Owns the symbol manager so markers are replaced rather than stacked. */
 private class MarkerLayer {

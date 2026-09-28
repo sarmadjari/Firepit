@@ -179,6 +179,29 @@ class PositionSharingTest {
     }
 
     /**
+     * The trap behind a real bug: a radio we cannot see produces the same empty
+     * answer as a radio that is already correct.
+     *
+     * An expiry check that ran before the link came up therefore concluded
+     * "nothing to do", forgot the deadline, and left the radio transmitting
+     * forever. Callers must establish that the channels are known *before*
+     * reading anything into an empty result.
+     */
+    @Test
+    fun `an unknown radio is indistinguishable from a correct one`() {
+        val unknown = PositionSharing.writesToShareOnly(emptyList(), roomId = null, precision = 32)
+        val correct = PositionSharing.writesToShareOnly(
+            listOf(channel(0, 0, id = 0)),
+            roomId = null,
+            precision = 32,
+        )
+
+        assertTrue(unknown.isEmpty())
+        assertTrue(correct.isEmpty())
+        assertEquals("no write list can tell these apart", correct, unknown)
+    }
+
+    /**
      * A shared Meshtastic channel reaches people the group never chose, and the
      * firmware would broadcast a position there on its own schedule. It is not
      * somewhere a position may go, however it was asked for.

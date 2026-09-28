@@ -314,7 +314,7 @@ class RoomRepository @Inject constructor(
             name = trimmed,
             role = ChannelRole.SECONDARY,
             id = roomId,
-            positionPrecision = ROOM_POSITION_PRECISION,
+            positionPrecision = PositionPrecision.DISABLED,
             kind = RoomKind.FIREPIT,
         )
     }
@@ -1216,7 +1216,9 @@ class RoomRepository @Inject constructor(
             // Firepit never bridges rooms to MQTT.
             uplink_enabled = false,
             downlink_enabled = false,
-            module_settings = ModuleSettings(position_precision = ROOM_POSITION_PRECISION),
+            // Joining a room is not consent to be followed by it. Sharing is
+            // turned on per room, for a chosen length of time.
+            module_settings = ModuleSettings(position_precision = PositionPrecision.DISABLED),
         ),
     )
 

@@ -7,15 +7,19 @@ import com.getfirepit.core.protocol.MeshPacketBuilder
 import com.getfirepit.core.protocol.OutboundPacer
 import com.getfirepit.core.protocol.PositionPrecision
 import com.getfirepit.core.protocol.PositionSharing
+import com.getfirepit.core.protocol.ShareDuration
 import com.getfirepit.core.transport.RadioLink
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
@@ -44,6 +48,7 @@ class LocationRepository @Inject constructor(
     private val admin: NodeAdminClient,
     private val link: RadioLink,
     private val phoneLocation: PhoneLocationSource,
+    private val sharingStore: SharingStore,
     @param:ApplicationScope private val scope: CoroutineScope,
 ) {
 
@@ -68,6 +73,9 @@ class LocationRepository @Inject constructor(
         ?.id
         ?.takeIf { it != 0 }
 
+    /** When sharing stops on its own, or null when nothing stops it. */
+    val sharingDeadline: StateFlow<SharingDeadline?> get() = sharingStore.deadline
+
     /** Nodes with a known fix, newest sighting first. */
     fun observePositions(): Flow<List<MeshNode>> =
         mesh.observeNodes().map { nodes -> nodes.filter { it.hasPosition } }
@@ -77,11 +85,25 @@ class LocationRepository @Inject constructor(
             // Re-check whenever the radio reports its channels, which happens on
             // every connect and after any channel write.
             mesh.channels.collect { channels ->
-                if (channels.isNotEmpty() && !PositionSharing.isValid(channels)) {
+                if (channels.isEmpty()) return@collect
+                if (!PositionSharing.isValid(channels)) {
                     val sharing = PositionSharing.sharingChannels(channels)
                     Log.w(TAG, "position enabled on ${sharing.size} channels; disabling all")
                     disableAll()
+                    return@collect
                 }
+                // The moment the radio becomes reachable, not 30 s later: a
+                // deadline that ran out while the app was closed is already late.
+                enforceDeadline()
+            }
+        }
+
+        // The radio transmits with or without this app, so a deadline that only
+        // ticked while we were running would be no deadline at all.
+        scope.launch {
+            while (true) {
+                enforceDeadline()
+                delay(DEADLINE_CHECK)
             }
         }
 
@@ -167,8 +189,15 @@ class LocationRepository @Inject constructor(
      * Shares position with [roomId] and nowhere else, or stops entirely when
      * it is null. Writes are derived from the radio's current state, so calling
      * this when nothing needs changing sends nothing.
+     *
+     * [PositionSharing] refuses a room that may not carry a position, so an
+     * instruction naming one turns sharing off rather than honouring it.
+     *
+     * Private on purpose. Everything that turns sharing *on* must go through
+     * [shareWith], which records when it stops; a caller that reached this
+     * directly would be starting something with no end.
      */
-    suspend fun shareWith(roomId: Int?, precision: Int = PositionPrecision.FULL) {
+    private suspend fun applySharing(roomId: Int?, precision: Int) {
         val writes = PositionSharing.writesToShareOnly(mesh.channels.value, roomId, precision)
         if (writes.isEmpty()) return
 
@@ -187,8 +216,49 @@ class LocationRepository @Inject constructor(
         Log.i(TAG, "position sharing set to room $roomId across ${writes.size} channel writes")
     }
 
+    /**
+     * Shares with [roomId] for a chosen length of time, or stops when it is null.
+     *
+     * The deadline is written down before the radio is, so a crash between the
+     * two leaves a stopping point recorded for something that never started —
+     * which costs nothing — rather than sharing with nothing to stop it.
+     */
+    suspend fun shareWith(
+        roomId: Int?,
+        choice: ShareDuration,
+        precision: Int = PositionPrecision.FULL,
+    ) {
+        if (roomId == null) {
+            stopSharing()
+            return
+        }
+        sharingStore.remember(roomId, choice, System.currentTimeMillis())
+        applySharing(roomId, precision)
+    }
+
+    /** Stops sharing if its time has run out. Safe to call as often as you like. */
+    private suspend fun enforceDeadline() {
+        val deadline = sharingStore.deadline.value ?: return
+        if (!deadline.hasPassed(System.currentTimeMillis())) return
+        Log.i(TAG, "sharing with room ${deadline.roomId} has run out; stopping")
+        disableAll()
+    }
+
+    /** Stops sharing and forgets the deadline. */
+    suspend fun stopSharing() {
+        // The deadline is forgotten only once the radio has actually been told.
+        // A radio we cannot see is still transmitting, and clearing first would
+        // turn a share that was meant to end into one nothing will ever end.
+        if (mesh.channels.value.isEmpty()) {
+            Log.w(TAG, "cannot stop sharing yet: the radio has not reported its channels")
+            return
+        }
+        applySharing(roomId = null, precision = PositionPrecision.FULL)
+        sharingStore.clear()
+    }
+
     private suspend fun disableAll() {
-        runCatching { shareWith(roomId = null) }
+        runCatching { stopSharing() }
             .onFailure { cause -> Log.e(TAG, "could not disable position sharing", cause) }
     }
 
@@ -205,6 +275,9 @@ class LocationRepository @Inject constructor(
     private companion object {
         const val TAG = "FirepitLocation"
         val LIVE_WINDOW = 15.minutes
+
+        /** Fine-grained enough that "for 1 hour" is not visibly a lie. */
+        val DEADLINE_CHECK = 30.seconds
         val ModuleSettingsDefault = org.meshtastic.proto.ModuleSettings()
     }
 }

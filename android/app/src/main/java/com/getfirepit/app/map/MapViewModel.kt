@@ -190,9 +190,6 @@ class MapViewModel @Inject constructor(
     /** Called while the map is on screen, so the phone's own fix can be shown. */
     fun setMapVisible(visible: Boolean) = location.setMapVisible(visible)
 
-    /** Passing null stops sharing everywhere. */
-    fun shareWith(roomId: Int?) = run("Could not change sharing") { location.shareWith(roomId) }
-
     fun clearError() {
         error.value = null
     }

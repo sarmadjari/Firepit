@@ -45,6 +45,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.getfirepit.app.location.ShareLocationSheet
+import com.getfirepit.app.location.SharingRow
+import com.getfirepit.app.location.SharingUiState
+import com.getfirepit.app.location.SharingViewModel
 import com.getfirepit.app.map.OfflineMapsScreen
 import com.getfirepit.app.map.PinsScreen
 import com.getfirepit.app.radio.DevicesScreen
@@ -80,8 +84,11 @@ fun SettingsScreen(
     onImmersiveChange: (Boolean) -> Unit = {},
     radioViewModel: RadioViewModel = hiltViewModel(),
     settingsViewModel: SettingsViewModel = hiltViewModel(),
+    sharingViewModel: SharingViewModel = hiltViewModel(),
 ) {
     var section by remember { mutableStateOf<SettingsSection?>(null) }
+    var pickingRoom by remember { mutableStateOf(false) }
+    val sharing by sharingViewModel.state.collectAsStateWithLifecycle()
     val radioState by radioViewModel.uiState.collectAsStateWithLifecycle()
     val theme by settingsViewModel.theme.collectAsStateWithLifecycle()
     val person by settingsViewModel.person.collectAsStateWithLifecycle()
@@ -139,6 +146,8 @@ fun SettingsScreen(
             theme = theme,
             person = person,
             connected = connected,
+            sharing = sharing,
+            onOpenSharing = { pickingRoom = true },
             retention = retention,
             onChooseRetention = settingsViewModel::chooseRetention,
             roomLifetime = roomLifetime,
@@ -169,6 +178,21 @@ fun SettingsScreen(
             },
         )
     }
+
+    if (pickingRoom) {
+        ShareLocationSheet(
+            state = sharing,
+            onDismiss = { pickingRoom = false },
+            onStop = {
+                pickingRoom = false
+                sharingViewModel.stop()
+            },
+            onShare = { roomId, choice ->
+                pickingRoom = false
+                sharingViewModel.share(roomId, choice)
+            },
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -180,6 +204,8 @@ private fun SettingsList(
     theme: ThemeChoice,
     person: Person?,
     connected: Boolean,
+    sharing: SharingUiState,
+    onOpenSharing: () -> Unit,
     retention: MessageRetention,
     onChooseRetention: (MessageRetention) -> Unit,
     roomLifetime: RoomLifetime,
@@ -279,6 +305,7 @@ private fun SettingsList(
             HorizontalDivider()
 
             SectionLabel("Map")
+            SharingRow(state = sharing, onClick = onOpenSharing)
             ListItem(
                 headlineContent = { Text("Offline areas") },
                 supportingContent = { Text("Download map tiles so the map works with no signal") },

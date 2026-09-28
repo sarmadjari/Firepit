@@ -36,6 +36,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.getfirepit.app.location.ShareLocationSheet
+import com.getfirepit.app.location.SharingRoomRow
+import com.getfirepit.app.location.SharingViewModel
 import com.getfirepit.core.designsystem.component.BackButton
 import com.getfirepit.core.designsystem.component.FirepitDetailBar
 import com.getfirepit.core.designsystem.component.FirepitIcons
@@ -68,13 +71,31 @@ fun RoomMembersScreen(
     onToggleMute: () -> Unit = {},
     onLeft: () -> Unit = {},
     viewModel: RoomsViewModel = hiltViewModel(),
+    sharingViewModel: SharingViewModel = hiltViewModel(),
 ) {
     val membersFlow = remember(roomId) { viewModel.members(roomId) }
     val members by membersFlow.collectAsStateWithLifecycle(emptyList())
     val trace by viewModel.trace.collectAsStateWithLifecycle()
     val rotation by viewModel.rotation.collectAsStateWithLifecycle()
+    val sharing by sharingViewModel.state.collectAsStateWithLifecycle()
     var removing by remember { mutableStateOf<MemberRow?>(null) }
     var confirmingLeave by remember { mutableStateOf(false) }
+    var pickingRoom by remember { mutableStateOf(false) }
+
+    if (pickingRoom) {
+        ShareLocationSheet(
+            state = sharing,
+            onDismiss = { pickingRoom = false },
+            onStop = {
+                pickingRoom = false
+                sharingViewModel.stop()
+            },
+            onShare = { chosen, choice ->
+                pickingRoom = false
+                sharingViewModel.share(chosen, choice)
+            },
+        )
+    }
 
     if (confirmingLeave) {
         AlertDialog(
@@ -172,6 +193,13 @@ fun RoomMembersScreen(
             // Membership is a Firepit idea: on a Meshtastic channel there is no
             // roster, and anyone with the key can be on it unannounced.
             if (kind.isPrivate) {
+                item {
+                    SharingRoomRow(
+                        state = sharing,
+                        roomId = roomId,
+                        onClick = { pickingRoom = true },
+                    )
+                }
                 item { SectionLabel("Members") }
             }
 
