@@ -178,6 +178,37 @@ class MeshRepository @Inject constructor(
 
     fun observeNodes(): Flow<List<MeshNode>> = nodeDao.observeAll()
 
+    private fun roomChannelOf(channel: Channel): RoomChannel {
+        val id = channel.settings?.id ?: 0
+        return RoomChannel(
+            index = channel.index,
+            name = channel.settings?.name.orEmpty().let(::sanitizeMeshText),
+            role = when (channel.role) {
+                Channel.Role.PRIMARY -> ChannelRole.PRIMARY
+                Channel.Role.SECONDARY -> ChannelRole.SECONDARY
+                else -> ChannelRole.DISABLED
+            },
+            id = id,
+            positionPrecision = channel.settings?.module_settings?.position_precision ?: 0,
+        )
+    }
+
+    /**
+     * Folds a channel we just wrote into our own view of the radio.
+     *
+     * The firmware lists channels once, during the config download, and never
+     * mentions them again. Without this a room stays invisible until the next
+     * reconnect — it would not appear in the list, and nothing could be sent to
+     * it, because the slot would not be known to carry a conversation.
+     */
+    internal fun applyChannelWrite(written: Channel) {
+        _snapshot.value = _snapshot.value?.let { snapshot ->
+            snapshot.copy(channels = snapshot.channels + (written.index to written))
+        }
+        _channels.value = (_channels.value.filterNot { it.index == written.index } + roomChannelOf(written))
+            .sortedBy { it.index }
+    }
+
     /** Starts the inbound pump. Safe to call once per process. */
     fun start() {
         scope.launch {
@@ -194,19 +225,7 @@ class MeshRepository @Inject constructor(
                         ?: MeshConstants.DEFAULT_HOP_LIMIT
                     _channels.value = state.snapshot.channels.values
                         .sortedBy { it.index }
-                        .map { channel ->
-                            RoomChannel(
-                                index = channel.index,
-                                name = channel.settings?.name.orEmpty().let(::sanitizeMeshText),
-                                role = when (channel.role) {
-                                    Channel.Role.PRIMARY -> ChannelRole.PRIMARY
-                                    Channel.Role.SECONDARY -> ChannelRole.SECONDARY
-                                    else -> ChannelRole.DISABLED
-                                },
-                                id = channel.settings?.id ?: 0,
-                                positionPrecision = channel.settings?.module_settings?.position_precision ?: 0,
-                            )
-                        }
+                        .map(::roomChannelOf)
                     state.snapshot.nodes.values.forEach { saveNode(it) }
                 }
             }

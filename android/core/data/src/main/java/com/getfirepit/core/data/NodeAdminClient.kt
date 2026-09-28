@@ -45,6 +45,10 @@ class NodeAdminClient @Inject constructor(
     /** Writes a channel slot. This does **not** reboot the radio. */
     suspend fun setChannel(channel: Channel) {
         send(AdminMessage(session_passkey = sessionPasskey(), set_channel = channel))
+        // The radio lists its channels only during the config download, so our
+        // own view has to be told; otherwise a new room stays invisible until
+        // the next reconnect.
+        repository.applyChannelWrite(channel)
     }
 
     /** Reads a slot back, so a write can be confirmed rather than assumed. */
