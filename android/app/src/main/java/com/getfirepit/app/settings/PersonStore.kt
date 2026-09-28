@@ -24,7 +24,7 @@ import kotlinx.coroutines.launch
  */
 @Singleton
 class PersonStore @Inject constructor(
-    @param:ApplicationContext context: Context,
+    @ApplicationContext context: Context,
     private val rooms: RoomRepository,
     @param:ApplicationScope private val scope: CoroutineScope,
 ) {

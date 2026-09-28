@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
  */
 @Singleton
 class NotificationPreferences @Inject constructor(
-    @param:ApplicationContext context: Context,
+    @ApplicationContext context: Context,
 ) {
     private val preferences =
         context.getSharedPreferences("firepit_notifications", Context.MODE_PRIVATE)

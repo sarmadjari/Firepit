@@ -124,8 +124,13 @@ private fun DeviceList(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { granted ->
         // Notifications are bundled into the same prompt but are not required
-        // to scan, so denying them must not block the radio.
-        val required = granted.filterKeys { it != Manifest.permission.POST_NOTIFICATIONS }
+        // to scan, so denying them must not block the radio. Only asked for on
+        // Android 13 and later, so only filtered out there.
+        val required = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            granted.filterKeys { it != Manifest.permission.POST_NOTIFICATIONS }
+        } else {
+            granted
+        }
         if (required.values.all { it }) viewModel.startScan()
     }
 

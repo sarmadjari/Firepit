@@ -1,14 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!--
       API 31+. neverForLocation because Firepit scans only to find its own
       radio, so scanning must not drag in the location permission; the map asks
-      for location separately and for its own reason.
+      for location separately and for its own reason. Older releases ignore the
+      flag and use the location permission declared below instead.
     -->
     <uses-permission
         android:name="android.permission.BLUETOOTH_SCAN"
-        android:usesPermissionFlags="neverForLocation" />
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="31" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <!-- API 29-30 equivalents. -->

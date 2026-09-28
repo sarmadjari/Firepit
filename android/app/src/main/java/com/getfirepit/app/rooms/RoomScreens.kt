@@ -1,7 +1,7 @@
 package com.getfirepit.app.rooms
 
-import android.app.Activity
 import android.view.WindowManager
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.FlowRow
@@ -37,7 +37,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -166,10 +165,6 @@ fun CreateRoomDialog(
 }
 
 /** Rotating QR invite. */
-// LocalActivity would be the modern way to reach the window, but it arrived in
-// activity-compose 1.10 and this project is on 1.8. The cast the rule warns
-// about is a checked one, and a null window simply leaves the flag unset.
-@Suppress("ContextCastToActivity")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InviteScreen(
@@ -184,7 +179,7 @@ fun InviteScreen(
     // The code on screen is a way to ask in, so it must not be capturable by
     // anything on the phone. A camera pointed at it is still a camera, but a
     // screenshot would outlive the rotation and reach a photo backup.
-    val window = (LocalContext.current as? Activity)?.window
+    val window = LocalActivity.current?.window
     DisposableEffect(window) {
         window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }

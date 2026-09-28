@@ -65,7 +65,11 @@ object MeshtasticChannel {
      * means to reach public nodes has to use that same label, because the
      * channel hash every receiver checks is taken over the name and the key
      * together.
+     *
+     * The protos have retired LONG_SLOW and VERY_LONG_SLOW, but a radio can
+     * still be set to either, and its channel is still named after it.
      */
+    @Suppress("DEPRECATION")
     fun publicNameFor(preset: Config.LoRaConfig.ModemPreset?): String = when (preset) {
         Config.LoRaConfig.ModemPreset.LONG_SLOW -> "LongSlow"
         Config.LoRaConfig.ModemPreset.LONG_MODERATE -> "LongMod"

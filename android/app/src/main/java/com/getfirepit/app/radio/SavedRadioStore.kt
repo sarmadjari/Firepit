@@ -23,7 +23,7 @@ import org.json.JSONObject
  */
 @Singleton
 class SavedRadioStore @Inject constructor(
-    @param:ApplicationContext context: Context,
+    @ApplicationContext context: Context,
 ) {
     private val preferences = context.getSharedPreferences("firepit_radios", Context.MODE_PRIVATE)
 

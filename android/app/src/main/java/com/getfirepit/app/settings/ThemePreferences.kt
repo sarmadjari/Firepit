@@ -25,7 +25,7 @@ enum class ThemeChoice(val label: String) {
  */
 @Singleton
 class ThemePreferences @Inject constructor(
-    @param:ApplicationContext context: Context,
+    @ApplicationContext context: Context,
 ) {
     private val preferences = context.getSharedPreferences("firepit_theme", Context.MODE_PRIVATE)
 

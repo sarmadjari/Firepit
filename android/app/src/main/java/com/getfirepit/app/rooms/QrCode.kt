@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.core.graphics.createBitmap
+import androidx.core.graphics.set
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
@@ -47,7 +48,7 @@ private fun encodeQr(content: String, sizePx: Int): Bitmap {
     return createBitmap(matrix.width, matrix.height).apply {
         for (x in 0 until matrix.width) {
             for (y in 0 until matrix.height) {
-                setPixel(x, y, if (matrix.get(x, y)) Color.BLACK else Color.WHITE)
+                this[x, y] = if (matrix.get(x, y)) Color.BLACK else Color.WHITE
             }
         }
     }

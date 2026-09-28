@@ -20,7 +20,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class RoomKeyStore @Inject constructor(
-    @param:ApplicationContext context: Context,
+    @ApplicationContext context: Context,
 ) {
     private val preferences =
         context.getSharedPreferences("firepit_room_keys", Context.MODE_PRIVATE)

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!--
+      Timber's own lint checks arrive with MapLibre, which logs through it.
+      Firepit does not use Timber: every module logs through android.util.Log,
+      so the check would only ask the app to take a dependency for its own sake.
+    -->
+    <issue id="LogNotTimber" severity="ignore" />
+</lint>

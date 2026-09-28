@@ -27,6 +27,15 @@ wire {
     }
 }
 
+kotlin {
+    compilerOptions {
+        // Wire's generated decoders assert non-null on packed lists that Kotlin
+        // 2.4 can already prove non-null. Generated code cannot be edited, and
+        // the assertion is a no-op, so this one diagnostic is silenced here.
+        freeCompilerArgs.add("-Xwarning-level=UNNECESSARY_NOT_NULL_ASSERTION:disabled")
+    }
+}
+
 dependencies {
     api(projects.core.model)
     api(libs.wire.runtime)

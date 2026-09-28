@@ -22,7 +22,7 @@ import org.meshtastic.proto.Channel
  */
 @Singleton
 class PrimaryBackup @Inject constructor(
-    @param:ApplicationContext context: Context,
+    @ApplicationContext context: Context,
 ) {
     private val preferences =
         context.getSharedPreferences("firepit_primary_backup", Context.MODE_PRIVATE)

@@ -4,7 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -18,7 +18,7 @@ import org.maplibre.android.maps.MapView
  *
  * MapView holds a GL surface and needs every lifecycle callback forwarded or it
  * leaks the context. Fold and unfold recreate the composition, so the view is
- * keyed on the configuration and rebuilt rather than resized in place.
+ * keyed on the window's size and rebuilt rather than resized in place.
  */
 @Composable
 fun MapLibreView(
@@ -27,9 +27,11 @@ fun MapLibreView(
     onMapReady: (MapLibreMap, MapView) -> Unit,
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
-    val configuration = LocalConfiguration.current
+    // Changes on rotation, fold and unfold alike, which is exactly when the
+    // surface has to be rebuilt.
+    val windowSize = LocalWindowInfo.current.containerSize
 
-    val mapView = remember(configuration.orientation, configuration.screenWidthDp) {
+    val mapView = remember(windowSize) {
         MapViewHolder()
     }
 

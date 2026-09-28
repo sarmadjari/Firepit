@@ -1,40 +1,40 @@
 [versions]
 # AGP 9.4 defaults to Kotlin 2.2.10, but this catalog version overrides it.
-# The real ceiling is KSP (needed by Hilt and Room), which lags Kotlin: there is
-# no KSP for 2.4.x yet, so the project sits on the 2.3 line.
-agp = "9.4.0"
-kotlin = "2.3.21"
+# KSP (needed by Hilt and Room) can still be the ceiling: its version no longer
+# tracks Kotlin's, so check a KSP release supports a new Kotlin before bumping.
+agp = "9.4.1"
+kotlin = "2.4.20"
 javaTarget = "17"
 
 compileSdk = "37"
 minSdk = "29"
 targetSdk = "37"
 
-composeBom = "2026.02.01"
+composeBom = "2026.09.00"
 composeAdaptive = "1.3.0"
 navigationSuite = "1.4.0"
-navigationCompose = "2.10.0"
-coreKtx = "1.19.0"
+navigationCompose = "2.10.2"
+coreKtx = "1.19.1"
 junit = "4.13.2"
-junitVersion = "1.1.5"
-espressoCore = "3.5.1"
+junitVersion = "1.3.0"
+espressoCore = "3.7.0"
 turbine = "1.2.1"
-activityCompose = "1.8.0"
+activityCompose = "1.13.0"
 
 # Protobuf. Generated from meshtastic/protobufs tag v2.8.0 — see protos/UPSTREAM.md.
-wire = "5.3.3"
+wire = "7.1.0"
 
-coroutines = "1.10.2"
+coroutines = "1.11.0"
 
 # BLE. Kable is what the official Meshtastic Android client uses.
-kable = "0.44.3"
+kable = "0.45.0"
 
-# KSP must match the Kotlin version exactly.
-ksp = "2.3.11"
+# Works with Kotlin 2.4.20; see the note at the top before changing either.
+ksp = "2.3.12"
 hilt = "2.60.1"
 hiltNavigationCompose = "1.4.0"
 lifecycle = "2.11.0"
-room = "2.8.4"
+room = "2.8.5"
 
 # QR. ZXing does both generation and decoding, which avoids pulling ML Kit and
 # Play Services in for one barcode format.

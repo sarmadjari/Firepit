@@ -24,7 +24,7 @@ import kotlinx.coroutines.flow.asStateFlow
  */
 @Singleton
 class RetentionStore @Inject constructor(
-    @param:ApplicationContext context: Context,
+    @ApplicationContext context: Context,
     private val messageDao: MessageDao,
     private val rooms: RoomRepository,
     private val mesh: MeshRepository,
