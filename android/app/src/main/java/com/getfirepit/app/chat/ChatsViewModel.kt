@@ -323,8 +323,9 @@ class ChatsViewModel @Inject constructor(
         viewModelScope.launch {
             runCatching {
                 if (peer != null) {
-                    // The primary channel: the one every node on the mesh shares,
-                    // so a direct message can be decrypted at the far end.
+                    // The channel index is ignored for a direct message: the
+                    // firmware encrypts to the recipient's key and puts a
+                    // channel hash of 0 on the wire.
                     repository.sendText(channel = 0, text = text, replyId = replyId, to = peer)
                 } else {
                     repository.sendText(channel = channel!!, text = text, replyId = replyId)

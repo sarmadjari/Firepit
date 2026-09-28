@@ -140,6 +140,7 @@ class MeshPacketBuilderTest {
             portNum = PortNum.TEXT_MESSAGE_APP,
             payload = "hi".encodeUtf8(),
             pkiEncrypted = true,
+            publicKey = okio.ByteString.of(*ByteArray(32) { 7 }),
         )
 
         assertEquals(0, packet.channel)

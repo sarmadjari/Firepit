@@ -101,6 +101,17 @@ class RoomRepository @Inject constructor(
     /** Who we have seen in [roomId]. See [RoomMember] for what this can and cannot know. */
     fun observeMembers(roomId: Int): Flow<List<RoomMember>> = memberDao.observeRoom(roomId)
 
+    /**
+     * A Firepit room we and [nodeNum] are both in, or null when we share none.
+     *
+     * Asking somebody's radio where it is travels inside a room and nowhere
+     * else: the question and the answer both ride the room's key, so nobody
+     * outside it learns that the question was asked or what came back.
+     */
+    suspend fun sharedRoomWith(nodeNum: Int): RoomChannel? =
+        rooms().firstOrNull { room ->
+            roomKeys.keyFor(room.id) != null && nodeNum in memberDao.nodeNumsIn(room.id)
+        }
     /** Starts listening for join and roster traffic. Safe to call once per process. */
     fun start() {
         scope.launch {

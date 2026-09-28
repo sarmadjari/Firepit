@@ -30,6 +30,7 @@ import org.meshtastic.proto.ToRadio
 class TracerouteClient @Inject constructor(
     private val link: RadioLink,
     private val mesh: MeshRepository,
+    private val rooms: RoomRepository,
 ) {
 
     private val pacer = OutboundPacer(System::currentTimeMillis)
@@ -37,18 +38,26 @@ class TracerouteClient @Inject constructor(
     /**
      * Traces the route to [nodeNum], or returns null if nothing answers.
      *
+     * Asked on a room's channel, never the primary: a route names every node
+     * that carried it, and on a key this many people hold that is a map of who
+     * is checking on whom, readable by all of them.
+     *
      * The firmware allows one traceroute every 30 s and silently drops the
      * rest, so the pacer holds the caller rather than letting it believe a
      * dropped probe timed out.
      */
     suspend fun trace(nodeNum: Int, timeout: Duration = REPLY_TIMEOUT): TraceRouteResult? {
         if (mesh.myNodeNum.value == null) error("Connect your node first")
+        val room = rooms.sharedRoomWith(nodeNum) ?: run {
+            Log.i(TAG, "no room shared with $nodeNum; not tracing where others could read it")
+            return null
+        }
 
         pacer.awaitSlot(PortNum.TRACEROUTE_APP)
 
         val packet = MeshPacketBuilder.meshPacket(
             to = nodeNum,
-            channel = 0,
+            channel = room.index,
             portNum = PortNum.TRACEROUTE_APP,
             payload = RouteDiscovery().encode().let(ByteString::of),
             wantResponse = true,

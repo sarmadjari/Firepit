@@ -43,6 +43,26 @@ object MeshPacketBuilder {
             "payload is ${payload.size} bytes, over the ${MeshConstants.DATA_PAYLOAD_LEN}-byte limit"
         }
 
+        // The three rules below are asserted here rather than left to each
+        // caller, because every one of them was broken at least once by a
+        // feature written before the privacy rules existed. A packet that
+        // cannot be built is a bug that cannot ship.
+        require(!pkiEncrypted || publicKey.size == PUBLIC_KEY_SIZE) {
+            "pki_encrypted needs the peer's $PUBLIC_KEY_SIZE-byte key; got ${publicKey.size} bytes"
+        }
+        require(to == MeshConstants.BROADCAST_NODENUM || portNum != PortNum.TEXT_MESSAGE_APP || pkiEncrypted) {
+            "a direct text message must be encrypted to its recipient: without it the message " +
+                "rides the channel key, which is what Meshtastic direct messages did before 2.5"
+        }
+        require(portNum !in LOCATION_PORTS || channel != ChannelSlotManager.PRIMARY_SLOT) {
+            "$portNum carries a position and must not go on the primary channel, which every " +
+                "radio in range can decrypt"
+        }
+        require(portNum != PortNum.TRACEROUTE_APP || channel != ChannelSlotManager.PRIMARY_SLOT) {
+            "a traceroute names every node that carried it, and the primary channel's key is " +
+                "held by every Firepit radio; ask inside a room instead"
+        }
+
         return MeshPacket(
             to = to,
             // PKI packets carry a channel hash of 0 on the wire.
@@ -90,4 +110,10 @@ object MeshPacketBuilder {
 
     /** Non-zero so the packet can be correlated with its ACK. */
     fun randomPacketId(): Int = Random.nextInt().let { if (it == 0) 1 else it }
+
+    /** Curve25519 public key length; anything else cannot encrypt to a node. */
+    private const val PUBLIC_KEY_SIZE = 32
+
+    /** Payloads that say where somebody is, and so are never for the primary. */
+    private val LOCATION_PORTS = setOf(PortNum.POSITION_APP, PortNum.WAYPOINT_APP)
 }
