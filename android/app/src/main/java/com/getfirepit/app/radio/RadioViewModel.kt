@@ -17,6 +17,8 @@ import com.getfirepit.core.data.SessionStore
 import com.getfirepit.core.protocol.NodeRole
 import com.getfirepit.core.protocol.RadioCapabilities
 import com.getfirepit.core.protocol.SavedRadio
+import com.getfirepit.core.transport.BluetoothPresence
+import com.getfirepit.core.transport.BluetoothState
 import com.getfirepit.core.transport.DiscoveredRadio
 import com.getfirepit.core.transport.LinkState
 import com.getfirepit.core.transport.RadioLink
@@ -71,6 +73,15 @@ data class RadioUiState(
     val owner: Owner? = null,
     /** Which saved radio this session is talking to, if any. */
     val connectedTo: String? = null,
+    /**
+     * The radio this session is bound to, connected or not yet.
+     *
+     * Only one radio can be administered at a time, so this is what tells three
+     * live radios apart from the one the app is actually talking to.
+     */
+    val activeRadioId: String? = null,
+    /** What the phone's Bluetooth stack holds, which is wider than our own link. */
+    val bluetooth: BluetoothState = BluetoothState(),
     /** Only known for the radio on the other end of the link. */
     val relayReach: RelayReach? = null,
     val beaconRate: BeaconRate? = null,
@@ -81,6 +92,7 @@ data class RadioUiState(
 class RadioViewModel @Inject constructor(
     private val scanner: RadioScanner,
     private val link: RadioLink,
+    private val presence: BluetoothPresence,
     private val session: RadioSessionController,
     private val savedRadios: SavedRadioStore,
     private val sessionStore: SessionStore,
@@ -112,8 +124,9 @@ class RadioViewModel @Inject constructor(
         combine(tracing, traceResult, savedRadios.radios, owners.owner) { tracing, result, saved, owner ->
             Extras(tracing, result, saved, owner)
         },
-        link.state,
-    ) { base, nodes, me, extras, linkState ->
+        presence.state(),
+    ) { base, nodes, me, extras, bluetooth ->
+        val linkState = base.link
         base.copy(
             // A radio is saved under its Bluetooth name, which the firmware only
             // re-advertises after a reboot. What it calls itself on the mesh
@@ -137,6 +150,8 @@ class RadioViewModel @Inject constructor(
             // The radio actually on the other end of the link, which is not
             // necessarily the Personal one once Base stations are administered.
             connectedTo = (linkState as? LinkState.Ready)?.let { sessionStore.lastRadioId },
+            activeRadioId = sessionStore.lastRadioId,
+            bluetooth = bluetooth,
             // Nearest first: the ones you can actually reach matter most.
             // 0L, not 0: mixing Long and Int here erases the selector type and
             // throws when the comparator meets both.
@@ -184,9 +199,17 @@ class RadioViewModel @Inject constructor(
         error.value = null
         scanning.value = true
         scanJob = viewModelScope.launch {
-            scanner.scanDistinct()
-                .catch { cause -> error.value = cause.message ?: "Scan failed" }
-                .collect { found.value = it }
+            try {
+                // Bounded, because a BLE scan left running costs battery for as
+                // long as the screen stays open.
+                withTimeoutOrNull(SCAN_WINDOW) {
+                    scanner.scanDistinct()
+                        .catch { cause -> error.value = cause.message ?: "Scan failed" }
+                        .collect { found.value = it }
+                }
+            } finally {
+                scanning.value = false
+            }
         }
     }
 
@@ -279,6 +302,9 @@ class RadioViewModel @Inject constructor(
     private companion object {
         /** Long enough for a radio in the room, short enough not to hang the screen. */
         val SAVED_SCAN_WINDOW = 20.seconds
+
+        /** A scan nobody stops stops itself. */
+        val SCAN_WINDOW = 60.seconds
     }
 
     fun disconnect() {

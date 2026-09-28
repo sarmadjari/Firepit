@@ -1,11 +1,14 @@
 package com.getfirepit.app.di
 
+import android.content.Context
 import com.getfirepit.core.data.ApplicationScope
+import com.getfirepit.core.transport.BluetoothPresence
 import com.getfirepit.core.transport.RadioLink
 import com.getfirepit.core.transport.RadioScanner
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -25,6 +28,11 @@ object AppModule {
     @Provides
     @Singleton
     fun provideRadioScanner(): RadioScanner = RadioScanner()
+
+    @Provides
+    @Singleton
+    fun provideBluetoothPresence(@ApplicationContext context: Context): BluetoothPresence =
+        BluetoothPresence(context)
 
     /**
      * One link for the Personal node. A radio accepts a single PhoneAPI client

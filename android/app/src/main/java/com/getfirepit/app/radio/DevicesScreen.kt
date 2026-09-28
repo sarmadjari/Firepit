@@ -6,6 +6,7 @@ import android.text.format.DateUtils
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -35,7 +36,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import com.getfirepit.core.designsystem.component.FirepitIcons
 import androidx.compose.material3.OutlinedTextField
@@ -130,18 +135,34 @@ private fun DeviceList(
                 .padding(horizontal = FirepitSpacing.screenMargin),
             verticalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
         ) {
-            LinkStatus(state.link)
+            LinkError(state.error)
 
-            Button(onClick = { permissionLauncher.launch(blePermissions()) }) {
-                Text(if (state.scanning) "Scanning…" else "Scan")
-            }
-
-            state.error?.let { message ->
-                Text(
-                    message,
-                    color = FirepitTheme.colors.danger,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
+            ) {
+                Button(
+                    onClick = {
+                        if (state.scanning) {
+                            viewModel.stopScan()
+                        } else {
+                            permissionLauncher.launch(blePermissions())
+                        }
+                    },
+                ) {
+                    Text(if (state.scanning) "Stop" else "Scan")
+                }
+                if (state.scanning) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                    )
+                    Text(
+                        "Looking for radios…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FirepitTheme.colors.textSecondary,
+                    )
+                }
             }
 
             val nearby = state.found.filter { found ->
@@ -149,17 +170,17 @@ private fun DeviceList(
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s)) {
                 if (state.saved.isNotEmpty()) {
-                    item(key = "saved-label") { SectionLabel("Your devices") }
+                    item(key = "saved-label") { SectionLabel("Paired Devices") }
                 }
                 items(state.saved, key = { it.identifier }) { radio ->
                     DeviceRow(
                         radio = radio,
-                        connected = state.connectedTo == radio.identifier,
+                        status = statusOf(radio, state),
                         onOpen = { onOpen(radio) },
                     )
                 }
                 if (nearby.isNotEmpty()) {
-                    item(key = "nearby-label") { SectionLabel("Nearby") }
+                    item(key = "nearby-label") { SectionLabel("New devices nearby") }
                 }
                 items(nearby, key = { it.identifier }) { radio ->
                     Card(
@@ -186,8 +207,22 @@ private fun DeviceList(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DeviceRow(radio: SavedRadio, connected: Boolean, onOpen: () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth(), onClick = onOpen) {
+private fun DeviceRow(
+    radio: SavedRadio,
+    status: DeviceStatus,
+    onOpen: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onOpen,
+        // The one being administered is outlined, so it is findable without
+        // reading three rows of small print.
+        border = if (status.active) {
+            BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
+        } else {
+            null
+        },
+    ) {
         Row(
             modifier = Modifier.padding(FirepitSpacing.m).fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -202,17 +237,16 @@ private fun DeviceRow(radio: SavedRadio, connected: Boolean, onOpen: () -> Unit)
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = listOfNotNull(
-                        radio.role.label,
-                        "Connected".takeIf { connected },
-                    ).joinToString(" · "),
+                    text = "${radio.role.label} · ${status.detail}",
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (connected) {
-                        FirepitTheme.colors.live
-                    } else {
-                        FirepitTheme.colors.textSecondary
-                    },
+                    color = status.tone,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
+            }
+            when {
+                status.active -> ActivePill()
+                status.connected -> ConnectedDot()
             }
             Icon(
                 painter = painterResource(FirepitIcons.Chevron),
@@ -223,19 +257,91 @@ private fun DeviceRow(radio: SavedRadio, connected: Boolean, onOpen: () -> Unit)
     }
 }
 
+/**
+ * What one saved radio is doing right now.
+ *
+ * Paired, connected and active are three different things, and Android's own
+ * settings screen blurs the first two. A radio accepts a single PhoneAPI
+ * client, so however many are paired, exactly one answers configuration.
+ */
+private data class DeviceStatus(
+    val detail: String,
+    val tone: Color,
+    val connected: Boolean,
+    val active: Boolean,
+)
+
 @Composable
-private fun LinkStatus(link: LinkState) {
-    val (label, color) = when (link) {
-        LinkState.Disconnected -> "Not connected" to FirepitTheme.colors.stale
-        is LinkState.Connecting -> "Connecting…" to FirepitTheme.colors.warn
-        LinkState.Downloading -> "Reading your node…" to FirepitTheme.colors.warn
-        is LinkState.Ready -> "Connected" to FirepitTheme.colors.live
-        is LinkState.Reconnecting -> "Reconnecting (attempt ${link.attempt}) · ${link.cause}" to FirepitTheme.colors.warn
-        is LinkState.Unsupported ->
-            "Firmware ${link.version ?: "unknown"} · needs " +
-                "${RadioCapabilities.MINIMUM_FIRMWARE} or newer" to FirepitTheme.colors.danger
+private fun statusOf(radio: SavedRadio, state: RadioUiState): DeviceStatus {
+    val colors = FirepitTheme.colors
+    val connected = radio.identifier in state.bluetooth.connected
+    val live = if (radio.identifier == state.activeRadioId) {
+        when (val link = state.link) {
+            is LinkState.Ready -> "Active · you are administering this one" to colors.live
+            is LinkState.Connecting -> "Connecting…" to colors.warn
+            LinkState.Downloading -> "Reading your node…" to colors.warn
+            is LinkState.Reconnecting ->
+                "Reconnecting (attempt ${link.attempt}) · ${link.cause}" to colors.warn
+            is LinkState.Unsupported ->
+                "Firmware ${link.version ?: "unknown"} · needs " +
+                    "${RadioCapabilities.MINIMUM_FIRMWARE} or newer" to colors.danger
+            LinkState.Disconnected -> null
+        }
+    } else {
+        null
     }
-    Text(label, color = color, style = MaterialTheme.typography.bodyMedium)
+    if (live != null) {
+        return DeviceStatus(live.first, live.second, connected = true, active = true)
+    }
+
+    val signal = state.found.firstOrNull { it.identifier == radio.identifier }?.rssi
+    val where = when {
+        connected -> "Connected · tap to administer"
+        radio.identifier in state.bluetooth.paired -> "Paired · tap to administer"
+        signal != null -> "In range"
+        state.scanning -> "Not seen yet"
+        else -> "Not connected"
+    }
+    return DeviceStatus(
+        detail = listOfNotNull(where, signal?.let { "$it dBm" }).joinToString(" · "),
+        tone = if (connected) colors.textSecondary else colors.stale,
+        connected = connected,
+        active = false,
+    )
+}
+
+/** The radio this session is bound to, among however many are connected. */
+@Composable
+private fun ActivePill() {
+    Text(
+        text = "Active",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onPrimary,
+        modifier = Modifier
+            .clip(RoundedCornerShape(FirepitSpacing.chipCorner))
+            .background(MaterialTheme.colorScheme.primary)
+            .padding(horizontal = FirepitSpacing.s, vertical = FirepitSpacing.xs),
+    )
+}
+
+@Composable
+private fun ConnectedDot() {
+    Box(
+        modifier = Modifier
+            .size(8.dp)
+            .background(FirepitTheme.colors.live, CircleShape),
+    )
+}
+
+@Composable
+private fun LinkError(message: String?) {
+    message?.let {
+        Text(
+            it,
+            color = FirepitTheme.colors.danger,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
 }
 
 fun prettyName(raw: String): String = raw
