@@ -87,35 +87,15 @@ class RoomCryptoTest {
     }
 
     @Test
-    fun `a token from a nearby window still scans`() {
-        val key = RoomCrypto.inviteKey(RoomCrypto.generatePsk(), 42, 1)
-        val shown = RoomCrypto.token(key, inviterNodeNum = 7, window = 100)
-
-        (98..102).forEach { scannerWindow ->
-            assertTrue(
-                "window $scannerWindow is within tolerance and must be accepted",
-                RoomCrypto.isTokenValid(key, 7, shown, claimedWindow = 100, scannedAtWindow = scannerWindow),
-            )
-        }
-    }
-
-    @Test
-    fun `a stale token is refused`() {
-        val key = RoomCrypto.inviteKey(RoomCrypto.generatePsk(), 42, 1)
-        val shown = RoomCrypto.token(key, inviterNodeNum = 7, window = 100)
-
-        assertFalse(
-            "three windows out is roughly half a minute old",
-            RoomCrypto.isTokenValid(key, 7, shown, claimedWindow = 100, scannedAtWindow = 103),
-        )
-    }
-
-    @Test
     fun `a forged token is refused`() {
         val key = RoomCrypto.inviteKey(RoomCrypto.generatePsk(), 42, 1)
+        val now = 1_000_000_000_000
 
-        assertFalse(RoomCrypto.isTokenValid(key, 7, ByteArray(8), 100, 100))
-        assertFalse("wrong length is not a near miss", RoomCrypto.isTokenValid(key, 7, ByteArray(4), 100, 100))
+        assertFalse(RoomCrypto.matchesRecentToken(key, 7, ByteArray(8), now))
+        assertFalse(
+            "wrong length is not a near miss",
+            RoomCrypto.matchesRecentToken(key, 7, ByteArray(4), now),
+        )
     }
 
     @Test
@@ -130,7 +110,8 @@ class RoomCryptoTest {
     fun `a join hello is matched without being told which window it came from`() {
         val key = RoomCrypto.inviteKey(RoomCrypto.generatePsk(), 42, 1)
         val now = 1_000_000_000_000
-        val scannedAt = now - RoomCrypto.ROTATION_SECONDS * 1000 * 6
+        val windowsBack = RoomCrypto.DEFAULT_LOOKBACK_WINDOWS - 1
+        val scannedAt = now - RoomCrypto.ROTATION_SECONDS * 1000 * windowsBack
         val echoed = RoomCrypto.token(key, 7, RoomCrypto.windowFor(scannedAt))
 
         assertTrue(RoomCrypto.matchesRecentToken(key, 7, echoed, now))
@@ -170,7 +151,10 @@ class InviteCodecTest {
 
     @Test
     fun `the encoded form is a firepit link`() {
-        assertTrue(InviteCodec.encode(validInvite()).startsWith("firepit://join?v=1&d="))
+        assertTrue(
+            InviteCodec.encode(validInvite())
+                .startsWith("firepit://join?v=${InviteCodec.VERSION}&d="),
+        )
     }
 
     @Test
@@ -204,15 +188,6 @@ class InviteCodecTest {
     }
 
     @Test
-    fun `an invite with a short key is rejected`() {
-        // The firmware reads an empty or short PSK as "inherit the primary key",
-        // which would quietly create a room anyone on the primary could read.
-        val broken = validInvite().copy(room_psk = ByteArray(16).toByteString())
-
-        assertNull(InviteCodec.decode(InviteCodec.encode(broken)))
-    }
-
-    @Test
     fun `an invite with an over-long name is rejected`() {
         val broken = validInvite().copy(room_name = "a".repeat(12))
 
@@ -228,10 +203,9 @@ class InviteCodecTest {
     }
 
     private fun validInvite() = Invite(
-        version = 1,
+        version = InviteCodec.VERSION,
         room_id = 0x1234_5678,
         room_name = "Camp",
-        room_psk = RoomCrypto.generatePsk().toByteString(),
         position_precision = 32,
         generation = 1,
         inviter = Inviter(

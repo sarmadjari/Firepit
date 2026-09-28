@@ -13,6 +13,8 @@ import com.getfirepit.core.data.MeshRepository
 import com.getfirepit.core.data.RoomRepository
 import com.getfirepit.core.data.TracerouteClient
 import com.getfirepit.core.model.MeshNode
+import com.getfirepit.core.data.AwaitedRoom
+import com.getfirepit.core.data.PendingJoin
 import com.getfirepit.core.model.RoomChannel
 import com.getfirepit.core.model.RoomMember
 import com.getfirepit.core.protocol.ChannelSlotManager
@@ -126,6 +128,18 @@ class RoomsViewModel @Inject constructor(
 
     fun makeRadioPrivate() = run("Could not change the radio") { range.makePrivate() }
 
+    /** People asking to be let into one of our rooms. */
+    val pendingJoins: StateFlow<List<PendingJoin>> = rooms.pendingJoins
+
+    /** The room we asked to join, while we wait to be let in. */
+    val awaiting: StateFlow<AwaitedRoom?> = rooms.awaiting
+
+    fun approveJoin(nodeNum: Int) = run("Could not let them in") { rooms.approveJoin(nodeNum) }
+
+    fun declineJoin(nodeNum: Int) = run("Could not turn them away") { rooms.declineJoin(nodeNum) }
+
+    fun stopWaiting() = rooms.stopWaiting()
+
     fun keepRadioPublic() =
         run("Could not put the radio's own channel back") { range.keepPublic() }
 
@@ -220,6 +234,9 @@ class RoomsViewModel @Inject constructor(
         when (val code = CodeScanner.classify(scanned)) {
             is ScannedCode.Firepit -> {
                 rooms.joinRoom(code.invite)
+                // Not joined yet: the code carries no keys, so this is a
+                // request the inviter still has to answer.
+                notice.value = null
             }
 
             is ScannedCode.Meshtastic -> {

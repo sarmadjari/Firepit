@@ -203,7 +203,9 @@ Nothing takes a key back from a person who already holds it. Removing somebody i
 
 Link-and-PIN invites were designed and then dropped. A link can be forwarded, screenshotted, left in a chat history, or read by whoever else has that phone, and no expiry window fixes any of that — it only narrows it. A PIN turns the problem into a second message that travels the same way as the first.
 
-A QR code has to be pointed at a camera. That is the whole security argument, and it is a stronger one than any expiry: **the two people are in the same place.** Everything downstream leans on it — the founder's signing key is trusted because you scanned it in person, and an invite carries the room key, so handing one over is handing over the room.
+A QR code has to be pointed at a camera. That is the whole security argument, and it is a stronger one than any expiry: **the two people are in the same place.** Everything downstream leans on it — the founder's signing key is trusted because you scanned it in person, and showing a code is how you tell the room that the person in front of you should be let in.
+
+The code itself carries no key. A photograph of it yields a room name and the inviter's public key, and the keys only ever travel in a grant encrypted to one joiner, after a member has tapped "Let in".
 
 The cost is real and accepted: you cannot add someone who is not with you. That is the trade, made on purpose.
 

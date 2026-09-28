@@ -156,7 +156,7 @@ flowchart TD
 
 1. Chats ＋ → **New room** → name (counter shows bytes left; limit 11 UTF-8 bytes, IG §3.2) → icon (one of eight fixed room icons: tent, trail, car, music, flag, house, star, heart — default tent; U-5) → Create. No precision choice: every room shares precise location, because finding each other in a crowd is the point (U-2).
 2. System: generate room id + 32-byte key, pick the lowest free slot (1–7), write the channel (no reboot), mark room in DB (IG §6.1). If 7 rooms exist the button is disabled with "You're in 7 rooms — leave one to create another".
-3. Land directly on **Invite**: rotating QR (8 s ring, IG §6.8.3) with "Show this to people next to you", and **Share link** (generates link + 8-digit PIN; the PIN is shown on a second line with "Send the PIN separately", IG §6.8.4). The room chat sits behind a "Done" button.
+3. Land directly on **Invite**: rotating QR (8 s ring, IG §6.8.3) with "Show this to people next to you". There is no share link (IG §6.8.4). The room chat sits behind a "Done" button.
 4. Room chat opens with a system chip: "You created Camp · Invite people from room info".
 
 **States:** camera-less devices (link only); QR expired → auto-refreshes (never an error on the inviter's side); pending link invites listed in room info with pending / joined / expired / reused.

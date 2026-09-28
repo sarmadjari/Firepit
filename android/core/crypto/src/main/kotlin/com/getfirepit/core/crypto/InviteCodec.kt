@@ -67,22 +67,25 @@ object InviteCodec {
     }
 
     /**
-     * Rejects invites that would produce a broken room. A short PSK is the
-     * dangerous one: the firmware treats an empty key as "inherit the primary",
-     * so a malformed invite could silently create a readable room.
+     * Rejects invites that would produce a broken room, or one we could never
+     * be let into.
+     *
+     * The inviter's public key is the load-bearing field now: without it there
+     * is nowhere to send a hello that only they can open, and no way for the
+     * keys to come back.
      */
     private fun Invite.isUsable(): Boolean =
         version == VERSION &&
             room_id != 0 &&
-            room_psk.size == RoomCrypto.PSK_SIZE &&
             room_name.toByteArray().size <= MAX_ROOM_NAME_BYTES &&
+            inviter?.node_num != 0 &&
             inviter?.user?.public_key?.size == PUBLIC_KEY_SIZE
 
     /**
      * Whether this invite stops working on its own.
      *
-     * An invite carries the room's key, so one without a token is a key that
-     * never expires: kept after a room empties, it would still open it.
+     * Without a token an invite is an open door: it carries no keys, but it
+     * would let anyone ask to be let in at any time.
      */
     fun Invite.isTimeBound(): Boolean = token.size == RoomCrypto.TOKEN_SIZE
 

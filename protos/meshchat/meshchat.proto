@@ -54,14 +54,20 @@ message Inviter {
 
 // Everything needed to join a room. QR form is signed with a rotating token;
 // link form is encrypted under a PIN-derived key, so neither is useful alone.
+// Everything needed to ask to join a room. Carries no key material at all: a
+// photographed code is a request to be let in, not a way in. The keys arrive
+// in a RoomGrant, encrypted to the joiner, once the inviter approves.
 message Invite {
+  // Held open on purpose. A key belongs in a RoomGrant, which goes to one node
+  // that asked for it; anything put here is in every photograph of the code.
+  reserved 4, 13;
+  reserved "room_psk", "firepit_key";
+
   uint32 version = 1;
   // Stable room identity across renames, re-indexing and key rotation.
   fixed32 room_id = 2;
   // <= 11 UTF-8 bytes (nanopb limit on ChannelSettings.name).
   string room_name = 3;
-  // Exactly 32 bytes. Never empty: an empty PSK silently inherits the primary.
-  bytes room_psk = 4;
   uint32 position_precision = 5;
   // Increments on PSK rotation; lets a joiner overwrite a stale channel.
   uint32 generation = 6;
@@ -70,14 +76,10 @@ message Invite {
   fixed32 invite_id = 9;
   uint32 issued_at = 10;
 
-  // QR invites only; absent on link invites.
+  // What binds the code to one inviter and one moment. Without both, an
+  // invite would be an open door rather than one that closes on its own.
   uint32 window = 11;
   bytes token = 12;
-
-  // Exactly 32 bytes. The room's own key, which never reaches the radio: the
-  // PSK above is what the firmware encrypts with, and anyone holding the
-  // hardware has it. Words are sealed under this one instead.
-  bytes firepit_key = 13;
 }
 
 // ---------------------------------------------------------------------------
@@ -95,6 +97,7 @@ message MeshChatControl {
     SealedMessage sealed_message = 7;
     RoomText room_text = 8;
     KeyRotation key_rotation = 9;
+    RoomGrant room_grant = 11;
   }
 }
 
@@ -140,6 +143,29 @@ message JoinHello {
   bytes token = 2;
   uint32 generation = 3;
   uint32 app_version = 4;
+  // Exactly 32 bytes. Where to encrypt the grant, taken from inside this
+  // sealed hello rather than from the NodeDB, which anyone can write to.
+  bytes joiner_key = 5;
+}
+
+// Inviter -> joiner, as a PKI direct message, once the inviter has approved.
+// The only thing that carries a room's keys, and it goes to one node that
+// asked for them from arm's length.
+message RoomGrant {
+  enum Answer {
+    GRANTED = 0;
+    DECLINED = 1;
+  }
+  Answer answer = 1;
+  fixed32 invite_id = 2;
+  fixed32 room_id = 3;
+  string room_name = 4;
+  // Exactly 32 bytes. What the radio will encrypt the channel with.
+  bytes room_psk = 5;
+  // Exactly 32 bytes. What the phone seals words with; the radio never sees it.
+  bytes firepit_key = 6;
+  uint32 generation = 7;
+  uint32 position_precision = 8;
 }
 
 // Inviter -> room broadcast, so every member's roster shows the trust chain.

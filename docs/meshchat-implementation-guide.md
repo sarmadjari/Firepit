@@ -333,7 +333,7 @@ Each feature: **Maps to** (stock Meshtastic mechanism) · **Wire facts** · **Fi
 2. Update `rooms.slot_index` by `room_id`, never by name. If the active location room moved, its precision moved with it (precision lives in the channel settings), so nothing else changes.
 3. Position-sharing side effect: if the removed room was the active location room, live sharing stops automatically (no channel with precision ≠ 0), which matches the design.
 
-**Steps — join via invite** → §6.8 (QR only). After decoding the invite: same as create, using the received `room_id`, name, psk, precision; if a room with the same `room_id` already exists (key rotation), overwrite the channel in place.
+**Steps — join via invite** → §6.8 (QR only). Decoding the invite writes nothing: it carries no key. The channel is written only when the `RoomGrant` arrives (§6.8.5), using the granted `room_id`, name, psk and precision; if a room with the same `room_id` already exists (key rotation), overwrite the channel in place.
 
 **Slot 0 (primary) provisioning — D-1:** written once at node setup, never shown as a channel. `Channel{ index: 0, role: PRIMARY, settings{ name: <mode-dependent>, psk: <32-byte app-wide key>, id: 0x4D455348, module_settings{ position_precision: 0 } } }`. **Group only:** `name = "MeshChat"` → the firmware hashes the name into its own frequency slot. **Group + public relays:** `name = ""` → the firmware hashes the modem-preset display name instead (`LongFast`), landing on the public mesh's slot, so public nodes relay our encrypted packets while the private key keeps identity and telemetry unreadable. Never set `lora.channel_num` by hand (leave 0 so the derivation stays correct in every region). Switching modes = one `set_channel` on slot 0; verify on hardware whether the radio re-tunes without a reboot (`Channels::onConfigChanged` bumps `radioGeneration`) and fall back to `reboot_seconds` if not. All nodes in a group must share mode **and** modem preset or they cannot hear each other: the invite carries both (`LoRaProfile`), and the joiner aligns before writing the room. On 2.8, US public nodes may default to LongTurbo; public-relay mode should follow the local public preset (`FromRadio.region_presets` default), group-only mode keeps LongFast.
 
@@ -592,56 +592,85 @@ message LoRaProfile {
 }
 message Inviter { uint32 node_num = 1; meshtastic.User user = 2; }   // user.public_key must be 32 bytes
 message Invite {
+  reserved 4, 13;                    // held open: a key here is in every photograph of the code
   uint32 version = 1;                // 1
   fixed32 room_id = 2;               // == ChannelSettings.id
   string room_name = 3;              // ≤ 11 UTF-8 bytes
-  bytes room_psk = 4;                // 32 bytes
   uint32 position_precision = 5;
   uint32 generation = 6;             // increments on PSK rotation
   LoRaProfile lora = 7;
-  Inviter inviter = 8;
+  Inviter inviter = 8;               // carries the key the hello is encrypted to
   fixed32 invite_id = 9;             // random, non-zero
   uint32 issued_at = 10;             // unix seconds (inviter clock)
-  uint32 window = 11;                // QR only: rotation window index
-  bytes token = 12;                  // QR only: 8 bytes
+  uint32 window = 11;                // rotation window index
+  bytes token = 12;                  // 8 bytes
 }
 ```
+
+**The invite carries no key material.** A photograph of the code yields a room
+name, a room id, the inviter's public key and a token that stops being accepted
+in about thirty seconds. The keys arrive in a `RoomGrant` (§6.8.5), encrypted to
+the joiner, after a person approves.
 
 #### 6.8.3 QR invites (in-person, rotating)
 
 - `invite_key = HMAC-SHA256(key = room_psk, msg = "meshchat-invite-v1" || room_id || generation)` — derivable by every current key-holder, so any member can invite (design).
-- Every `ROTATION_SECS = 8` s: `window = floor(now / ROTATION_SECS)`, `token = HMAC-SHA256(invite_key, inviter.node_num || window)[0:8]`, re-encode, re-render. The QR payload is `firepit://join?v=1&d=<base64url(Invite)>` (register the scheme on both platforms; also register a universal/app link on a project-owned domain for the same path).
-- Scanner side: decode; verify `token` for `window` within ±2 windows of the scanner's clock (tolerates ~20 s skew); reject otherwise ("QR expired, ask them to show it again"). Then join the room (§6.1) and run the join handshake (§6.8.5) carrying `invite_id` and `token`.
-- What rotation buys (state it in the UI, per design §6): it narrows the capture window and binds the join to a specific inviter and moment; it does **not** revoke the PSK afterwards.
-- Size: Invite ≈ 32 (psk) + 32 (key) + names + ~30 → ~150 bytes → ~200-char base64url; QR version 8–10 at ECC M, fine for phone screens.
+- Every `ROTATION_SECS = 8` s: `window = floor(now / ROTATION_SECS)`, `token = HMAC-SHA256(invite_key, inviter.node_num || window)[0:8]`, re-encode, re-render. The QR payload is `firepit://join?v=1&d=<base64url(Invite)>` (register the scheme on both platforms).
+- **The scanner cannot verify the token.** It is an HMAC under the room key, which the scanner does not hold and is not yet trusted with. It checks only that `window` is within ±2 of its own clock, which fails an obviously old photograph immediately; the inviter proves the token before granting anything.
+- The invite screen sets `FLAG_SECURE`, so the code cannot be screenshotted or screen-recorded into a photo backup.
+- Size: Invite ≈ 32 (inviter key) + names + ~40 → ~120 bytes → ~160-char base64url; QR version 7–9 at ECC M, fine for phone screens.
 
 #### 6.8.4 There are no link invites
 
-Designed, specified here in full, and dropped. A link can be forwarded, screenshotted, left in a chat history or read by whoever else has that phone, and an expiry window narrows that rather than fixing it. A PIN only turns the problem into a second message travelling the same way as the first.
+Designed, specified, and dropped. A link can be forwarded, screenshotted, left in a chat history or read by whoever else has that phone, and an expiry window narrows that rather than fixing it. A PIN only turns the problem into a second message travelling the same way as the first — and, once the ciphertext is in the attacker's hands, one they can grind offline at their own pace.
 
-A QR code has to be pointed at a camera, which means the two people are in the same room. That is the property everything else rests on: the founder's signing key is trusted because it was scanned in person, and an invite carries the room key, so handing one over is handing over the room.
+A QR code has to be pointed at a camera, which means the two people are in the same place. That is the property everything else rests on.
 
 Consequence, accepted deliberately: somebody who is not with you cannot be added. No Argon2, no libsodium, no domain to register.
 
-#### 6.8.5 Join handshake over the mesh (NodeInfo + MeshChat control port)
+#### 6.8.5 Join handshake (MeshChat control port)
 
-Ordering is dictated by the PKI preconditions in §3.3.
+No NodeInfo step and no propagation wait: the inviter's public key is in the
+code, so the joiner can speak privately from the first packet.
 
-**Step A — announce identity on the room (channel-encrypted):** the joiner's app builds a NodeInfo packet from its node's own `User` (as received in `OWN_NODEINFO`/`get_owner_response`; never invent fields):
+**Step A — joiner seeds its own radio.** The radio encrypts from its own NodeDB, which is bounded and evicts; the app knowing a key is not the same as the radio knowing it. Hand it over from the invite rather than broadcasting and hoping:
 ```text
-MeshPacket{ to: broadcast, channel: room_slot, hop_limit: 3, want_ack: false, priority: BACKGROUND,
-            decoded: Data{ portnum: NODEINFO_APP, payload: User{ own }, want_response: false } }
+AdminMessage{ add_contact: SharedContact{ node_num: inviter.node_num, user: inviter.user } }
 ```
-Every member's node stores the joiner's key and name (`NodeDB::updateUser`), and — as standard firmware behaviour — replies with its own NodeInfo (`MeshService::handleFromRadio`: unknown sender on a decoded packet → `sendOurNodeInfo(from, wantReplies=true, channel)`, gated by ChUtil < 25 % and ≤ hop_limit+2 hops). NodeInfo replies are throttled (10 min per node, scaled; 12 h per requester), so do not wait for them: the joiner already has the inviter's key from the invite (`add_contact` it locally before step B). On 2.8 the firmware signs this broadcast automatically (first-contact signed NodeInfo).
 
-**Step B — join hello to the inviter (PKI DM on the MeshChat control port):** after ~5 s (let step A propagate):
+**Step B — join hello (PKI DM on the MeshChat control port):**
 ```text
-MeshPacket{ to: inviter.node_num, pki_encrypted: true, want_ack: true, hop_limit: 3,
-            decoded: Data{ portnum: PRIVATE_APP, payload: MeshChatControl{ join_hello: JoinHello{ invite_id, token, generation, app_version } } } }
+MeshPacket{ to: inviter.node_num, pki_encrypted: true, want_ack: true,
+            decoded: Data{ portnum: PRIVATE_APP,
+                           payload: MeshChatControl{ join_hello: JoinHello{ invite_id, token, generation, app_version, joiner_key } } } }
 ```
-`PRIVATE_APP` (256) is where Meshtastic reserves room for third-party apps, and `portnums.proto` says outright that you may use it directly "without needing to rebuild protobuf files". Nodes ignore unknown ports: nothing appears on a T-Echo screen, no buzzer, and other Meshtastic apps do not render it as a message. Payload ≈ 20 bytes. If the DM NAKs with `PKI_UNKNOWN_PUBKEY`, repeat step A once and retry B after 30 s.
+`joiner_key` is the joiner's own 32-byte public key, carried **inside** the sealed hello. The grant is encrypted to it rather than to a NodeDB lookup, which any radio can poison by claiming a node number.
 
-**Step C — inviter side:** on a valid `JoinHello` (verify `invite_id`, and for QR invites the `token`/window), set `invites.status = joined`, add `room_members(joined_by, invited_by = self)`, and `set_favorite_node(joiner)` on its own node. Then optionally announce to the room so every roster shows the trust chain (design §6): one room broadcast of `MeshChatControl{ roster_event: RosterEvent{ kind: JOINED, node_num: joiner, invited_by: inviter } }` on `PRIVATE_APP` (`want_ack: true`). Decision D-3.
+Nothing is written to the radio at this point. The code carries no keys, so there is no room to write until the inviter answers.
+
+**Step C — inviter decides.** On a `JoinHello`, in order:
+
+| Check | Why |
+|---|---|
+| ≤ 5 attempts per node per minute | A stranger who cannot pass the token check has no reason to keep trying |
+| `invite_id` not already spent | A code stops being worth presenting once the person it was shown to is in |
+| `hop_start == hop_limit` | A code is shown to somebody in front of you; anything relayed was read somewhere you cannot see. Fails closed: neither field is authenticated, so a sender three hops out can leave `hop_start` at 0 to look unmeasurable while setting `hop_limit` high enough to be carried — it then arrives claiming a negative distance. Only an exact match counts as adjacent (`PacketOrigin.arrivedDirectly`) |
+| `matchesRecentToken` within 4 windows (~32 s) | Proves the code is genuine |
+| **A person taps "Let in"** | Proves the bearer is who it was shown to — which no token can |
+
+A token proves the *invite* is genuine, not that the *bearer* was authorised. Without the last row, a photographed code used inside the window still yields the keys.
+
+**Step D — grant.** On approval, the inviter seeds its own NodeDB with `joiner_key` if it does not already hold that node's key, then sends:
+```text
+MeshPacket{ to: joiner, pki_encrypted: true, public_key: joiner_key, want_ack: true,
+            decoded: Data{ portnum: PRIVATE_APP,
+                           payload: MeshChatControl{ room_grant: RoomGrant{ answer: GRANTED, invite_id, room_id, room_name, room_psk, firepit_key, generation, position_precision } } } }
+```
+Declining sends the same message with `answer: DECLINED` and no keys, so the joiner is told rather than left waiting.
+
+The joiner accepts a grant only from the node it asked, only for the invite it asked about, and only while still waiting. The sender check is not redundant with the id checks: `room_id` and `invite_id` both travel in the QR code, so anyone who photographed it can name them and race the real inviter with their own keys, landing the scanner in a room they control. Answering *as the scanned node* needs that node's private key, and the joiner seeded its public key from the code in step A — so `packet.from == awaited.inviter` on an already-`pki_encrypted` packet is what makes the substitution fail. It then writes the channel, stores both keys, and announces itself. The inviter broadcasts `RosterEvent{ JOINED }` to the room and sends the roster to the joiner.
+
+**Consequence, by design:** a join cannot cross a relay. Both people must be in RF range of each other, which is the same requirement as pointing a camera at a screen. A joiner who is out of range sees the request time out rather than silently joining.
 
 **MeshChat control protobuf (v1, `PortNum.PRIVATE_APP`) — decided in D-2:**
 ```protobuf
@@ -651,11 +680,16 @@ message MeshChatControl {
     JoinHello join_hello = 2;                         // joiner → inviter, PKI DM
     RosterEvent roster_event = 3;                     // inviter → room broadcast: JOINED / KEY_ROTATED
     LiveLocationRequest live_location_request = 4;    // member → member, PKI DM
+    RosterSync roster_sync = 5;                       // inviter → joiner, the room's members
     Receipt receipt = 6;                              // room broadcast (sealed) or PKI DM
     SealedMessage sealed_message = 7;                 // any of the above, encrypted under the room key
+    RoomText room_text = 8;                           // a message, inside a SealedMessage
+    KeyRotation key_rotation = 9;                     // re-key after a removal
+    RoomGrant room_grant = 11;                        // inviter → joiner, PKI DM: the keys
   }
 }
-message JoinHello { fixed32 invite_id = 1; bytes token = 2; uint32 generation = 3; uint32 app_version = 4; }
+message JoinHello { fixed32 invite_id = 1; bytes token = 2; uint32 generation = 3; uint32 app_version = 4; bytes joiner_key = 5; }
+message RoomGrant { enum Answer { GRANTED = 0; DECLINED = 1; } Answer answer = 1; fixed32 invite_id = 2; fixed32 room_id = 3; string room_name = 4; bytes room_psk = 5; bytes firepit_key = 6; uint32 generation = 7; uint32 position_precision = 8; }
 message RosterEvent { enum Kind { JOINED = 0; KEY_ROTATED = 1; } Kind kind = 1; uint32 node_num = 2; uint32 invited_by = 3; uint32 generation = 4; }
 message LiveLocationRequest { fixed32 room_id = 1; uint32 suggested_secs = 2; }
 message Receipt { fixed32 room_id = 1; repeated fixed32 delivered = 2; repeated fixed32 read = 3; }

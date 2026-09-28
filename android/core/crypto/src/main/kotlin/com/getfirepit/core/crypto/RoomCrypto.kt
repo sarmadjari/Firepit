@@ -26,8 +26,14 @@ object RoomCrypto {
      */
     const val WINDOW_TOLERANCE = 2
 
-    /** ~2 minutes: covers the hello propagation delay plus a slow mesh hop. */
-    const val DEFAULT_LOOKBACK_WINDOWS = 15
+    /**
+     * How far back the inviter will recognise one of its own tokens.
+     *
+     * Deliberately short: the joiner replies the moment it scans, because the
+     * inviter's public key is in the code and nothing has to propagate first.
+     * Every window past that is time a photographed code stays usable.
+     */
+    const val DEFAULT_LOOKBACK_WINDOWS = 4
 
     private const val INVITE_CONTEXT = "meshchat-invite-v1"
     private const val HMAC = "HmacSHA256"
@@ -69,28 +75,13 @@ object RoomCrypto {
     fun token(inviteKey: ByteArray, inviterNodeNum: Int, window: Int): ByteArray =
         hmac(inviteKey, inviterNodeNum.toBytes() + window.toBytes()).copyOf(TOKEN_SIZE)
 
-    /** True when [token] matches any window within [WINDOW_TOLERANCE] of [scannedAtWindow]. */
-    fun isTokenValid(
-        inviteKey: ByteArray,
-        inviterNodeNum: Int,
-        token: ByteArray,
-        claimedWindow: Int,
-        scannedAtWindow: Int,
-    ): Boolean {
-        if (token.size != TOKEN_SIZE) return false
-        if (kotlin.math.abs(claimedWindow - scannedAtWindow) > WINDOW_TOLERANCE) return false
-        // MessageDigest.isEqual is the JDK's constant-time comparison: rejecting
-        // early would leak how much of the token was guessed correctly.
-        return MessageDigest.isEqual(token, token(inviteKey, inviterNodeNum, claimedWindow))
-    }
-
     /**
      * True when [token] was minted by us within the last [lookbackWindows].
      *
      * A join hello echoes the token but not the window it came from, so the
-     * inviter has to search. The lookback is wider than [WINDOW_TOLERANCE]
-     * because the joiner waits for its NodeInfo to propagate before replying,
-     * and that reply then crosses the mesh.
+     * inviter has to search. Only the inviter can do this at all: the token is
+     * an HMAC under the room's key, and a scanner holds no key until it is let
+     * in.
      */
     fun matchesRecentToken(
         inviteKey: ByteArray,

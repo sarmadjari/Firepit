@@ -18,6 +18,7 @@ import org.meshtastic.proto.Channel
 import org.meshtastic.proto.PortNum
 import org.meshtastic.proto.ToRadio
 import org.meshtastic.proto.Config
+import org.meshtastic.proto.SharedContact
 import org.meshtastic.proto.User
 
 /**
@@ -89,6 +90,22 @@ class NodeAdminClient @Inject constructor(
     /** Favourited nodes are never evicted from the radio's bounded NodeDB. */
     suspend fun setFavorite(nodeNum: Int) {
         send(AdminMessage(session_passkey = sessionPasskey(), set_favorite_node = nodeNum))
+    }
+
+    /**
+     * Puts a node and its public key into the radio's own NodeDB.
+     *
+     * The app remembers every node it has ever seen; the radio's database is
+     * bounded and evicts. Without this, encrypting to somebody the app knows
+     * about can still fail on a radio that has forgotten them.
+     */
+    suspend fun addContact(nodeNum: Int, user: User) {
+        send(
+            AdminMessage(
+                session_passkey = sessionPasskey(),
+                add_contact = SharedContact(node_num = nodeNum, user = user),
+            ),
+        )
     }
 
     suspend fun removeFavorite(nodeNum: Int) {

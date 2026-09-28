@@ -14,6 +14,7 @@ import com.getfirepit.app.settings.RetentionStore
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import com.getfirepit.app.settings.PersonStore
+import com.getfirepit.app.rooms.RoomJoinPrompts
 import com.getfirepit.app.settings.ThemeChoice
 import com.getfirepit.app.settings.ThemePreferences
 import com.getfirepit.app.ui.FirepitApp
@@ -65,6 +66,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     FirepitApp(Modifier.fillMaxSize())
                     ClockOfferDialog(nodeClock)
+                    RoomJoinPrompts()
                 }
             }
         }
