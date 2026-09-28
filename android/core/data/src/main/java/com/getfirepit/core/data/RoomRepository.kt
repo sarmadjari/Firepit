@@ -150,6 +150,9 @@ class RoomRepository @Inject constructor(
     /** Who we have seen in [roomId]. See [RoomMember] for what this can and cannot know. */
     fun observeMembers(roomId: Int): Flow<List<RoomMember>> = memberDao.observeRoom(roomId)
 
+    /** Every node in any room we are in — the people this phone counts as ours. */
+    fun observeGroupNodes(): Flow<Set<Int>> = memberDao.observeAllNodeNums().map { it.toSet() }
+
     /**
      * A Firepit room we and [nodeNum] are both in, or null when we share none.
      *

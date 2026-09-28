@@ -304,6 +304,10 @@ interface RoomMemberDao {
     @Query("SELECT nodeNum FROM room_members WHERE roomId = :roomId")
     suspend fun nodeNumsIn(roomId: Int): List<Int>
 
+    /** Everyone in any room this phone is in. Leaving a room deletes its rows, so this stays honest. */
+    @Query("SELECT DISTINCT nodeNum FROM room_members")
+    fun observeAllNodeNums(): Flow<List<Int>>
+
     @Query("DELETE FROM room_members WHERE roomId = :roomId")
     suspend fun deleteRoom(roomId: Int)
 }

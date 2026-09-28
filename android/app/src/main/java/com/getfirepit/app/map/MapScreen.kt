@@ -33,6 +33,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -56,6 +57,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.createBitmap
@@ -67,7 +69,9 @@ import com.getfirepit.app.location.ShareLocationSheet
 import com.getfirepit.app.location.SharingBanner
 import com.getfirepit.app.location.SharingViewModel
 import com.getfirepit.core.designsystem.component.BackButton
+import com.getfirepit.core.designsystem.component.FirepitChip
 import com.getfirepit.core.designsystem.component.FirepitIcons
+import com.getfirepit.core.designsystem.component.SectionLabel
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 import com.getfirepit.core.designsystem.theme.SheetShape
@@ -76,6 +80,8 @@ import com.getfirepit.core.designsystem.theme.onIdentityColorFor
 import com.getfirepit.core.protocol.NodeRole
 import com.getfirepit.core.protocol.ShareDuration
 import com.getfirepit.core.model.MapPin
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.delay
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
@@ -98,7 +104,6 @@ fun MapScreen(
     val sharing by sharingViewModel.state.collectAsStateWithLifecycle()
     var pickingRoom by remember { mutableStateOf(false) }
     var pendingShare by remember { mutableStateOf<PendingShare?>(null) }
-    var locationDenied by remember { mutableStateOf(false) }
     val dark = FirepitTheme.colors.isDark
     val context = LocalContext.current
 
@@ -109,9 +114,10 @@ fun MapScreen(
         if (granted.values.any { it }) {
             viewModel.setMapVisible(true)
             pendingShare?.let { sharingViewModel.share(it.roomId, it.choice) }
-        } else {
-            locationDenied = true
-            if (pendingShare != null) viewModel.reportPermissionDenied()
+        } else if (pendingShare != null) {
+            // Reported only when it blocked something: a denial on opening the
+            // map costs nothing but your own dot.
+            viewModel.reportPermissionDenied()
         }
         pendingShare = null
     }
@@ -143,9 +149,20 @@ fun MapScreen(
     var hasFramedMarkers by remember { mutableStateOf(false) }
     var droppingAt by remember { mutableStateOf<LatLng?>(null) }
     var openPin by remember { mutableStateOf<MapPin?>(null) }
+    var openMarker by remember { mutableStateOf<MapMarker?>(null) }
     var showingOptions by remember { mutableStateOf(false) }
     val offlineOnly by viewModel.offlineOnly.collectAsStateWithLifecycle()
     val areas by viewModel.areas.collectAsStateWithLifecycle()
+    val ask by viewModel.ask.collectAsStateWithLifecycle()
+
+    // A finished sweep has said its piece; leaving it up would make it another
+    // standing notice sitting over the map.
+    LaunchedEffect(ask) {
+        if (ask is LocationAsk.Swept && openMarker == null) {
+            delay(NOTICE_LINGER)
+            viewModel.clearAsk()
+        }
+    }
 
     LaunchedEffect(state.markers, state.pins, dark) {
         markerLayer.draw(state.markers, state.pins, dark)
@@ -169,6 +186,7 @@ fun MapScreen(
         ) { map, view ->
             markerLayer.attach(map, view)
             markerLayer.setOnPinClick { pin -> openPin = pin }
+            markerLayer.setOnMarkerClick { marker -> if (!marker.isSelf) openMarker = marker }
                 map.style?.let { coverageMask.apply(it, areas, offlineOnly) }
                 hasFramedMarkers = markerLayer.frameAll(state.markers)
                 map.addOnMapLongClickListener { point ->
@@ -177,41 +195,31 @@ fun MapScreen(
                 }
             }
 
-            Column(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .statusBarsPadding()
-                    .fillMaxWidth()
-                    // Stops short of the controls stacked in the top corner,
-                    // which were clipping the text.
-                    .padding(
-                        start = FirepitSpacing.m,
-                        top = FirepitSpacing.m,
-                        end = FirepitSpacing.m + CONTROL_SIZE + FirepitSpacing.s,
-                    ),
-                verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
-            ) {
-                when {
-                    // Only things the user can act on. Ordered by what blocks
-                    // them soonest, and at most one at a time: a map covered in
-                    // banners is a worse map, and a permanent tip is nagging.
-                    locationDenied -> MapNotice(
-                        "Location is off, so your own position cannot be shown. " +
-                            "Turn it on in Android settings.",
-                    )
-
-                    !state.connected -> MapNotice("Not connected — open Settings to reach your node.")
-                    offlineOnly && areas.isEmpty() -> MapNotice(
-                        "Offline maps only is on but nothing is downloaded, so the map is blank. " +
-                            "Settings → Offline areas.",
-                    )
-
-                    // Silence otherwise. Offline-only is a choice the user made
-                    // and the grey ground already shows it; a GPS fix arrives on
-                    // its own; and an empty map is described by the tally below.
-                    else -> Unit
-                }
-                state.error?.let { MapNotice(it) }
+            // Only the outcome of something the user just did. The standing
+            // notices that used to live here — not connected, offline-only,
+            // location off — described state visible elsewhere and sat over the
+            // map permanently.
+            val sweeping = ask as? LocationAsk.Sweeping
+            val swept = ask as? LocationAsk.Swept
+            (
+                state.error
+                    ?: sweeping?.let { "Asking ${it.done} of ${it.total}…" }
+                    ?: swept?.said
+                )?.let { message ->
+                MapNotice(
+                    text = message,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .statusBarsPadding()
+                        .fillMaxWidth()
+                        // Stops short of the control in the top corner, which
+                        // was clipping the text.
+                        .padding(
+                            start = FirepitSpacing.m,
+                            top = FirepitSpacing.m,
+                            end = FirepitSpacing.m + CONTROL_SIZE + FirepitSpacing.s,
+                        ),
+                )
             }
 
             MapControl(
@@ -266,6 +274,7 @@ fun MapScreen(
         MapOptionsSheet(
             state = state,
             onDismiss = { showingOptions = false },
+            onFilter = viewModel::setFilter,
             onShare = {
                 showingOptions = false
                 pickingRoom = true
@@ -273,6 +282,10 @@ fun MapScreen(
             onCentre = {
                 showingOptions = false
                 markerLayer.frameAll(state.markers, force = true)
+            },
+            onAskEveryone = {
+                showingOptions = false
+                viewModel.askEveryone()
             },
             onDropPin = {
                 showingOptions = false
@@ -335,6 +348,83 @@ fun MapScreen(
             onDismiss = { openPin = null },
         )
     }
+
+    openMarker?.let { marker ->
+        PersonSheet(
+            marker = marker,
+            ask = ask,
+            onAsk = { viewModel.askWhereTheyAre(marker.node.nodeNum, marker.name) },
+            onDismiss = {
+                openMarker = null
+                viewModel.clearAsk()
+            },
+        )
+    }
+}
+
+/**
+ * One person, and the one thing the mesh can be asked about them.
+ *
+ * A position request goes to their radio, not their phone, so it reaches
+ * somebody who has Firepit closed. It cannot reach one that is switched off,
+ * and the wait is real — up to a minute — so the asking is shown rather than
+ * left to look like nothing happened.
+ */
+@Composable
+private fun PersonSheet(
+    marker: MapMarker,
+    ask: LocationAsk,
+    onAsk: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val asking = ask is LocationAsk.Asking && ask.nodeNum == marker.node.nodeNum
+    val said = (ask as? LocationAsk.Answered)
+        ?.takeIf { it.nodeNum == marker.node.nodeNum }
+        ?.said
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(marker.name) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.m)) {
+                Text(
+                    text = marker.fixAgeMinutes
+                        ?.let { "Last seen here ${agePhrase(it)}." }
+                        ?: "Nothing says when this position was taken.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (said != null) {
+                    Text(
+                        text = said,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FirepitTheme.colors.textSecondary,
+                    )
+                } else if (asking) {
+                    Text(
+                        text = "Asking their radio. This can take up to a minute.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FirepitTheme.colors.textSecondary,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onAsk, enabled = !asking) {
+                Text(if (asking) "Asking…" else "Ask where they are")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        },
+    )
+}
+
+/** Plain words for an age already rounded to minutes. */
+private fun agePhrase(minutes: Long): String = when {
+    minutes < 1 -> "just now"
+    minutes < 60 -> "$minutes minute${if (minutes == 1L) "" else "s"} ago"
+    minutes < 60 * 24 -> (minutes / 60).let { "$it hour${if (it == 1L) "" else "s"} ago" }
+    else -> (minutes / (60 * 24)).let { "$it day${if (it == 1L) "" else "s"} ago" }
 }
 
 @Composable
@@ -413,8 +503,8 @@ private fun hasLocationPermission(context: Context): Boolean = listOf(
 }
 
 @Composable
-private fun MapNotice(text: String) {
-    Card(Modifier.fillMaxWidth()) {
+private fun MapNotice(text: String, modifier: Modifier = Modifier) {
+    Card(modifier.fillMaxWidth()) {
         Text(
             text = text,
             style = MaterialTheme.typography.bodyMedium,
@@ -434,8 +524,10 @@ private fun MapNotice(text: String) {
 private fun MapOptionsSheet(
     state: MapUiState,
     onDismiss: () -> Unit,
+    onFilter: (MapFilter) -> Unit,
     onShare: () -> Unit,
     onCentre: () -> Unit,
+    onAskEveryone: () -> Unit,
     onDropPin: () -> Unit,
     onOfflineAreas: () -> Unit,
 ) {
@@ -450,6 +542,9 @@ private fun MapOptionsSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                // Scrollable and inset past the navigation bar: the caption
+                // under the chips changes length with the filter, and without
+                // these the last action was pushed off the bottom.
                 .verticalScroll(rememberScrollState())
                 .navigationBarsPadding()
                 .padding(horizontal = FirepitSpacing.screenMargin)
@@ -459,12 +554,40 @@ private fun MapOptionsSheet(
                 .padding(bottom = FirepitSpacing.minTouchTarget),
             verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
         ) {
+            SectionLabel("Show")
+            Row(horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
+                MapFilter.entries.forEach { choice ->
+                    FirepitChip(
+                        label = choice.label,
+                        selected = state.filter == choice,
+                        onClick = { onFilter(choice) },
+                    )
+                }
+            }
+            Text(
+                text = when (state.filter) {
+                    MapFilter.ALL -> "Everyone this radio has heard."
+                    MapFilter.OURS -> "Your rooms and your own hardware." +
+                        state.hiddenByFilter.takeIf { it > 0 }?.let { " $it hidden." }.orEmpty()
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = FirepitTheme.colors.textSecondary,
+                // One line in both states, so switching filter does not shift
+                // the actions under the reader's finger.
+                minLines = 1,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+
+            HorizontalDivider(Modifier.padding(vertical = FirepitSpacing.s))
+
             SheetAction(
                 icon = FirepitIcons.Locate,
                 label = if (state.isSharing) "Change location sharing" else "Share my location",
                 onClick = onShare,
             )
             SheetAction(FirepitIcons.Map, "Centre on everyone", onCentre)
+            SheetAction(FirepitIcons.Clock, "Ask for a location update", onAskEveryone)
             SheetAction(FirepitIcons.Pin, "Drop a pin here", onDropPin)
             SheetAction(FirepitIcons.Download, "Offline areas", onOfflineAreas)
         }
@@ -510,10 +633,16 @@ private class MarkerLayer {
 
     /** Symbol id to pin, so a tap on the map can be answered with the right one. */
     private val pinsBySymbol = mutableMapOf<Long, MapPin>()
+    private val markersBySymbol = mutableMapOf<Long, MapMarker>()
     private var onPinClick: ((MapPin) -> Unit)? = null
+    private var onMarkerClick: ((MapMarker) -> Unit)? = null
 
     fun setOnPinClick(listener: (MapPin) -> Unit) {
         onPinClick = listener
+    }
+
+    fun setOnMarkerClick(listener: (MapMarker) -> Unit) {
+        onMarkerClick = listener
     }
 
     /** Where the camera is looking, for dropping a pin without a hidden gesture. */
@@ -531,10 +660,14 @@ private class MarkerLayer {
             iconAllowOverlap = true
             iconIgnorePlacement = true
             addClickListener { symbol ->
-                pinsBySymbol[symbol.id]?.let { pin ->
-                    onPinClick?.invoke(pin)
-                    true
-                } ?: false
+                val pin = pinsBySymbol[symbol.id]
+                val marker = markersBySymbol[symbol.id]
+                when {
+                    pin != null -> onPinClick?.invoke(pin)
+                    marker != null -> onMarkerClick?.invoke(marker)
+                    else -> return@addClickListener false
+                }
+                true
             }
         }
         redraw()
@@ -553,17 +686,21 @@ private class MarkerLayer {
         val context = context ?: return
         manager.deleteAll()
         pinsBySymbol.clear()
+        markersBySymbol.clear()
 
         markers.forEach { marker ->
             val latitude = marker.node.latitude ?: return@forEach
             val longitude = marker.node.longitude ?: return@forEach
-            val imageId = "node-${marker.node.nodeNum}-${marker.isLive}-${marker.isApproximate}-${marker.isSelf}"
+            // The age is drawn into the bitmap, so it belongs in the key.
+            val imageId = "node-${marker.node.nodeNum}-${marker.isLive}-" +
+                "${marker.isApproximate}-${marker.isSelf}-${marker.fixAgeMinutes}"
             style.addImage(imageId, markerBitmap(context, marker, dark))
             val symbol = manager.create(
                 SymbolOptions()
                     .withLatLng(LatLng(latitude, longitude))
                     .withIconImage(imageId),
             )
+            markersBySymbol[symbol.id] = marker
         }
 
         pins.forEach { pin ->
@@ -633,6 +770,8 @@ private fun MapControl(
 private fun mapTally(state: MapUiState): String {
     val people = state.markers.count { !it.isSelf }
     val live = state.markers.count { !it.isSelf && it.isLive }
+    // Sharing is not named here: the banner directly above says which room and
+    // how long is left, and saying it twice in two lines reads as two things.
     return buildList {
         add(if (people == 1) "1 person" else "$people people")
         if (live > 0) add("$live live")
@@ -643,6 +782,9 @@ private fun mapTally(state: MapUiState): String {
 }
 
 private val CONTROL_SIZE = 48.dp
+
+/** Long enough to read a line, short enough not to become furniture. */
+private val NOTICE_LINGER = 6.seconds
 
 /** Leaves the disc's colour reading as a ring around the symbol rather than a sliver. */
 private const val ICON_SHARE_OF_DISC = 0.62f
@@ -805,12 +947,17 @@ private fun drawRoleIcon(
     drawable.draw(canvas)
 }
 
+/**
+ * Names how long ago somebody was standing here.
+ *
+ * Shown however recently they were heard: a radio that answers but has not
+ * moved carries an old fix, and drawing it as current would be a guess
+ * presented as a fact.
+ */
 private fun markerLabel(marker: MapMarker): String {
     val name = marker.name
     if (marker.isSelf) return name
-    if (marker.isLive) return name
-    val heard = marker.node.lastHeard ?: return name
-    val minutes = (System.currentTimeMillis() - heard) / 60_000
+    val minutes = marker.fixAgeMinutes ?: return name
     return when {
         minutes < 1 -> name
         minutes < 60 -> "$name · ${minutes}m"

@@ -16,6 +16,8 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,10 +29,35 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import okio.ByteString
+import org.meshtastic.proto.FromRadio
+import org.meshtastic.proto.MeshPacket
 import org.meshtastic.proto.PortNum
 import org.meshtastic.proto.Position
 import org.meshtastic.proto.ToRadio
+
+/** What came of asking somebody's radio where it is. */
+sealed interface PositionAnswer {
+
+    /** A position came back, and has already been stored. */
+    data object Answered : PositionAnswer
+
+    /** The question went out; the answer will land on the map or not at all. */
+    data object Asked : PositionAnswer
+
+    /** They answered, but their radio has no fix to give — no GPS, or none yet. */
+    data object NoFix : PositionAnswer
+
+    /** The question went out and nothing came back inside the window. */
+    data object Silent : PositionAnswer
+
+    /** Nothing was asked, because there is no radio to ask through. */
+    data object NotConnected : PositionAnswer
+
+    /** Not somebody we can ask: the question only travels inside a room. */
+    data object NoSharedRoom : PositionAnswer
+}
 
 /**
  * Position sharing, and the guarantee that it happens on one channel only.
@@ -48,6 +75,8 @@ class LocationRepository @Inject constructor(
     private val admin: NodeAdminClient,
     private val link: RadioLink,
     private val phoneLocation: PhoneLocationSource,
+    private val roomKeys: RoomKeyStore,
+    private val rooms: RoomRepository,
     private val sharingStore: SharingStore,
     @param:ApplicationScope private val scope: CoroutineScope,
 ) {
@@ -263,18 +292,120 @@ class LocationRepository @Inject constructor(
     }
 
     /**
-     * True when a node's fix is recent enough to draw as live.
+     * The question itself, or null when there is no private way to ask.
      *
-     * Uses `last_heard` rather than the position timestamp: 2.8 relays suppress
-     * repeats of an identical position for hours, so a stationary node's fix
-     * looks stale long before the node is.
+     * Carried on the room's channel, so the question and the answer are both
+     * readable only by people already in that room.
      */
-    fun isLive(node: MeshNode, now: Long = System.currentTimeMillis(), window: Duration = LIVE_WINDOW): Boolean =
-        node.lastHeard?.let { now - it <= window.inWholeMilliseconds } == true
+    private suspend fun positionRequestTo(nodeNum: Int): MeshPacket? {
+        val room = rooms.sharedRoomWith(nodeNum) ?: return null
+        return MeshPacketBuilder.meshPacket(
+            to = nodeNum,
+            channel = room.index,
+            portNum = PortNum.POSITION_APP,
+            // Empty: the question is want_response, not the payload.
+            payload = Position().encode().let(ByteString::of),
+            wantResponse = true,
+            priority = MeshPacket.Priority.BACKGROUND,
+        )
+    }
+
+    /**
+     * Asks a node where it is without waiting to hear back.
+     *
+     * For asking several people at once: the answers arrive through the
+     * ordinary position path and move the pins as they land, where the reader
+     * is already looking. Holding a minute open for each person in turn would
+     * take longer than anybody will watch.
+     */
+    suspend fun askForPosition(nodeNum: Int): PositionAnswer {
+        if (!mesh.isConnected.value) return PositionAnswer.NotConnected
+        // Before the pacer, so somebody we cannot ask costs no waiting.
+        val packet = positionRequestTo(nodeNum) ?: return PositionAnswer.NoSharedRoom
+
+        pacer.awaitSlot(PortNum.POSITION_APP)
+        return runCatching { link.send(ToRadio(packet = packet)) }.fold(
+            onSuccess = { PositionAnswer.Asked },
+            onFailure = { cause ->
+                Log.w(TAG, "could not ask $nodeNum for a position", cause)
+                PositionAnswer.NotConnected
+            },
+        )
+    }
+
+    /**
+     * Asks a node where it is and waits for its own firmware to answer.
+     *
+     * The radio on the other end replies by itself, so this reaches somebody
+     * who has Firepit closed, or who is not running it at all. What it cannot
+     * do is reach a radio that is switched off or out of range: silence is the
+     * only answer a mesh has for that, and it is reported as silence rather
+     * than dressed up as a failure.
+     */
+    suspend fun requestPosition(nodeNum: Int, timeout: Duration = REPLY_TIMEOUT): PositionAnswer {
+        if (!mesh.isConnected.value) return PositionAnswer.NotConnected
+        val packet = positionRequestTo(nodeNum) ?: return PositionAnswer.NoSharedRoom
+
+        // The same pacer our own broadcasts use: the firmware counts both
+        // against one limit and drops the loser without saying so.
+        pacer.awaitSlot(PortNum.POSITION_APP)
+
+        var sendFailed = false
+        val heard = withTimeoutOrNull(timeout) {
+            coroutineScope {
+                // Listening starts before sending: the answer can arrive first.
+                val reply = async {
+                    link.inbound.first { from ->
+                        from.packet?.from == nodeNum &&
+                            from.packet?.decoded?.portnum == PortNum.POSITION_APP
+                    }
+                }
+                runCatching { link.send(ToRadio(packet = packet)) }.onFailure { cause ->
+                    Log.w(TAG, "could not ask $nodeNum for a position", cause)
+                    sendFailed = true
+                    reply.cancel()
+                }
+                if (sendFailed) null else reply.await()
+            }
+        }
+
+        return when {
+            sendFailed -> PositionAnswer.NotConnected
+            heard != null -> answerOf(nodeNum, heard)
+            else -> {
+                Log.i(TAG, "no position from $nodeNum inside $timeout")
+                PositionAnswer.Silent
+            }
+        }
+    }
+
+    /**
+     * Reads the answer, and records how it was protected on the way back.
+     *
+     * The reply is the firmware's own, so how it is encrypted is the radio's
+     * choice rather than ours. Logging it is the only way to know whether the
+     * answer stayed as private as the question.
+     */
+    private fun answerOf(nodeNum: Int, reply: FromRadio): PositionAnswer {
+        val packet = reply.packet ?: return PositionAnswer.Silent
+        val position = packet.decoded?.payload
+            ?.let { runCatching { Position.ADAPTER.decode(it) }.getOrNull() }
+        val hasFix = position?.latitude_i != null && position.longitude_i != null &&
+            !(position.latitude_i == 0 && position.longitude_i == 0)
+
+        Log.i(
+            TAG,
+            "position answer from $nodeNum: pki=${packet.pki_encrypted} " +
+                "channel=${packet.channel} fix=$hasFix precision=${position?.precision_bits}",
+        )
+        return if (hasFix) PositionAnswer.Answered else PositionAnswer.NoFix
+    }
 
     private companion object {
         const val TAG = "FirepitLocation"
-        val LIVE_WINDOW = 15.minutes
+
+        /** Generous: the question crosses the mesh, and so does the answer. */
+        val REPLY_TIMEOUT = 60.seconds
 
         /** Fine-grained enough that "for 1 hour" is not visibly a lie. */
         val DEADLINE_CHECK = 30.seconds
