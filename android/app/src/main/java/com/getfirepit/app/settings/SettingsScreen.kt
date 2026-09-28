@@ -721,8 +721,8 @@ private fun IdentityColourDialog(
                 }
 
                 Text(
-                    text = "Only you see this. Everyone else draws you in the colour from your " +
-                        "node number, which is how every device agrees without asking.",
+                    text = "Shared with your Firepit rooms, so the people you invited see you " +
+                        "in this colour too. Everyone else draws you from your node number.",
                     style = MaterialTheme.typography.bodySmall,
                     color = FirepitTheme.colors.textSecondary,
                 )

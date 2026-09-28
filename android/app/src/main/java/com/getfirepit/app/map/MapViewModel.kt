@@ -4,15 +4,20 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.getfirepit.core.data.LocationRepository
 import com.getfirepit.core.data.MeshRepository
+import com.getfirepit.core.data.RoomRepository
 import com.getfirepit.core.data.WaypointRepository
 import com.getfirepit.core.model.MapPin
 import com.getfirepit.core.model.MeshNode
+import com.getfirepit.core.model.PersonCard
 import com.getfirepit.core.model.RoomChannel
 import com.getfirepit.core.protocol.ChannelSlotManager
+import com.getfirepit.core.protocol.NodeRole
 import com.getfirepit.core.protocol.PositionSharing
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import com.getfirepit.app.radio.SavedRadioStore
+import com.getfirepit.app.settings.PersonStore
+import com.getfirepit.core.protocol.Person
 import com.getfirepit.core.protocol.SavedRadio
 import com.getfirepit.core.protocol.SavedRadios
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,8 +33,15 @@ data class MapMarker(
     val node: MeshNode,
     val isLive: Boolean,
     val isSelf: Boolean,
+    /** Who is carrying the radio, when this phone knows. Otherwise what the radio calls itself. */
+    val name: String,
+    /** The 2-character disc label, from the person before the radio. */
+    val tag: String,
+    /** Set only for our own infrastructure, which is drawn as its role rather than a tag. */
+    val role: NodeRole? = null,
+    /** A colour picked by hand, or null to derive one from the node number. */
+    val colourSlot: Int? = null,
 ) {
-    val tag: String get() = node.shortName?.takeIf { it.isNotBlank() } ?: "?"
 
     /** Below 32 bits the sender truncated their fix, so this is an area. */
     val isApproximate: Boolean get() = (node.positionPrecision ?: 32) < 32
@@ -71,6 +83,8 @@ class MapViewModel @Inject constructor(
     private val mesh: MeshRepository,
     private val offlineMaps: OfflineMapRepository,
     private val savedRadios: SavedRadioStore,
+    private val people: PersonStore,
+    rooms: RoomRepository,
     mapPreferences: MapPreferences,
 ) : ViewModel() {
 
@@ -87,7 +101,12 @@ class MapViewModel @Inject constructor(
     val areas: StateFlow<List<OfflineArea>> = savedAreas.asStateFlow()
 
     val uiState: StateFlow<MapUiState> = combine(
-        mesh.isConnected,
+        combine(
+            mesh.isConnected,
+            rooms.observePersonCards(),
+        ) { connected, cards ->
+            Lens(connected, cards)
+        },
         location.observePositions(),
         mesh.channels,
         mesh.myNodeNum,
@@ -96,16 +115,36 @@ class MapViewModel @Inject constructor(
             error,
             waypoints.observePins(),
             savedRadios.radios,
-        ) { busy, error, pins, radios -> Aside(busy, error, pins, radios) },
-    ) { connected, nodes, channels, myNodeNum, aside ->
+            people.person,
+        ) { busy, error, pins, radios, person -> Aside(busy, error, pins, radios, person) },
+    ) { lens, nodes, channels, myNodeNum, aside ->
         val hidden = SavedRadios.hiddenNodes(aside.radios)
         MapUiState(
-            connected = connected,
+            connected = lens.connected,
             markers = nodes.filterNot { it.nodeNum in hidden }.map { node ->
+                val isSelf = node.nodeNum == myNodeNum
+                val person = aside.person.takeIf { isSelf }
+                val card = lens.cards[node.nodeNum]
                 MapMarker(
                     node = node,
                     isLive = location.isLive(node),
-                    isSelf = node.nodeNum == myNodeNum,
+                    isSelf = isSelf,
+                    name = person?.name?.takeIf { it.isNotBlank() }
+                        ?: card?.name?.takeIf { it.isNotBlank() }
+                        ?: if (isSelf) "You" else node.displayName,
+                    tag = person?.tag?.takeIf { it.isNotBlank() }
+                        ?: card?.tag?.takeIf { it.isNotBlank() }
+                        ?: node.shortName?.takeIf { it.isNotBlank() }
+                        ?: "?",
+                    // A base or a router is a thing, not a person: its initials
+                    // say nothing a reader wants, so it wears its role instead.
+                    // A card outranks it — only a person can send one.
+                    role = aside.radios
+                        .firstOrNull { it.nodeNum == node.nodeNum }
+                        ?.role
+                        ?.takeIf { it != NodeRole.PERSONAL }
+                        ?.takeIf { card == null && !isSelf },
+                    colourSlot = person?.colourSlot,
                 )
             },
             pins = aside.pins,
@@ -172,10 +211,17 @@ class MapViewModel @Inject constructor(
     }
 }
 
-/** Combine takes five sources at most; these four travel together. */
+/** Combine takes five sources at most; these five travel together. */
 private data class Aside(
     val busy: Boolean,
     val error: String?,
     val pins: List<MapPin>,
     val radios: List<SavedRadio>,
+    val person: Person?,
+)
+
+/** Likewise: what the map is looking at, rather than what it is looking for. */
+private data class Lens(
+    val connected: Boolean,
+    val cards: Map<Int, PersonCard>,
 )

@@ -97,8 +97,28 @@ message MeshChatControl {
     SealedMessage sealed_message = 7;
     RoomText room_text = 8;
     KeyRotation key_rotation = 9;
+    PersonCard person_card = 10;
     RoomGrant room_grant = 11;
   }
+}
+
+// Who is carrying this radio, as they describe themselves.
+//
+// Only ever sent inside a SealedMessage, so it reaches the members of one room
+// and nobody else. On the open mesh a Firepit node still looks like every other
+// node: the radio broadcasts meshtastic.User and none of this.
+//
+// A claimed name is decoration, not proof. The node number is the only identity
+// the mesh can attest, so a card is shown beside it rather than instead of it.
+message PersonCard {
+  // <= 39 UTF-8 bytes, matching a node long name.
+  string name = 1;
+  // <= 4 UTF-8 bytes, matching a node short name.
+  string tag = 2;
+  // Chosen identity colour, plus one. 0 means no choice, so the colour is
+  // derived from the node number as before; proto3 cannot tell an unset 0 from
+  // a deliberately chosen slot 0.
+  uint32 colour_slot_plus_one = 3;
 }
 
 // A room message with its words already encrypted under the room key, which the

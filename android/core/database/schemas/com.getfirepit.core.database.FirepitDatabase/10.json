@@ -1,0 +1,564 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 10,
+    "identityHash": "3c2f8a0c7225061612aea788cf5c69c9",
+    "entities": [
+      {
+        "tableName": "messages",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `channel` INTEGER NOT NULL, `fromNodeNum` INTEGER NOT NULL, `toNodeNum` INTEGER NOT NULL, `peerNodeNum` INTEGER NOT NULL, `text` TEXT NOT NULL, `sentAt` INTEGER NOT NULL, `rxTime` INTEGER, `status` TEXT NOT NULL, `failureReason` TEXT, `isOutgoing` INTEGER NOT NULL, `rxSnr` REAL, `rxRssi` INTEGER, `hopsAway` INTEGER, `replyId` INTEGER, `emoji` INTEGER, `signed` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "channel",
+            "columnName": "channel",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fromNodeNum",
+            "columnName": "fromNodeNum",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "toNodeNum",
+            "columnName": "toNodeNum",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "peerNodeNum",
+            "columnName": "peerNodeNum",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "text",
+            "columnName": "text",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sentAt",
+            "columnName": "sentAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rxTime",
+            "columnName": "rxTime",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "failureReason",
+            "columnName": "failureReason",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "isOutgoing",
+            "columnName": "isOutgoing",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rxSnr",
+            "columnName": "rxSnr",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "rxRssi",
+            "columnName": "rxRssi",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "hopsAway",
+            "columnName": "hopsAway",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "replyId",
+            "columnName": "replyId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "emoji",
+            "columnName": "emoji",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "signed",
+            "columnName": "signed",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_messages_channel_sentAt",
+            "unique": false,
+            "columnNames": [
+              "channel",
+              "sentAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_messages_channel_sentAt` ON `${TABLE_NAME}` (`channel`, `sentAt`)"
+          },
+          {
+            "name": "index_messages_peerNodeNum_sentAt",
+            "unique": false,
+            "columnNames": [
+              "peerNodeNum",
+              "sentAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_messages_peerNodeNum_sentAt` ON `${TABLE_NAME}` (`peerNodeNum`, `sentAt`)"
+          }
+        ]
+      },
+      {
+        "tableName": "nodes",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`nodeNum` INTEGER NOT NULL, `userId` TEXT, `longName` TEXT, `shortName` TEXT, `hwModel` TEXT, `role` TEXT, `publicKey` TEXT, `isUnmessagable` INTEGER NOT NULL, `lastHeard` INTEGER, `snr` REAL, `rssi` INTEGER, `hopsAway` INTEGER, `batteryLevel` INTEGER, `voltage` REAL, `channelUtilization` REAL, `airUtilTx` REAL, `isFavorite` INTEGER NOT NULL, `firstSeen` INTEGER NOT NULL, `latitudeI` INTEGER, `longitudeI` INTEGER, `altitude` INTEGER, `positionTime` INTEGER, `positionPrecision` INTEGER, `groundSpeed` INTEGER, `groundTrack` INTEGER, PRIMARY KEY(`nodeNum`))",
+        "fields": [
+          {
+            "fieldPath": "nodeNum",
+            "columnName": "nodeNum",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userId",
+            "columnName": "userId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "longName",
+            "columnName": "longName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "shortName",
+            "columnName": "shortName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "hwModel",
+            "columnName": "hwModel",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "role",
+            "columnName": "role",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "publicKey",
+            "columnName": "publicKey",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "isUnmessagable",
+            "columnName": "isUnmessagable",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastHeard",
+            "columnName": "lastHeard",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "snr",
+            "columnName": "snr",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "rssi",
+            "columnName": "rssi",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "hopsAway",
+            "columnName": "hopsAway",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "batteryLevel",
+            "columnName": "batteryLevel",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "voltage",
+            "columnName": "voltage",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "channelUtilization",
+            "columnName": "channelUtilization",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "airUtilTx",
+            "columnName": "airUtilTx",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "isFavorite",
+            "columnName": "isFavorite",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "firstSeen",
+            "columnName": "firstSeen",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "latitudeI",
+            "columnName": "latitudeI",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "longitudeI",
+            "columnName": "longitudeI",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "altitude",
+            "columnName": "altitude",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "positionTime",
+            "columnName": "positionTime",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "positionPrecision",
+            "columnName": "positionPrecision",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "groundSpeed",
+            "columnName": "groundSpeed",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "groundTrack",
+            "columnName": "groundTrack",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "nodeNum"
+          ]
+        }
+      },
+      {
+        "tableName": "room_members",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`roomId` INTEGER NOT NULL, `nodeNum` INTEGER NOT NULL, `invitedBy` INTEGER, `firstSeen` INTEGER NOT NULL, `lastHeard` INTEGER, PRIMARY KEY(`roomId`, `nodeNum`))",
+        "fields": [
+          {
+            "fieldPath": "roomId",
+            "columnName": "roomId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nodeNum",
+            "columnName": "nodeNum",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "invitedBy",
+            "columnName": "invitedBy",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "firstSeen",
+            "columnName": "firstSeen",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastHeard",
+            "columnName": "lastHeard",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "roomId",
+            "nodeNum"
+          ]
+        }
+      },
+      {
+        "tableName": "channel_state",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`channel` INTEGER NOT NULL, `lastReadAt` INTEGER NOT NULL, `muted` INTEGER NOT NULL, PRIMARY KEY(`channel`))",
+        "fields": [
+          {
+            "fieldPath": "channel",
+            "columnName": "channel",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastReadAt",
+            "columnName": "lastReadAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "muted",
+            "columnName": "muted",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "channel"
+          ]
+        }
+      },
+      {
+        "tableName": "map_pins",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `channel` INTEGER NOT NULL, `latitudeI` INTEGER NOT NULL, `longitudeI` INTEGER NOT NULL, `name` TEXT NOT NULL, `description` TEXT NOT NULL, `expire` INTEGER NOT NULL, `lockedTo` INTEGER NOT NULL, `icon` TEXT, `createdBy` INTEGER NOT NULL, `receivedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "channel",
+            "columnName": "channel",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "latitudeI",
+            "columnName": "latitudeI",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "longitudeI",
+            "columnName": "longitudeI",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "expire",
+            "columnName": "expire",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lockedTo",
+            "columnName": "lockedTo",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "icon",
+            "columnName": "icon",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdBy",
+            "columnName": "createdBy",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "receivedAt",
+            "columnName": "receivedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "deleted_pins",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `channel` INTEGER NOT NULL, `deletedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "channel",
+            "columnName": "channel",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deletedAt",
+            "columnName": "deletedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "receipts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`messageId` INTEGER NOT NULL, `nodeNum` INTEGER NOT NULL, `state` TEXT NOT NULL, `at` INTEGER NOT NULL, PRIMARY KEY(`messageId`, `nodeNum`), FOREIGN KEY(`messageId`) REFERENCES `messages`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "messageId",
+            "columnName": "messageId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nodeNum",
+            "columnName": "nodeNum",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "at",
+            "columnName": "at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "messageId",
+            "nodeNum"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_receipts_messageId",
+            "unique": false,
+            "columnNames": [
+              "messageId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_receipts_messageId` ON `${TABLE_NAME}` (`messageId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "messages",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "messageId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "person_cards",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`nodeNum` INTEGER NOT NULL, `name` TEXT NOT NULL, `tag` TEXT NOT NULL, `colourSlot` INTEGER, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`nodeNum`))",
+        "fields": [
+          {
+            "fieldPath": "nodeNum",
+            "columnName": "nodeNum",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tag",
+            "columnName": "tag",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "colourSlot",
+            "columnName": "colourSlot",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "nodeNum"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '3c2f8a0c7225061612aea788cf5c69c9')"
+    ]
+  }
+}

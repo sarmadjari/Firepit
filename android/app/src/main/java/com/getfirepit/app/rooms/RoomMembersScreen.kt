@@ -336,8 +336,15 @@ private fun relativeTime(epochMillis: Long): String {
     }
 }
 
-/** Hardware, charge and when we last heard them, as the design asks. */
+/**
+ * The node id first, then hardware, charge and when we last heard them.
+ *
+ * The id leads because a name in this list may be one the holder simply typed:
+ * a card is sealed to the room, which proves membership, not who somebody is.
+ * The node number is the only part the mesh attests, so it stays on screen.
+ */
 private fun memberDetail(row: MemberRow): String = buildList {
+    add(row.nodeId)
     row.node?.hwModel?.takeIf { it.isNotBlank() }?.let { add(prettyHardware(it)) }
     row.node?.batteryLevel?.let { add(if (it > 100) "powered" else "$it%") }
     add(

@@ -35,8 +35,9 @@ internal class Converters {
         MapPinEntity::class,
         DeletedPinEntity::class,
         ReceiptEntity::class,
+        PersonCardEntity::class,
     ],
-    version = 9,
+    version = 10,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -47,6 +48,7 @@ abstract class FirepitDatabase : RoomDatabase() {
     abstract fun channelStateDao(): ChannelStateDao
     abstract fun mapPinDao(): MapPinDao
     abstract fun receiptDao(): ReceiptDao
+    abstract fun personCardDao(): PersonCardDao
 
     companion object {
         /** Adds the roster table. Messages and nodes are left untouched. */
@@ -200,6 +202,29 @@ abstract class FirepitDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds the person cards room members send about themselves.
+         *
+         * Keyed by node and not tied to a room: leaving one room should not
+         * forget who somebody is in another.
+         */
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS person_cards (
+                        nodeNum INTEGER NOT NULL,
+                        name TEXT NOT NULL,
+                        tag TEXT NOT NULL,
+                        colourSlot INTEGER,
+                        updatedAt INTEGER NOT NULL,
+                        PRIMARY KEY(nodeNum)
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
         fun create(context: Context): FirepitDatabase =
             Room.databaseBuilder(context, FirepitDatabase::class.java, "firepit.db")
                 .addMigrations(
@@ -211,6 +236,7 @@ abstract class FirepitDatabase : RoomDatabase() {
                     MIGRATION_6_7,
                     MIGRATION_7_8,
                     MIGRATION_8_9,
+                    MIGRATION_9_10,
                 )
                 .build()
     }

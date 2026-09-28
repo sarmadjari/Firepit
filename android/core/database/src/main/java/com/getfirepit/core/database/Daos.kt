@@ -9,6 +9,7 @@ import com.getfirepit.core.model.BROADCAST_NODE_NUM
 import com.getfirepit.core.model.ChatMessage
 import com.getfirepit.core.model.MapPin
 import com.getfirepit.core.model.MeshNode
+import com.getfirepit.core.model.PersonCard
 import com.getfirepit.core.model.Receipt
 import com.getfirepit.core.model.MessageStatus
 import com.getfirepit.core.model.RoomMember
@@ -394,6 +395,22 @@ suspend fun ReceiptDao.recordRead(messageId: Int, nodeNum: Int, at: Long) {
 
 fun ReceiptDao.observe(messageId: Int): Flow<List<Receipt>> =
     observeFor(messageId).map { rows -> rows.map { Receipt(it.nodeNum, it.state, it.at) } }
+
+@Dao
+interface PersonCardDao {
+
+    @Query("SELECT * FROM person_cards")
+    fun observeAllEntities(): Flow<List<PersonCardEntity>>
+
+    @Upsert
+    suspend fun upsert(card: PersonCardEntity)
+
+    @Query("DELETE FROM person_cards WHERE nodeNum = :nodeNum")
+    suspend fun forget(nodeNum: Int)
+}
+
+fun PersonCardDao.observeAll(): Flow<Map<Int, PersonCard>> =
+    observeAllEntities().map { rows -> rows.associate { it.nodeNum to it.toDomain() } }
 
 /** When a channel last carried anything, for deciding whether a room has died. */
 data class ChannelActivity(val channel: Int, val lastAt: Long)

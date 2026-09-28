@@ -685,6 +685,7 @@ message MeshChatControl {
     SealedMessage sealed_message = 7;                 // any of the above, encrypted under the room key
     RoomText room_text = 8;                           // a message, inside a SealedMessage
     KeyRotation key_rotation = 9;                     // re-key after a removal
+    PersonCard person_card = 10;                      // name, tag and colour, shared on join
     RoomGrant room_grant = 11;                        // inviter → joiner, PKI DM: the keys
   }
 }

@@ -70,6 +70,8 @@ import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 import com.getfirepit.core.designsystem.theme.SheetShape
 import com.getfirepit.core.designsystem.theme.identityColorFor
+import com.getfirepit.core.designsystem.theme.onIdentityColorFor
+import com.getfirepit.core.protocol.NodeRole
 import com.getfirepit.core.model.MapPin
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
@@ -537,6 +539,8 @@ private fun ShareRoomDialog(state: MapUiState, onDismiss: () -> Unit, onPick: (I
 private class MarkerLayer {
     private var map: MapLibreMap? = null
     private var symbols: SymbolManager? = null
+    // Held for loading the role drawables painted into marker discs.
+    private var context: Context? = null
 
     // The style loads asynchronously, so markers usually arrive before there is
     // anywhere to put them. Holding the latest set means attaching draws it
@@ -559,6 +563,7 @@ private class MarkerLayer {
     fun attach(map: MapLibreMap, view: MapView) {
         val style: Style = map.style ?: return
         this.map = map
+        this.context = view.context
         symbols?.onDestroy()
         symbols = SymbolManager(view, map, style).apply {
             // People matter more than tidiness: a node hidden by collision is a
@@ -586,6 +591,7 @@ private class MarkerLayer {
     private fun redraw() {
         val manager = symbols ?: return
         val style = map?.style ?: return
+        val context = context ?: return
         manager.deleteAll()
         pinsBySymbol.clear()
 
@@ -593,8 +599,8 @@ private class MarkerLayer {
             val latitude = marker.node.latitude ?: return@forEach
             val longitude = marker.node.longitude ?: return@forEach
             val imageId = "node-${marker.node.nodeNum}-${marker.isLive}-${marker.isApproximate}-${marker.isSelf}"
-            style.addImage(imageId, markerBitmap(marker, dark))
-            manager.create(
+            style.addImage(imageId, markerBitmap(context, marker, dark))
+            val symbol = manager.create(
                 SymbolOptions()
                     .withLatLng(LatLng(latitude, longitude))
                     .withIconImage(imageId),
@@ -679,19 +685,21 @@ private fun mapTally(state: MapUiState): String {
 
 private val CONTROL_SIZE = 48.dp
 
+/** Leaves the disc's colour reading as a ring around the symbol rather than a sliver. */
+private const val ICON_SHARE_OF_DISC = 0.62f
+
 /**
- * A tag disc in the node's identity colour, ringed green while it is live, with
- * the name on a pill beneath it.
+ * A tag disc in the identity colour, ringed green while it is live, with the
+ * name on a pill beneath it.
  *
  * The label is drawn into the same bitmap rather than left to the style's text
  * layer so it keeps its pill on any basemap; the disc stays at the bitmap's
  * centre so the icon still lands on the coordinate.
  *
- * Your own position is drawn as a plain blue dot instead: it is the one marker
- * people look for first, and a tag reading your own initials among five others
- * is not findable at a glance.
+ * Your own disc carries your name and initials rather than the radio's: the
+ * radio is what the mesh addresses, not who is holding it.
  */
-private fun markerBitmap(marker: MapMarker, dark: Boolean): Bitmap {
+private fun markerBitmap(context: Context, marker: MapMarker, dark: Boolean): Bitmap {
     val disc = 96
     val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = if (marker.isLive) {
@@ -720,7 +728,7 @@ private fun markerBitmap(marker: MapMarker, dark: Boolean): Bitmap {
     val centreY = height / 2f
 
     val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = identityColorFor(marker.node.nodeNum, dark).toArgb()
+        color = identityColorFor(marker.node.nodeNum, dark, marker.colourSlot).toArgb()
         // A truncated fix describes an area, so the disc is softened to say so.
         alpha = if (marker.isApproximate) 150 else 255
     }
@@ -736,7 +744,9 @@ private fun markerBitmap(marker: MapMarker, dark: Boolean): Bitmap {
         strokeWidth = if (marker.isSelf) 10f else 7f
     }
     val tag = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
+        // The disc inverts between themes, so flat white would sit on a light
+        // fill in dark mode.
+        color = onIdentityColorFor(marker.node.nodeNum, dark, marker.colourSlot).toArgb()
         textAlign = Paint.Align.CENTER
         textSize = 34f
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
@@ -764,18 +774,27 @@ private fun markerBitmap(marker: MapMarker, dark: Boolean): Bitmap {
             drawPath(path, arrow)
         }
     }
-    // Meshtastic allows four characters, and a tag cut to two makes SJ2 and SJ1
-    // the same node. Shrink to fit the disc instead of dropping what it says.
-    val tagText = marker.tag.uppercase()
-    val widest = radius * 1.55f
-    val measured = tag.measureText(tagText)
-    if (measured > widest) tag.textSize *= widest / measured
-    canvas.drawText(
-        tagText,
-        centreX,
-        centreY - (tag.descent() + tag.ascent()) / 2f,
-        tag,
-    )
+    val roleIcon = when (marker.role) {
+        NodeRole.BASE -> FirepitIcons.RoleBase
+        NodeRole.ROUTER -> FirepitIcons.RoleRouter
+        else -> null
+    }
+    if (roleIcon != null) {
+        drawRoleIcon(context, canvas, roleIcon, centreX, centreY, radius, tag.color)
+    } else {
+        // Meshtastic allows four characters, and a tag cut to two makes SJ2 and
+        // SJ1 the same node. Shrink to fit the disc rather than drop what it says.
+        val tagText = marker.tag.uppercase()
+        val widest = radius * 1.55f
+        val measured = tag.measureText(tagText)
+        if (measured > widest) tag.textSize *= widest / measured
+        canvas.drawText(
+            tagText,
+            centreX,
+            centreY - (tag.descent() + tag.ascent()) / 2f,
+            tag,
+        )
+    }
 
     val pillTop = centreY + radius + gap
     val pill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -799,10 +818,37 @@ private fun markerBitmap(marker: MapMarker, dark: Boolean): Bitmap {
     return bitmap
 }
 
-/** A stale marker names its age, because a position with no time is a guess presented as a fact. */
+/**
+ * Paints a role symbol inside the disc, in place of a tag.
+ *
+ * A base or a router is hardware, not a person, and its two initials tell a
+ * reader nothing. Sized to the disc rather than a fixed pixel count so it keeps
+ * its proportions if the marker ever changes size.
+ */
+private fun drawRoleIcon(
+    context: Context,
+    canvas: Canvas,
+    @DrawableRes icon: Int,
+    centreX: Float,
+    centreY: Float,
+    radius: Float,
+    tint: Int,
+) {
+    val drawable = ContextCompat.getDrawable(context, icon)?.mutate() ?: return
+    drawable.setTint(tint)
+    val half = (radius * ICON_SHARE_OF_DISC).toInt()
+    drawable.setBounds(
+        (centreX - half).toInt(),
+        (centreY - half).toInt(),
+        (centreX + half).toInt(),
+        (centreY + half).toInt(),
+    )
+    drawable.draw(canvas)
+}
+
 private fun markerLabel(marker: MapMarker): String {
-    if (marker.isSelf) return "You"
-    val name = marker.node.displayName
+    val name = marker.name
+    if (marker.isSelf) return name
     if (marker.isLive) return name
     val heard = marker.node.lastHeard ?: return name
     val minutes = (System.currentTimeMillis() - heard) / 60_000

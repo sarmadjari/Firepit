@@ -6,12 +6,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -19,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
+import com.getfirepit.core.designsystem.theme.LocalIdentityMarks
 import com.getfirepit.core.designsystem.theme.LocalIdentitySlots
 import com.getfirepit.core.designsystem.theme.identityColorFor
 import com.getfirepit.core.designsystem.theme.onIdentityColorFor
@@ -39,7 +42,10 @@ fun IdentityAvatar(
     slot: Int? = LocalIdentitySlots.current[nodeNum],
 ) {
     val dark = FirepitTheme.colors.isDark
-    val label = tag?.takeIf { it.isNotBlank() } ?: "?"
+    val mark = LocalIdentityMarks.current[nodeNum]
+    val label = mark?.tag?.takeIf { it.isNotBlank() }
+        ?: tag?.takeIf { it.isNotBlank() }
+        ?: "?"
 
     Box(
         modifier = modifier
@@ -50,13 +56,23 @@ fun IdentityAvatar(
             .clearAndSetSemantics { },
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = label,
-            color = onIdentityColorFor(nodeNum, dark, slot),
-            fontWeight = FontWeight.SemiBold,
-            // Tags from other clients can be 3-4 characters; shrink rather than truncate.
-            fontSize = if (label.length > 2) (size.value * 0.30f).sp else (size.value * 0.36f).sp,
-        )
+        val ink = onIdentityColorFor(nodeNum, dark, slot)
+        if (mark?.icon != null) {
+            Icon(
+                painter = painterResource(mark.icon),
+                contentDescription = null,
+                tint = ink,
+                modifier = Modifier.size(size * 0.56f),
+            )
+        } else {
+            Text(
+                text = label,
+                color = ink,
+                fontWeight = FontWeight.SemiBold,
+                // Tags from other clients can be 3-4 characters; shrink rather than truncate.
+                fontSize = if (label.length > 2) (size.value * 0.30f).sp else (size.value * 0.36f).sp,
+            )
+        }
     }
 }
 

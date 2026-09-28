@@ -18,6 +18,7 @@ import com.getfirepit.app.R
 import com.getfirepit.core.data.ChatPresence
 import com.getfirepit.app.settings.NotificationPreferences
 import com.getfirepit.core.data.MeshRepository
+import com.getfirepit.core.data.RoomRepository
 import com.getfirepit.core.database.ChannelStateDao
 import com.getfirepit.core.database.observeMuted
 import com.getfirepit.core.model.ChatMessage
@@ -41,6 +42,7 @@ class MessageNotifier @Inject constructor(
     private val channelState: ChannelStateDao,
     private val presence: ChatPresence,
     private val notificationPreferences: NotificationPreferences,
+    private val rooms: RoomRepository,
     @param:com.getfirepit.core.data.ApplicationScope private val scope: CoroutineScope,
 ) {
 
@@ -55,9 +57,12 @@ class MessageNotifier @Inject constructor(
         if (presence.isWatching(message.channel)) return
         if (message.channel in channelState.observeMuted().first()) return
 
-        val name = mesh.observeNodes().first()
-            .firstOrNull { it.nodeNum == message.fromNodeNum }
-            ?.displayName
+        val name = rooms.observePersonCards().first()[message.fromNodeNum]
+            ?.name
+            ?.takeIf { it.isNotBlank() }
+            ?: mesh.observeNodes().first()
+                .firstOrNull { it.nodeNum == message.fromNodeNum }
+                ?.displayName
             ?: "Unknown node"
         val room = mesh.channels.value.firstOrNull { it.index == message.channel }?.displayName
 

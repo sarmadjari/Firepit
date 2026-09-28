@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.getfirepit.core.data.ChatPresence
 import com.getfirepit.core.data.MeshRepository
 import com.getfirepit.core.data.ReceiptRepository
+import com.getfirepit.core.data.RoomRepository
 import com.getfirepit.core.model.Receipt
 import com.getfirepit.core.database.ChannelStateDao
 import com.getfirepit.core.database.markRead
@@ -14,6 +15,7 @@ import com.getfirepit.core.database.setMuted
 import com.getfirepit.core.model.ChatMessage
 import com.getfirepit.app.settings.PersonStore
 import com.getfirepit.core.model.MeshNode
+import com.getfirepit.core.model.PersonCard
 import com.getfirepit.core.protocol.Person
 import com.getfirepit.core.model.RoomChannel
 import com.getfirepit.core.model.RoomKind
@@ -38,6 +40,8 @@ data class ChatsUiState(
     val selected: Int? = null,
     val messages: List<ChatMessage> = emptyList(),
     val nodes: Map<Int, MeshNode> = emptyMap(),
+    /** How the people in our rooms name themselves, by node number. */
+    val cards: Map<Int, PersonCard> = emptyMap(),
     val draft: String = "",
     val error: String? = null,
     /** 2.8 firmware only; drives the signing budget hint. */
@@ -61,6 +65,28 @@ data class ChatsUiState(
     val directLatest: List<ChatMessage> = emptyList(),
 ) {
     val selectedChannel: RoomChannel? get() = channels.firstOrNull { it.index == selected }
+
+    /**
+     * What to call somebody: the name they chose, then the radio's own, then
+     * the node id. Claimed rather than proven — the members screen is where
+     * that distinction gets drawn.
+     */
+    fun nameOf(nodeNum: Int): String {
+        if (nodeNum == myNode?.nodeNum) {
+            person?.name?.takeIf { it.isNotBlank() }?.let { return it }
+        }
+        return cards[nodeNum]?.name?.takeIf { it.isNotBlank() }
+            ?: nodes[nodeNum]?.displayName
+            ?: MeshConstants.formatNodeId(nodeNum)
+    }
+
+    /** The initials they chose, falling back to the radio's short name. */
+    fun tagOf(nodeNum: Int): String? {
+        if (nodeNum == myNode?.nodeNum) {
+            person?.tag?.takeIf { it.isNotBlank() }?.let { return it }
+        }
+        return cards[nodeNum]?.tag?.takeIf { it.isNotBlank() } ?: nodes[nodeNum]?.shortName
+    }
 
     /** What kind of conversation is open, or null for a direct one. */
     val kind: RoomKind? get() = selectedChannel?.takeIf { it.isRoom }?.kind
@@ -122,6 +148,7 @@ class ChatsViewModel @Inject constructor(
     private val presence: ChatPresence,
     private val people: PersonStore,
     private val receipts: ReceiptRepository,
+    rooms: RoomRepository,
 ) : ViewModel() {
 
     private val selected = MutableStateFlow<Int?>(null)
@@ -179,8 +206,9 @@ class ChatsViewModel @Inject constructor(
             composing,
             readState,
             people.person,
-        ) { nodes, composing, read, person ->
-            Self(nodes, composing, read, person)
+            rooms.observePersonCards(),
+        ) { nodes, composing, read, person, cards ->
+            Self(nodes, composing, read, person, cards)
         },
     ) { connected, channels, selected, messages, self ->
         ChatsUiState(
@@ -189,6 +217,7 @@ class ChatsViewModel @Inject constructor(
             selected = selected,
             messages = messages,
             nodes = self.nodes.associateBy(MeshNode::nodeNum),
+            cards = self.cards,
             myNode = self.nodes.firstOrNull { it.nodeNum == repository.myNodeNum.value },
             person = self.person,
             latest = self.read.latest,
@@ -252,12 +281,13 @@ class ChatsViewModel @Inject constructor(
         }
     }
 
-    /** Combine takes five sources at most; these four travel together. */
+    /** Combine takes five sources at most; these five travel together. */
     private data class Self(
         val nodes: List<MeshNode>,
         val composing: Composing,
         val read: ReadState,
         val person: Person?,
+        val cards: Map<Int, PersonCard>,
     )
 
     private data class Composing(

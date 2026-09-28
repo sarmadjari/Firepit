@@ -1,5 +1,7 @@
 package com.getfirepit.core.designsystem.theme
 
+import androidx.annotation.DrawableRes
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
@@ -67,3 +69,19 @@ fun onIdentityColorFor(nodeNum: Int, dark: Boolean, slot: Int? = null): Color = 
 
 /** Slot chosen per node, provided by the app so avatars can honour a personal pick. */
 val LocalIdentitySlots = staticCompositionLocalOf { emptyMap<Int, Int>() }
+
+/**
+ * What to draw inside a node's avatar, when the app knows better than the radio.
+ *
+ * The radio's short name is a fallback, not the truth: you are a person rather
+ * than the hardware you happen to be carrying, and a base station is a thing
+ * whose initials say nothing worth reading.
+ */
+@Immutable
+data class IdentityMark(
+    val tag: String? = null,
+    /** Drawn in place of a tag. */
+    @DrawableRes val icon: Int? = null,
+)
+
+val LocalIdentityMarks = staticCompositionLocalOf { emptyMap<Int, IdentityMark>() }

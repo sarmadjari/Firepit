@@ -6,10 +6,15 @@ import com.getfirepit.core.crypto.SealedText
 import com.getfirepit.core.crypto.InviteCodec
 import com.getfirepit.core.crypto.RoomCrypto
 import com.getfirepit.core.database.RoomMemberDao
+import com.getfirepit.core.database.PersonCardDao
+import com.getfirepit.core.database.PersonCardEntity
+import com.getfirepit.core.database.observeAll
 import com.getfirepit.core.database.observeRoom
 import com.getfirepit.core.database.record
 import com.getfirepit.core.database.recordReported
 import com.getfirepit.core.model.ChannelRole
+import com.getfirepit.core.model.PersonCard
+import com.getfirepit.core.protocol.OwnerName
 import com.getfirepit.core.model.RoomChannel
 import com.getfirepit.core.model.RoomKind
 import com.getfirepit.core.model.RoomMember
@@ -31,6 +36,7 @@ import com.getfirepit.protocol.meshchat.Inviter
 import com.getfirepit.protocol.meshchat.JoinHello
 import com.getfirepit.protocol.meshchat.LoRaProfile
 import com.getfirepit.protocol.meshchat.MeshChatControl
+import com.getfirepit.protocol.meshchat.PersonCard as ProtoPersonCard
 import com.getfirepit.protocol.meshchat.KeyRotation
 import com.getfirepit.protocol.meshchat.SealedMessage
 import com.getfirepit.protocol.meshchat.RosterEntry
@@ -42,6 +48,7 @@ import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.abs
+import kotlin.random.Random
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -50,7 +57,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 import okio.ByteString
 import okio.ByteString.Companion.toByteString
@@ -95,6 +104,7 @@ class RoomRepository @Inject constructor(
     private val receipts: ReceiptRepository,
     private val roomKeys: RoomKeyStore,
     private val range: RangeRepository,
+    private val personCardDao: PersonCardDao,
     @param:ApplicationScope private val scope: CoroutineScope,
 ) {
 
@@ -124,6 +134,11 @@ class RoomRepository @Inject constructor(
     fun stopWaiting() {
         _awaiting.value = null
     }
+
+    /** Kept so a room joined later can be told who we are without asking the UI again. */
+    @Volatile
+    private var latestCard: Card? = null
+
     private data class IssuedInvite(
         val roomId: Int,
         val inviteKey: ByteArray,
@@ -146,11 +161,120 @@ class RoomRepository @Inject constructor(
         rooms().firstOrNull { room ->
             roomKeys.keyFor(room.id) != null && nodeNum in memberDao.nodeNumsIn(room.id)
         }
+
+    /** How the people in our rooms describe themselves, by node number. */
+    fun observePersonCards(): Flow<Map<Int, PersonCard>> = personCardDao.observeAll()
+
+    /** Remembers the card without sending it, for restoring it at startup. */
+    fun rememberPersonCard(name: String, tag: String, colourSlot: Int?) {
+        latestCard = Card(name, tag, colourSlot)
+    }
+
+    /**
+     * Tells every room we are in who is holding this radio.
+     *
+     * Sealed per room, so it reaches the people who already share a key with us
+     * and nobody else. Nothing goes on the primary channel: on the open mesh a
+     * Firepit node looks like any other node, which is the point.
+     */
+    suspend fun sharePersonCard(name: String, tag: String, colourSlot: Int?) {
+        latestCard = Card(name, tag, colourSlot)
+        sharePersonCard()
+    }
+
+    /** Re-sends whatever was last set, for when a new room appears. */
+    private suspend fun sharePersonCard() {
+        latestCard?.let { shareCard(it, ChannelSlotManager.rooms(mesh.channels.value)) }
+    }
+
+    /** Introduces us to one room, for when somebody new turns up in it. */
+    private suspend fun shareCardWith(roomId: Int) {
+        val card = latestCard ?: return
+        val room = ChannelSlotManager.findByRoomId(mesh.channels.value, roomId) ?: return
+        shareCard(card, listOf(room))
+    }
+
+    /**
+     * Answers a join after a random pause, so a room full of people does not
+     * reply to the same arrival at once and talk over each other on the air.
+     */
+    private fun greet(roomId: Int) {
+        scope.launch {
+            delay(Random.nextLong(GREETING_SPREAD.inWholeMilliseconds))
+            runCatching { shareCardWith(roomId) }
+                .onFailure { cause -> Log.w(TAG, "could not greet room $roomId", cause) }
+        }
+    }
+
+    private data class Card(val name: String, val tag: String, val colourSlot: Int?)
+
+    private suspend fun shareCard(card: Card, rooms: List<RoomChannel>) {
+        val control = MeshChatControl(
+            version = InviteCodec.VERSION,
+            person_card = ProtoPersonCard(
+                name = OwnerName.longName(card.name),
+                tag = OwnerName.shortName(card.tag),
+                // Plus one, because proto3 cannot tell an unset 0 from slot 0.
+                colour_slot_plus_one = card.colourSlot?.plus(1) ?: 0,
+            ),
+        )
+        val myNodeNum = mesh.myNodeNum.value ?: return
+
+        rooms.forEach { room ->
+            // Firepit rooms only: on an interoperable channel this would be
+            // unreadable noise to every other client on it.
+            val key = roomKeys.keyFor(room.id) ?: return@forEach
+            val sealed = SealedText.seal(
+                key,
+                control.encode(),
+                SealedText.contextOf(room.id, myNodeNum),
+            )
+            runCatching {
+                link.send(
+                    ToRadio(
+                        packet = MeshPacketBuilder.meshPacket(
+                            to = MeshConstants.BROADCAST_NODENUM,
+                            channel = room.index,
+                            portNum = PortNum.PRIVATE_APP,
+                            payload = MeshChatControl(
+                                sealed_message = SealedMessage(
+                                    room_id = room.id,
+                                    ciphertext = sealed.toByteString(),
+                                    generation = roomKeys.generationOf(room.id),
+                                ),
+                            ).encode().let(ByteString::of),
+                            // Nobody is waiting on it, and it must never delay words.
+                            priority = MeshPacket.Priority.BACKGROUND,
+                        ),
+                    ),
+                )
+            }.onFailure { cause -> Log.w(TAG, "could not share card to room ${room.id}", cause) }
+        }
+        Log.i(TAG, "shared person card with ${rooms.size} rooms")
+    }
+
     /** Starts listening for join and roster traffic. Safe to call once per process. */
     fun start() {
         scope.launch {
             link.inbound.collect { message ->
                 message.packet?.let { runCatching { handlePacket(it) }.onFailure { cause -> Log.w(TAG, "roster", cause) } }
+            }
+        }
+
+        scope.launch {
+            // Re-introduce ourselves each time the radio comes back. Somebody
+            // out of range while the card changed catches up by reconnecting,
+            // which is when they were going to hear anything anyway — cheaper
+            // than a timer that pays for the silence too.
+            // StateFlow already conflates, so this fires on the change alone.
+            mesh.isConnected.collect { connected ->
+                if (!connected) return@collect
+                // Channels arrive with the connection, and there is nothing to
+                // seal to until they do.
+                val ready = withTimeoutOrNull(CHANNELS_TIMEOUT) {
+                    mesh.channels.first { it.isNotEmpty() }
+                }
+                if (ready != null) runCatching { sharePersonCard() }
             }
         }
     }
@@ -690,6 +814,24 @@ class RoomRepository @Inject constructor(
             mesh.saveSealedText(packet, room.text, room.reply_id.takeIf { it != 0 })
             receipts.received(packet.channel, packet.id)
         }
+
+        control.person_card?.let { card ->
+            if (!authenticated) {
+                // Unsealed, this is an open invitation to wear someone else's name.
+                Log.w(TAG, "unsealed person card from ${packet.from}; ignored")
+                return@let
+            }
+            personCardDao.upsert(
+                PersonCardEntity(
+                    nodeNum = packet.from,
+                    name = sanitizeMeshText(card.name),
+                    tag = sanitizeMeshText(card.tag),
+                    colourSlot = card.colour_slot_plus_one.takeIf { it > 0 }?.minus(1),
+                    updatedAt = System.currentTimeMillis(),
+                ),
+            )
+            Log.i(TAG, "person card from ${packet.from}")
+        }
     }
 
     /**
@@ -824,6 +966,7 @@ class RoomRepository @Inject constructor(
 
         announceJoined(request.roomId, nodeNum, myNodeNum, request.generation)
         sendRosterTo(nodeNum, request.roomId)
+        shareCardWith(request.roomId)
     }
 
     /** Turns somebody away, so they are told rather than left waiting. */
@@ -956,6 +1099,7 @@ class RoomRepository @Inject constructor(
 
         _awaiting.value = null
         Log.i(TAG, "let into room ${grant.room_id} in slot $slot")
+        shareCardWith(grant.room_id)
     }
 
     /**
@@ -1051,7 +1195,11 @@ class RoomRepository @Inject constructor(
             return
         }
         val joiner = event.node_num.takeIf { it != 0 } ?: return
+        val isNews = memberDao.findEntity(roomId, joiner) == null
         memberDao.record(roomId, joiner, System.currentTimeMillis(), invitedBy = event.invited_by)
+        // Only the inviter has introduced themselves so far. Without this the
+        // newcomer sees radio names for everyone else already in the room.
+        if (isNews && joiner != mesh.myNodeNum.value) greet(roomId)
     }
 
     private fun forgetStaleInvites(nowMillis: Long) {
@@ -1088,6 +1236,9 @@ class RoomRepository @Inject constructor(
         const val MAX_ATTEMPTS = 5
         const val ATTEMPT_WINDOW_MS = 60_000L
 
+        /** Window the room's replies to one join are scattered across. */
+        val GREETING_SPREAD = 30.seconds
+
         /** Past this, a join hello is too late to be tied to the invite it used. */
         const val INVITE_LEDGER_TTL_MS = 10 * 60 * 1000L
 
@@ -1096,6 +1247,9 @@ class RoomRepository @Inject constructor(
          * payload, so this leaves headroom rather than risking an oversized packet.
          */
         const val MAX_ROSTER_ENTRIES = 14
+
+        /** A radio that has not listed its channels by now is not going to. */
+        val CHANNELS_TIMEOUT = 30.seconds
     }
 }
 

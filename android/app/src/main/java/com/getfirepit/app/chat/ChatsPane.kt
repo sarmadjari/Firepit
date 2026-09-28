@@ -231,6 +231,7 @@ fun ChatsPane(
                     directLatest = state.directLatest,
                     directPeer = state.directPeer,
                     nodes = state.nodes,
+                    nameOf = state::nameOf,
                     onSelect = { index ->
                         viewModel.select(index)
                         scope.launch { navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, index) }
@@ -333,6 +334,7 @@ private fun ChannelList(
     directLatest: List<ChatMessage>,
     directPeer: Int?,
     nodes: Map<Int, MeshNode>,
+    nameOf: (Int) -> String,
     onSelect: (Int) -> Unit,
     onOpenDirect: (Int) -> Unit,
     onToggleMute: (Int) -> Unit,
@@ -459,7 +461,7 @@ private fun ChannelList(
                             channel = channel,
                             latest = latest[channel.index],
                             senderName = latest[channel.index]?.let { message ->
-                                nodes[message.fromNodeNum]?.displayName
+                                nameOf(message.fromNodeNum)
                             },
                             unread = unread[channel.index] ?: 0,
                             muted = channel.index in muted,
@@ -480,6 +482,7 @@ private fun ChannelList(
                         DirectRow(
                             peer = peer,
                             node = nodes[peer],
+                            name = nameOf(peer),
                             latest = message,
                             selected = peer == directPeer,
                             onSelect = { onOpenDirect(peer) },
@@ -503,11 +506,11 @@ private fun ChatMessage.peerOf(myNodeNum: Int?): Int =
 private fun DirectRow(
     peer: Int,
     node: MeshNode?,
+    name: String,
     latest: ChatMessage,
     selected: Boolean,
     onSelect: () -> Unit,
 ) {
-    val name = node?.displayName ?: MeshConstants.formatNodeId(peer)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -721,7 +724,7 @@ private fun DirectChat(
 ) {
     val listState = rememberLazyListState()
     val node = state.nodes[peer]
-    val name = node?.displayName ?: MeshConstants.formatNodeId(peer)
+    val name = state.nameOf(peer)
     val items = remember(state.messages) { buildChatItems(state.messages) }
 
     OpenAtNewest(conversation = peer, itemCount = items.size, listState = listState)
@@ -978,7 +981,7 @@ private fun ChannelChat(
                                 text = message.text,
                                 time = MessageTimestamp.bubbleFormat(message.shownAt()),
                                 isOutgoing = message.isOutgoing,
-                                senderName = state.nodes[message.fromNodeNum]?.displayName,
+                                senderName = state.nameOf(message.fromNodeNum),
                                 senderNodeNum = message.fromNodeNum,
                                 status = message.status.takeIf { message.isOutgoing },
                                 // Only when it is worth knowing: a relayed
@@ -990,8 +993,7 @@ private fun ChannelChat(
                                         ?.let { hops -> "$hops hop${if (hops == 1) "" else "s"}" },
                                 quoted = parent?.let {
                                     QuotedMessage(
-                                        senderName = state.nodes[it.fromNodeNum]?.displayName
-                                            ?: MeshConstants.formatNodeId(it.fromNodeNum),
+                                        senderName = state.nameOf(it.fromNodeNum),
                                         senderNodeNum = it.fromNodeNum,
                                         text = it.text,
                                     )
@@ -1042,9 +1044,9 @@ private fun ChannelChat(
         val receipts by viewModel.inspectedReceipts.collectAsStateWithLifecycle()
         MessageInfoSheet(
             message = message,
-            senderName = state.nodes[message.fromNodeNum]?.displayName,
+            senderName = state.nameOf(message.fromNodeNum),
             receipts = receipts,
-            nameOf = { node -> state.nodes[node]?.displayName ?: "Unknown" },
+            nameOf = state::nameOf,
             onDismiss = { viewModel.inspect(null) },
         )
     }
@@ -1100,8 +1102,7 @@ private fun ReplyBanner(state: ChatsUiState, parent: ChatMessage, onCancel: () -
                 .padding(horizontal = FirepitSpacing.s, vertical = FirepitSpacing.xs),
         ) {
             Text(
-                text = state.nodes[parent.fromNodeNum]?.displayName
-                    ?: MeshConstants.formatNodeId(parent.fromNodeNum),
+                text = state.nameOf(parent.fromNodeNum),
                 style = MaterialTheme.typography.labelMedium,
                 color = accent,
                 maxLines = 1,

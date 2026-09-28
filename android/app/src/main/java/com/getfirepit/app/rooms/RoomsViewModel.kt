@@ -15,6 +15,7 @@ import com.getfirepit.core.data.TracerouteClient
 import com.getfirepit.core.model.MeshNode
 import com.getfirepit.core.data.AwaitedRoom
 import com.getfirepit.core.data.PendingJoin
+import com.getfirepit.core.model.PersonCard
 import com.getfirepit.core.model.RoomChannel
 import com.getfirepit.core.model.RoomMember
 import com.getfirepit.core.protocol.ChannelSlotManager
@@ -60,11 +61,22 @@ sealed interface TraceState {
 data class MemberRow(
     val member: RoomMember,
     val node: MeshNode?,
+    /** What they call themselves. Claimed, not proven — see [nodeId]. */
+    val card: PersonCard?,
     val invitedByName: String?,
     val isSelf: Boolean,
 ) {
-    val displayName: String get() = node?.displayName ?: "!%08x".format(member.nodeNum)
-    val shortName: String? get() = node?.shortName
+    val displayName: String
+        get() = card?.name?.takeIf { it.isNotBlank() }
+            ?: node?.displayName
+            ?: nodeId
+
+    val shortName: String? get() = card?.tag?.takeIf { it.isNotBlank() } ?: node?.shortName
+
+    /** The only identity the mesh attests. Anyone can claim any name. */
+    val nodeId: String get() = "!%08x".format(member.nodeNum)
+
+    val isNameClaimed: Boolean get() = card?.name?.isNotBlank() == true
 }
 
 @HiltViewModel
@@ -174,13 +186,19 @@ class RoomsViewModel @Inject constructor(
      * the top so "who else is here" reads at a glance.
      */
     fun members(roomId: Int): Flow<List<MemberRow>> =
-        combine(rooms.observeMembers(roomId), mesh.observeNodes(), mesh.myNodeNum) { members, nodes, me ->
+        combine(
+            rooms.observeMembers(roomId),
+            mesh.observeNodes(),
+            mesh.myNodeNum,
+            rooms.observePersonCards(),
+        ) { members, nodes, me, cards ->
             val byNum = nodes.associateBy { it.nodeNum }
             members
                 .map { member ->
                     MemberRow(
                         member = member,
                         node = byNum[member.nodeNum],
+                        card = cards[member.nodeNum],
                         invitedByName = member.invitedBy
                             ?.takeIf { it != member.nodeNum }
                             ?.let { inviter ->
