@@ -115,7 +115,16 @@ class RadioViewModel @Inject constructor(
         link.state,
     ) { base, nodes, me, extras, linkState ->
         base.copy(
-            saved = extras.saved,
+            // A radio is saved under its Bluetooth name, which the firmware only
+            // re-advertises after a reboot. What it calls itself on the mesh
+            // changes the moment it is renamed, so that is what the list shows.
+            saved = extras.saved.map { radio ->
+                val meshName = radio.nodeNum
+                    ?.let { num -> nodes.firstOrNull { it.nodeNum == num } }
+                    ?.longName
+                    ?.takeIf { it.isNotBlank() }
+                if (meshName == null) radio else radio.copy(name = meshName)
+            },
             owner = extras.owner,
             relayReach = RelayReach.of(
                 (linkState as? LinkState.Ready)?.snapshot?.device?.rebroadcast_mode,

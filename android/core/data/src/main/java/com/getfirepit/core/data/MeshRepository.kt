@@ -123,6 +123,18 @@ class MeshRepository @Inject constructor(
         )
     }
 
+    /**
+     * Mirrors a rename onto our own node.
+     *
+     * The firmware acknowledges `set_owner` but does not send our own NodeInfo
+     * back, so without this the app keeps showing the old name until the next
+     * config download.
+     */
+    suspend fun setOwnName(nodeNum: Int, longName: String, shortName: String) {
+        val node = nodeDao.find(nodeNum) ?: return
+        nodeDao.save(node.copy(longName = longName, shortName = shortName), System.currentTimeMillis())
+    }
+
     /** A node's public key, required before anything can be sent to it over PKI. */
     suspend fun publicKeyOf(nodeNum: Int): ByteString? =
         _snapshot.value?.nodes?.get(nodeNum)?.user?.public_key?.takeIf { it.size == PUBLIC_KEY_SIZE }

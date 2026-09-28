@@ -50,6 +50,7 @@ class OwnerRepository @Inject constructor(
                 short_name = trimmedShort,
             ),
         )
+        mesh.setOwnName(myNodeNum, trimmedLong, trimmedShort)
         Log.i(TAG, "renamed this node to $trimmedLong ($trimmedShort)")
     }
 
