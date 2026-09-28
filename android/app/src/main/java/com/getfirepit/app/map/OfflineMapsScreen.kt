@@ -3,6 +3,7 @@ package com.getfirepit.app.map
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -24,6 +25,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,7 +42,10 @@ import com.getfirepit.core.designsystem.theme.FirepitTheme
 import java.text.DateFormat
 import java.util.Date
 import java.util.concurrent.TimeUnit
+import org.maplibre.android.camera.CameraUpdateFactory
+import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
+import org.maplibre.android.maps.MapLibreMap
 
 /**
  * Pick an area on the map and keep it for when there is no signal.
@@ -57,8 +62,21 @@ fun OfflineMapsScreen(
     viewModel: OfflineMapsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val myPosition by viewModel.myPosition.collectAsStateWithLifecycle()
     var bounds by remember { mutableStateOf<LatLngBounds?>(null) }
     var naming by remember { mutableStateOf(false) }
+    var map by remember { mutableStateOf<MapLibreMap?>(null) }
+    // Only the first fix moves the camera, or panning away would be undone the
+    // next time the position updated.
+    var framed by remember { mutableStateOf(false) }
+
+    LaunchedEffect(map, myPosition) {
+        val ready = map ?: return@LaunchedEffect
+        val here = myPosition ?: return@LaunchedEffect
+        if (framed) return@LaunchedEffect
+        framed = true
+        ready.frameAround(here)
+    }
 
     Scaffold(
         modifier = modifier,
@@ -79,11 +97,12 @@ fun OfflineMapsScreen(
                 MapLibreView(
                     styleUrl = OPEN_FREE_MAP_STYLE,
                     modifier = Modifier.fillMaxSize(),
-                ) { map, _ ->
-                    map.addOnCameraIdleListener {
-                        bounds = map.projection.visibleRegion.latLngBounds
+                ) { ready, _ ->
+                    map = ready
+                    ready.addOnCameraIdleListener {
+                        bounds = ready.projection.visibleRegion.latLngBounds
                     }
-                    bounds = map.projection.visibleRegion.latLngBounds
+                    bounds = ready.projection.visibleRegion.latLngBounds
                 }
             }
 
@@ -123,6 +142,13 @@ fun OfflineMapsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = FirepitTheme.colors.textSecondary,
                 )
+
+                myPosition?.let { here ->
+                    TextButton(
+                        onClick = { map?.frameAround(here) },
+                        contentPadding = PaddingValues(0.dp),
+                    ) { Text("Around me (${AROUND_ME_RADIUS_KM.toInt()} km)") }
+                }
 
                 bounds?.let { visible ->
                     val tiles = remember(visible) {
@@ -238,6 +264,22 @@ private fun NameAreaDialog(onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
     )
 }
 
+/**
+ * Points the camera at a [radiusKm] box around a point.
+ *
+ * The whole-world view this screen used to open on estimated tens of terabytes,
+ * which is not a choice anyone was going to make. Where you are standing is.
+ */
+private fun MapLibreMap.frameAround(centre: LatLng, radiusKm: Double = AROUND_ME_RADIUS_KM) {
+    val box = boxAround(centre.latitude, centre.longitude, radiusKm)
+    moveCamera(
+        CameraUpdateFactory.newLatLngBounds(
+            LatLngBounds.from(box.north, box.east, box.south, box.west),
+            FRAME_PADDING_PX,
+        ),
+    )
+}
+
 private fun downloadedLabel(epochMillis: Long): String {
     if (epochMillis <= 0) return "downloaded before this was recorded"
     val elapsed = System.currentTimeMillis() - epochMillis
@@ -257,3 +299,8 @@ private const val MAX_ZOOM = 15
 
 /** Past this the download is worth a second look before starting. */
 private const val LARGE_AREA_TILES = 20_000L
+
+/** Roughly an hour's walk in every direction, and a few thousand tiles rather than millions. */
+private const val AROUND_ME_RADIUS_KM = 20.0
+
+private const val FRAME_PADDING_PX = 24

@@ -68,11 +68,13 @@ import com.getfirepit.core.protocol.OwnerName
 import com.getfirepit.core.protocol.Person
 import com.getfirepit.core.transport.LinkState
 
-private enum class SettingsSection { DEVICES, NODES, OFFLINE_MAPS, PINS }
+enum class SettingsSection { DEVICES, NODES, OFFLINE_MAPS, PINS }
 
 @Composable
 fun SettingsScreen(
     modifier: Modifier = Modifier,
+    openSection: SettingsSection? = null,
+    onSectionOpened: () -> Unit = {},
     onImmersiveChange: (Boolean) -> Unit = {},
     radioViewModel: RadioViewModel = hiltViewModel(),
     settingsViewModel: SettingsViewModel = hiltViewModel(),
@@ -90,6 +92,14 @@ fun SettingsScreen(
     // A sub-screen takes the whole display, same as an open chat does.
     LaunchedEffect(section) { onImmersiveChange(section != null) }
     BackHandler(enabled = section != null) { section = null }
+
+    // Asked for from another tab, and cleared once taken so asking twice works.
+    LaunchedEffect(openSection) {
+        openSection?.let {
+            section = it
+            onSectionOpened()
+        }
+    }
 
     when (section) {
         SettingsSection.DEVICES -> DevicesScreen(

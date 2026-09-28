@@ -34,6 +34,7 @@ import androidx.window.core.layout.WindowSizeClass
 import com.getfirepit.app.chat.ChatsPane
 import com.getfirepit.app.map.MapScreen
 import com.getfirepit.app.settings.SettingsScreen
+import com.getfirepit.app.settings.SettingsSection
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfoV2
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 
@@ -53,6 +54,7 @@ fun FirepitApp(modifier: Modifier = Modifier) {
     var selected by rememberSaveable { mutableStateOf(TopLevelDestination.CHATS) }
     var chatOpen by remember { mutableStateOf(false) }
     var settingsDetailOpen by remember { mutableStateOf(false) }
+    var settingsSection by remember { mutableStateOf<SettingsSection?>(null) }
 
     val keyboardOpen = WindowInsets.isImeVisible
 
@@ -81,10 +83,17 @@ fun FirepitApp(modifier: Modifier = Modifier) {
             TopLevelDestination.CHATS -> ChatsPane(onChatOpenChange = { chatOpen = it })
             TopLevelDestination.MAP -> MapScreen(
                 onBack = { selected = TopLevelDestination.CHATS },
-                onOpenOfflineAreas = { selected = TopLevelDestination.SETTINGS },
+                onOpenOfflineAreas = {
+                    settingsSection = SettingsSection.OFFLINE_MAPS
+                    selected = TopLevelDestination.SETTINGS
+                },
             )
             TopLevelDestination.SETTINGS ->
-                SettingsScreen(onImmersiveChange = { settingsDetailOpen = it })
+                SettingsScreen(
+                    openSection = settingsSection,
+                    onSectionOpened = { settingsSection = null },
+                    onImmersiveChange = { settingsDetailOpen = it },
+                )
         }
     }
 

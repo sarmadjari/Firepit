@@ -2,8 +2,45 @@ package com.getfirepit.app.map
 
 import kotlin.math.PI
 import kotlin.math.asinh
+import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.tan
+
+/** A north/south/east/west box, before it becomes a MapLibre type. */
+data class GeoBox(
+    val north: Double,
+    val south: Double,
+    val east: Double,
+    val west: Double,
+)
+
+/**
+ * A square box [radiusKm] either side of a point.
+ *
+ * Longitude degrees narrow towards the poles, so the east–west span is divided
+ * by the cosine of the latitude; without that a box in Scandinavia comes out
+ * half as wide as one at the equator. Near the poles the cosine approaches zero
+ * and the span would explode, so it is floored.
+ */
+fun boxAround(latitude: Double, longitude: Double, radiusKm: Double): GeoBox {
+    val latitudeSpan = radiusKm / KM_PER_DEGREE
+    val shrink = cos(latitude * PI / 180.0).coerceAtLeast(MIN_COSINE)
+    val longitudeSpan = radiusKm / (KM_PER_DEGREE * shrink)
+    return GeoBox(
+        north = (latitude + latitudeSpan).coerceAtMost(MAX_TILE_LATITUDE),
+        south = (latitude - latitudeSpan).coerceAtLeast(-MAX_TILE_LATITUDE),
+        east = (longitude + longitudeSpan).coerceAtMost(180.0),
+        west = (longitude - longitudeSpan).coerceAtLeast(-180.0),
+    )
+}
+
+/** Web Mercator cannot represent the poles; tiles stop at this latitude. */
+private const val MAX_TILE_LATITUDE = 85.05112878
+
+private const val KM_PER_DEGREE = 111.32
+
+/** About 84° north or south. Past that the box stops widening rather than wrapping the globe. */
+private const val MIN_COSINE = 0.1
 
 /**
  * How big a download will be, before starting it.
