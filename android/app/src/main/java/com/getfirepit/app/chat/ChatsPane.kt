@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -63,8 +64,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -683,10 +690,9 @@ private fun DirectChat(
     val listState = rememberLazyListState()
     val node = state.nodes[peer]
     val name = node?.displayName ?: MeshConstants.formatNodeId(peer)
+    val items = remember(state.messages) { buildChatItems(state.messages) }
 
-    LaunchedEffect(state.messages.size) {
-        if (state.messages.isNotEmpty()) listState.animateScrollToItem(state.messages.lastIndex)
-    }
+    OpenAtNewest(conversation = peer, itemCount = items.size, listState = listState)
 
     Scaffold(
         topBar = {
@@ -787,13 +793,17 @@ private fun ChannelChat(
     val scope = rememberCoroutineScope()
     var searching by rememberSaveable(channel.index) { mutableStateOf(false) }
 
-    LaunchedEffect(state.messages.size, state.isSearching) {
-        // Jumping to the newest message would fight the reader while they scan
-        // results, so autoscroll pauses during a search.
-        if (state.messages.isNotEmpty() && !state.isSearching) {
-            listState.animateScrollToItem(state.messages.lastIndex)
-        }
-    }
+    val visible = state.visibleMessages
+    val items = remember(visible) { buildChatItems(visible) }
+
+    // Autoscroll pauses during a search: jumping to the newest message would
+    // fight the reader while they scan results.
+    OpenAtNewest(
+        conversation = channel.index,
+        itemCount = items.size,
+        listState = listState,
+        autoScroll = !state.isSearching,
+    )
 
     Scaffold(
         topBar = {
@@ -928,7 +938,6 @@ private fun ChannelChat(
                 .fillMaxSize(),
         ) {
             val visible = state.visibleMessages
-            val items = remember(visible) { buildChatItems(visible) }
 
             if (state.isSearching && visible.isEmpty()) {
                 EmptyState("No messages match \"${state.query.trim()}\".")
@@ -1117,6 +1126,14 @@ private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
             ReplyBanner(state = state, parent = parent, onCancel = viewModel::cancelReply)
         }
 
+        // Refused until the field is actually touched. When the detail pane
+        // appears the focus system gives focus to the first thing that will
+        // take it, and a composer that accepts opens the keyboard over the
+        // conversation somebody just asked to read. Clearing it afterwards is a
+        // race with that hand-off; declining it is not.
+        val requester = remember { FocusRequester() }
+        var acceptsFocus by remember(state.selected, state.directPeer) { mutableStateOf(false) }
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1129,7 +1146,18 @@ private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
                 onValueChange = viewModel::updateDraft,
                 modifier = Modifier
                     .weight(1f)
-                    .heightIn(max = 140.dp),
+                    .heightIn(max = 140.dp)
+                    .focusRequester(requester)
+                    .focusProperties { canFocus = acceptsFocus }
+                    .pointerInput(state.selected, state.directPeer) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false)
+                            if (!acceptsFocus) {
+                                acceptsFocus = true
+                                requester.requestFocus()
+                            }
+                        }
+                    },
                 placeholder = { Text("Message") },
                 supportingText = {
                     // Only appears near a limit, so the composer stays quiet.
@@ -1179,6 +1207,46 @@ private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
                     modifier = Modifier.size(20.dp),
                 )
             }
+        }
+    }
+}
+
+/**
+ * Opens a conversation at its newest message, with nothing typing.
+ *
+ * Counts rendered rows rather than messages: the list also holds day
+ * separators and notices, so a message index lands short of the bottom by
+ * however many days the conversation spans.
+ *
+ * The first landing jumps; later arrivals animate. Someone opening a room
+ * asked for the conversation, not a scroll through it, but a message arriving
+ * while they are reading is worth seeing move.
+ */
+@Composable
+private fun OpenAtNewest(
+    conversation: Any,
+    itemCount: Int,
+    listState: LazyListState,
+    autoScroll: Boolean = true,
+) {
+    val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    var landed by remember(conversation) { mutableStateOf(false) }
+
+    // Switching rooms reuses the composer, so a cursor left in it from the last
+    // one raises the keyboard over the messages the reader came to see.
+    LaunchedEffect(conversation) {
+        focus.clearFocus(force = true)
+        keyboard?.hide()
+    }
+
+    LaunchedEffect(conversation, itemCount, autoScroll) {
+        if (itemCount == 0 || !autoScroll) return@LaunchedEffect
+        if (landed) {
+            listState.animateScrollToItem(itemCount - 1)
+        } else {
+            listState.scrollToItem(itemCount - 1)
+            landed = true
         }
     }
 }
