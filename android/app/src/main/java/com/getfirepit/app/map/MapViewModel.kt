@@ -9,6 +9,7 @@ import com.getfirepit.core.model.MapPin
 import com.getfirepit.core.model.MeshNode
 import com.getfirepit.core.model.RoomChannel
 import com.getfirepit.core.protocol.ChannelSlotManager
+import com.getfirepit.core.protocol.PositionSharing
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import com.getfirepit.app.radio.SavedRadioStore
@@ -116,12 +117,33 @@ class MapViewModel @Inject constructor(
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MapUiState())
 
-    /** Pins go on the room we share with, or the primary channel when sharing is off. */
+    /**
+     * Pins carry a place and a name, so they go where a position would: one
+     * private room, never the primary and never a shared Meshtastic channel.
+     *
+     * The room we already share location with when there is one, since that is
+     * the group looking at the same map; otherwise the only private room there
+     * is. Anything else would be a guess about who should see it.
+     */
     fun dropPin(latitudeI: Int, longitudeI: Int, name: String) {
-        val channel = uiState.value.let { state ->
-            state.rooms.firstOrNull { it.id == state.sharingRoomId }?.index ?: 0
+        val state = uiState.value
+        val shareable = state.rooms.filter(PositionSharing::canShare)
+        val room = shareable.firstOrNull { it.id == state.sharingRoomId }
+            ?: shareable.singleOrNull()
+
+        if (room == null) {
+            error.value = if (shareable.isEmpty()) {
+                "Pins go to one private room. Create or join a private room first — a pin " +
+                    "carries a place and a name, so it is never put on a public channel."
+            } else {
+                "Choose which room to share your map with first, so the pin has somewhere " +
+                    "to go."
+            }
+            return
         }
-        run("Could not drop the pin") { waypoints.drop(channel, latitudeI, longitudeI, name) }
+        run("Could not drop the pin") {
+            waypoints.drop(room.index, latitudeI, longitudeI, name)
+        }
     }
 
     fun removePin(pin: MapPin) = run("Could not remove the pin") { waypoints.remove(pin) }

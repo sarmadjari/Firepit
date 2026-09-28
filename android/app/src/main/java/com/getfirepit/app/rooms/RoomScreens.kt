@@ -2,6 +2,7 @@ package com.getfirepit.app.rooms
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -41,18 +42,52 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.getfirepit.core.crypto.InviteCodec
 import com.getfirepit.core.designsystem.component.BackButton
+import com.getfirepit.core.designsystem.component.FirepitChip
 import com.getfirepit.core.designsystem.component.FirepitDetailBar
 import com.getfirepit.core.designsystem.component.FirepitIcons
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
+
+/**
+ * What a new room is, before it is named.
+ *
+ * Firepit's own rooms and plain Meshtastic channels are different protocols
+ * with different audiences, so the choice is made up front rather than buried
+ * in a setting: one is unreadable to everyone outside it, the other exists
+ * precisely so that people outside Firepit can read it.
+ *
+ * The open mesh is not offered here. Nobody creates it — it already exists — and
+ * making it a button beside a private room would put the least private option
+ * one mis-tap away.
+ */
+enum class NewRoomKind(val label: String, val readableBy: String, val blurb: String) {
+    FIREPIT(
+        label = "Firepit",
+        readableBy = "Only the people you invite",
+        blurb = "Firepit's own kind of room. Messages are sealed on your phone before the radio " +
+            "ever sees them, so nobody on the Meshtastic network can read them — not even " +
+            "someone holding one of the radios. Names, colours, and delivery and read status " +
+            "all work here. You invite people with a Firepit QR code.",
+    ),
+    MESHTASTIC_SHARED(
+        label = "Meshtastic",
+        readableBy = "Anyone who has the channel's key",
+        blurb = "A standard Meshtastic channel, for talking to people who are not running " +
+            "Firepit. Its key is kept on the radios, so anyone holding one can read everything " +
+            "sent here. Firepit's own features are switched off, because other apps would not " +
+            "understand them. You share it from the Meshtastic app.",
+    ),
+}
 
 /** Name entry for a new room. The byte budget is the radio's, not a UI choice. */
 @Composable
 fun CreateRoomDialog(
     onDismiss: () -> Unit,
     onCreate: (String) -> Unit,
+    onCreateShared: (String) -> Unit = {},
 ) {
     var name by remember { mutableStateOf("") }
+    var kind by remember { mutableStateOf(NewRoomKind.FIREPIT) }
     val bytes = name.trim().toByteArray().size
     val tooLong = bytes > InviteCodec.MAX_ROOM_NAME_BYTES
 
@@ -61,6 +96,15 @@ fun CreateRoomDialog(
         title = { Text("New room") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
+                    NewRoomKind.entries.forEach { option ->
+                        FirepitChip(
+                            label = option.label,
+                            selected = kind == option,
+                            onClick = { kind = option },
+                        )
+                    }
+                }
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -70,22 +114,47 @@ fun CreateRoomDialog(
                     supportingText = {
                         Text(
                             text = "${InviteCodec.MAX_ROOM_NAME_BYTES - bytes} bytes left",
-                            color = if (tooLong) FirepitTheme.colors.danger else FirepitTheme.colors.textSecondary,
+                            color = if (tooLong) {
+                                FirepitTheme.colors.danger
+                            } else {
+                                FirepitTheme.colors.textSecondary
+                            },
                         )
                     },
                     keyboardOptions = KeyboardOptions.Default,
                 )
                 Text(
-                    text = "Everyone you invite gets the room's key. There is no way to remove " +
-                        "one person later without making a new key for everybody.",
+                    text = kind.readableBy,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (kind == NewRoomKind.FIREPIT) {
+                        FirepitTheme.colors.textSecondary
+                    } else {
+                        FirepitTheme.colors.warn
+                    },
+                )
+                Text(
+                    text = kind.blurb,
                     style = MaterialTheme.typography.bodySmall,
                     color = FirepitTheme.colors.textSecondary,
                 )
+                if (kind == NewRoomKind.FIREPIT) {
+                    Text(
+                        text = "Everyone you invite gets the room's key. There is no way to remove " +
+                            "one person later without making a new key for everybody.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FirepitTheme.colors.textSecondary,
+                    )
+                }
             }
         },
         confirmButton = {
             Button(
-                onClick = { onCreate(name.trim()) },
+                onClick = {
+                    when (kind) {
+                        NewRoomKind.FIREPIT -> onCreate(name.trim())
+                        NewRoomKind.MESHTASTIC_SHARED -> onCreateShared(name.trim())
+                    }
+                },
                 enabled = name.isNotBlank() && !tooLong,
             ) { Text("Create") }
         },
@@ -192,7 +261,7 @@ fun JoinRoomScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            FirepitDetailBar(title = "Scan an invite", onBack = onBack)
+            FirepitDetailBar(title = "Scan a code", onBack = onBack)
         },
     ) { padding ->
         Box(
@@ -223,6 +292,13 @@ fun JoinRoomScreen(
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
+                Text(
+                    text = "A Firepit invite joins a private room. A Meshtastic code adds a " +
+                        "channel other Meshtastic apps can read — the room will say which.",
+                    color = FirepitTheme.colors.textSecondary,
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
         }
     }

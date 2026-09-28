@@ -2,7 +2,10 @@ package com.getfirepit.app.rooms
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.getfirepit.core.crypto.CodeScanner
 import com.getfirepit.core.crypto.InviteCodec
+import com.getfirepit.core.crypto.ScannedCode
+import okio.ByteString.Companion.toByteString
 import com.getfirepit.core.crypto.RoomCrypto
 import com.getfirepit.core.data.MeshRepository
 import com.getfirepit.core.data.RoomRepository
@@ -186,10 +189,54 @@ class RoomsViewModel @Inject constructor(
         }
     }
 
+    /**
+     * One scanner for both worlds, routed by Firepit's own scheme before any
+     * decoding happens. Which format a code is decides how private the room can
+     * be, so the notice says which one arrived.
+     */
     fun joinFromScan(scanned: String) = run("Could not join") {
-        val decoded = InviteCodec.decode(scanned) ?: error("That isn't a Firepit invite")
-        rooms.joinRoom(decoded)
-        notice.value = decoded.room_name
+        when (val code = CodeScanner.classify(scanned)) {
+            is ScannedCode.Firepit -> {
+                rooms.joinRoom(code.invite)
+            }
+
+            is ScannedCode.Meshtastic -> {
+                val added = rooms.joinMeshtasticChannels(code.shared)
+                notice.value = when {
+                    added.size == 1 -> "Added ${added.first().name}. Standard Meshtastic — " +
+                        "other Meshtastic apps can read it, and Firepit's own features are off."
+
+                    else -> "Added ${added.size} Meshtastic channels. Other Meshtastic apps " +
+                        "can read them, and Firepit's own features are off."
+                }
+            }
+
+            is ScannedCode.FirepitUnreadable -> error(
+                when (code.reason) {
+                    ScannedCode.Reason.NEWER_VERSION ->
+                        "This Firepit invite was made by a newer version of the app. Update to join."
+
+                    ScannedCode.Reason.MALFORMED ->
+                        "This Firepit invite is damaged or has expired — ask for a fresh one."
+                },
+            )
+
+            ScannedCode.Unrecognised ->
+                error("That isn't a Firepit invite or a Meshtastic channel link")
+        }
+    }
+
+    /**
+     * A channel shared with particular people who are not running Firepit. The
+     * key is generated here and handed over as a standard Meshtastic link.
+     */
+    fun addSharedChannel(name: String) = run("Could not add the channel") {
+        val room = rooms.addMeshtasticChannel(
+            name = name,
+            psk = RoomCrypto.generatePsk().toByteString(),
+        )
+        notice.value = "Added ${room.name}. Share it from the Meshtastic app — " +
+            "Firepit only issues its own invites."
     }
 
     /**

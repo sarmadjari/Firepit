@@ -30,6 +30,20 @@ class ChannelKeyTest {
         assertEquals(ChannelKey.DEFAULT, ChannelKey.of(ByteArray(8) { 7 }))
     }
 
+    /**
+     * The default key is sixteen bytes, exactly like a real AES-128 key, so a
+     * check that only measured length would call the most public key in the
+     * protocol private.
+     */
+    @Test
+    fun `the well-known key written out in full is still the default`() {
+        assertEquals(
+            ChannelKey.DEFAULT,
+            ChannelKey.of(MeshtasticChannel.DEFAULT_KEY.toByteArray()),
+        )
+        assertFalse(ChannelKey.of(MeshtasticChannel.DEFAULT_KEY.toByteArray()).isPrivate)
+    }
+
     @Test
     fun `only a full key counts as private`() {
         assertTrue(ChannelKey.of(ByteArray(32) { 7 }).isPrivate)

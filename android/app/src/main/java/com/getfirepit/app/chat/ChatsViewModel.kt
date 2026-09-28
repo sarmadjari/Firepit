@@ -18,6 +18,7 @@ import com.getfirepit.app.settings.PersonStore
 import com.getfirepit.core.model.MeshNode
 import com.getfirepit.core.protocol.Person
 import com.getfirepit.core.model.RoomChannel
+import com.getfirepit.core.model.RoomKind
 import com.getfirepit.core.protocol.MeshConstants
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -63,6 +64,9 @@ data class ChatsUiState(
     val sealed: Boolean = false,
 ) {
     val selectedChannel: RoomChannel? get() = channels.firstOrNull { it.index == selected }
+
+    /** What kind of conversation is open, or null for a direct one. */
+    val kind: RoomKind? get() = selectedChannel?.takeIf { it.isRoom }?.kind
     val draftBytes: Int get() = draft.toByteArray(Charsets.UTF_8).size
     val textBudget: Int get() = if (sealed) SealedText.MAX_TEXT_BYTES else MeshConstants.MAX_TEXT_BYTES
     val remainingBytes: Int get() = textBudget - draftBytes

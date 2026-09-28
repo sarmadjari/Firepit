@@ -11,6 +11,7 @@ import com.getfirepit.core.database.record
 import com.getfirepit.core.database.recordReported
 import com.getfirepit.core.model.ChannelRole
 import com.getfirepit.core.model.RoomChannel
+import com.getfirepit.core.model.RoomKind
 import com.getfirepit.core.model.RoomMember
 import com.getfirepit.core.database.MessageDao
 import com.getfirepit.core.database.save
@@ -18,8 +19,11 @@ import com.getfirepit.core.model.BROADCAST_NODE_NUM
 import com.getfirepit.core.model.ChatMessage
 import com.getfirepit.core.model.MessageStatus
 import com.getfirepit.core.protocol.ChannelSlotManager
+import com.getfirepit.core.protocol.ChannelUrl
 import com.getfirepit.core.protocol.MeshConstants
 import com.getfirepit.core.protocol.MeshPacketBuilder
+import com.getfirepit.core.protocol.MeshtasticChannel
+import com.getfirepit.core.protocol.PositionPrecision
 import com.getfirepit.protocol.meshchat.Invite
 import com.getfirepit.protocol.meshchat.Inviter
 import com.getfirepit.protocol.meshchat.JoinHello
@@ -56,7 +60,13 @@ sealed class RoomError(message: String) : Exception(message) {
         RoomError("Room name is $bytes bytes; the radio allows ${InviteCodec.MAX_ROOM_NAME_BYTES}")
 
     data object InviteExpired : RoomError("This code expired — ask for a fresh one")
-    data object InviteInvalid : RoomError("That isn't a Firepit invite")
+    data object InviteInvalid : RoomError("That isn't a Firepit invite or a Meshtastic channel link")
+
+    /** Firepit's own features need a Firepit room; a shared channel has none of them. */
+    data object NotAFirepitRoom : RoomError(
+        "This is a standard Meshtastic channel, so it only does what Meshtastic does. " +
+            "Create a private room for Firepit's own features.",
+    )
 }
 
 /**
@@ -113,6 +123,10 @@ class RoomRepository @Inject constructor(
         val slot = ChannelSlotManager.nextFreeSlot(mesh.channels.value) ?: throw RoomError.NoFreeSlot
         val roomId = RoomCrypto.generateRoomId()
 
+        // Before the channel exists, so the slot is a sealed room from the
+        // moment it appears rather than briefly looking like a plain one.
+        roomKeys.generate(roomId)
+
         admin.setChannel(
             channelFor(
                 index = slot,
@@ -123,9 +137,6 @@ class RoomRepository @Inject constructor(
         )
         Log.i(TAG, "created room $roomId in slot $slot")
 
-        // The radio holds the PSK; this one never leaves the phone's keystore.
-        roomKeys.generate(roomId)
-
         // Nobody vouches for the founder; they are in the room by construction.
         memberDao.record(roomId, myNodeNum, System.currentTimeMillis(), invitedBy = myNodeNum)
 
@@ -135,7 +146,85 @@ class RoomRepository @Inject constructor(
             role = ChannelRole.SECONDARY,
             id = roomId,
             positionPrecision = ROOM_POSITION_PRECISION,
+            kind = RoomKind.FIREPIT,
         )
+    }
+
+    /**
+     * Adds a channel that other Meshtastic clients can take part in.
+     *
+     * Not a Firepit room and deliberately not sealed: a stock client cannot
+     * open our envelope, so the whole point of this is to speak the plain
+     * protocol. [psk] null means the published default key and the open mesh;
+     * a 32-byte key means a channel shared with particular people, which keeps
+     * the mesh at large out but not anyone holding one of the radios.
+     *
+     * It occupies a secondary slot, so it sits alongside private rooms rather
+     * than replacing them — secondary channels are used only for decryption,
+     * and the frequency still comes from slot 0.
+     */
+    suspend fun addMeshtasticChannel(name: String, psk: ByteString? = null): RoomChannel {
+        mesh.myNodeNum.value ?: throw RoomError.NotConnected
+
+        val preset = mesh.snapshot.value?.lora?.modem_preset
+        val trimmed = name.trim().ifEmpty { MeshtasticChannel.publicNameFor(preset) }
+        val nameBytes = trimmed.toByteArray().size
+        if (nameBytes > InviteCodec.MAX_ROOM_NAME_BYTES) throw RoomError.NameTooLong(nameBytes)
+
+        val existing = ChannelSlotManager.rooms(mesh.channels.value).firstOrNull { it.name == trimmed }
+        val slot = existing?.index
+            ?: ChannelSlotManager.nextFreeSlot(mesh.channels.value)
+            ?: throw RoomError.NoFreeSlot
+
+        val channel = if (psk == null) {
+            MeshtasticChannel.publicChannel(index = slot, preset = preset)
+        } else {
+            MeshtasticChannel.privateChannel(index = slot, name = trimmed, psk = psk)
+        }
+        admin.setChannel(channel)
+        Log.i(TAG, "added Meshtastic channel \"$trimmed\" in slot $slot")
+
+        return RoomChannel(
+            index = slot,
+            name = trimmed,
+            role = ChannelRole.SECONDARY,
+            id = channel.settings?.id ?: 0,
+            // Never our location: this channel reaches people we have not chosen.
+            positionPrecision = PositionPrecision.DISABLED,
+            kind = if (psk == null) RoomKind.MESHTASTIC_PUBLIC else RoomKind.MESHTASTIC_PRIVATE,
+        )
+    }
+
+    /**
+     * Joins the channels in a Meshtastic share link.
+     *
+     * Reading these is one-way on purpose: Firepit issues its own invites, which
+     * carry a rotating token and a room key the radio never holds. This format
+     * can carry neither, so anything shared through it would be weaker than what
+     * the person sharing it thinks they are handing over.
+     *
+     * The link's own primary is taken as a secondary channel rather than
+     * written to slot 0: that slot sets the radio's frequency and carries our
+     * identity, and a scanned link should add a conversation, not silently
+     * reconfigure the node.
+     */
+    suspend fun joinMeshtasticChannels(shared: ChannelUrl.Shared): List<RoomChannel> {
+        mesh.myNodeNum.value ?: throw RoomError.NotConnected
+
+        return shared.channels.mapNotNull { settings ->
+            val name = sanitizeMeshText(settings.name)
+                .ifEmpty { MeshtasticChannel.publicNameFor(shared.lora?.modem_preset) }
+            runCatching {
+                addMeshtasticChannel(
+                    name = name,
+                    psk = settings.psk.takeUnless { MeshtasticChannel.isWellKnown(it) },
+                )
+            }.onFailure { cause ->
+                Log.w(TAG, "could not add \"$name\" from a channel link", cause)
+            }.getOrNull()
+        }.also { added ->
+            if (added.isEmpty()) throw RoomError.NoFreeSlot
+        }
     }
 
     /**
@@ -237,6 +326,9 @@ class RoomRepository @Inject constructor(
         val myNodeNum = mesh.myNodeNum.value ?: throw RoomError.NotConnected
         val room = ChannelSlotManager.findByRoomId(mesh.channels.value, roomId)
             ?: throw RoomError.InviteInvalid
+        // Rotation hands out a new Firepit key over PKI; a standard Meshtastic
+        // channel has no such key and no way to receive one.
+        if (roomKeys.keyFor(roomId) == null) throw RoomError.NotAFirepitRoom
 
         val generation = roomKeys.generationOf(roomId) + 1
         val psk = RoomCrypto.generatePsk()

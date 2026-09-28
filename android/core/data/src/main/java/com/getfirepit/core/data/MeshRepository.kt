@@ -17,6 +17,8 @@ import com.getfirepit.core.model.ChatMessage
 import com.getfirepit.core.model.MeshNode
 import com.getfirepit.core.model.MessageStatus
 import com.getfirepit.core.model.RoomChannel
+import com.getfirepit.core.model.RoomKind
+import com.getfirepit.core.protocol.ChannelKey
 import com.getfirepit.core.protocol.ChannelLoad
 import com.getfirepit.core.crypto.SealedText
 import com.getfirepit.protocol.meshchat.MeshChatControl
@@ -178,6 +180,22 @@ class MeshRepository @Inject constructor(
 
     fun observeNodes(): Flow<List<MeshNode>> = nodeDao.observeAll()
 
+    /**
+     * What kind of conversation a slot holds.
+     *
+     * Holding the Firepit key is the only thing that makes a room sealed, so it
+     * is asked first and nothing else can stand in for it. Everything else is
+     * an ordinary Meshtastic channel, described by how private its own key is.
+     */
+    private fun kindOf(roomId: Int, psk: ByteArray?): RoomKind = when {
+        roomId != 0 && roomKeys.keyFor(roomId) != null -> RoomKind.FIREPIT
+        else -> when (ChannelKey.of(psk)) {
+            ChannelKey.PRIVATE -> RoomKind.MESHTASTIC_PRIVATE
+            ChannelKey.DEFAULT -> RoomKind.MESHTASTIC_PUBLIC
+            ChannelKey.NONE -> RoomKind.UNENCRYPTED
+        }
+    }
+
     private fun roomChannelOf(channel: Channel): RoomChannel {
         val id = channel.settings?.id ?: 0
         return RoomChannel(
@@ -190,6 +208,7 @@ class MeshRepository @Inject constructor(
             },
             id = id,
             positionPrecision = channel.settings?.module_settings?.position_precision ?: 0,
+            kind = kindOf(id, channel.settings?.psk?.toByteArray()),
         )
     }
 

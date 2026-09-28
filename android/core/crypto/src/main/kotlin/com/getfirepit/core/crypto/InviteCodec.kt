@@ -23,10 +23,33 @@ object InviteCodec {
 
     fun encode(invite: Invite): String = PREFIX + encoder.encodeToString(invite.encode())
 
+    /**
+     * True when a scan carries Firepit's own marker, whatever the payload turns
+     * out to be.
+     *
+     * The scheme is the identifier, and it is the first nine characters, so
+     * this settles which decoder to use without base64 or protobuf work. A code
+     * that answers true here is Firepit's to explain: falling through to the
+     * Meshtastic decoder would report "not a Meshtastic link" about something
+     * that was plainly one of ours.
+     */
+    fun isFirepitCode(uri: String): Boolean =
+        uri.trim().startsWith("$SCHEME://join", ignoreCase = true)
+
+    /**
+     * The version a code declares, read from the link itself rather than from
+     * its payload, so a format this build cannot parse can still be recognised
+     * and named.
+     */
+    fun declaredVersion(uri: String): Int? = uri.trim()
+        .substringAfter("?v=", missingDelimiterValue = "")
+        .substringBefore('&')
+        .toIntOrNull()
+
     /** Returns null for anything that is not a well-formed invite of a version we understand. */
     fun decode(uri: String): Invite? {
         val trimmed = uri.trim()
-        if (!trimmed.startsWith("$SCHEME://join", ignoreCase = true)) return null
+        if (!isFirepitCode(trimmed)) return null
 
         val payload = trimmed.substringAfter("&d=", missingDelimiterValue = "")
             .ifEmpty { trimmed.substringAfter("?d=", missingDelimiterValue = "") }

@@ -39,6 +39,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.getfirepit.core.designsystem.component.BackButton
 import com.getfirepit.core.designsystem.component.FirepitDetailBar
 import com.getfirepit.core.designsystem.component.FirepitIcons
+import com.getfirepit.core.model.RoomKind
 import com.getfirepit.core.designsystem.component.IdentityAvatar
 import com.getfirepit.core.designsystem.component.RoomAvatar
 import com.getfirepit.core.designsystem.component.RoomIcon
@@ -62,6 +63,7 @@ fun RoomMembersScreen(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     muted: Boolean = false,
+    kind: RoomKind = RoomKind.FIREPIT,
     onInvite: () -> Unit = {},
     onToggleMute: () -> Unit = {},
     onLeft: () -> Unit = {},
@@ -118,9 +120,19 @@ fun RoomMembersScreen(
                     RoomAvatar(RoomIcon.forRoomId(roomId), size = 88.dp)
                     Text(roomName, style = MaterialTheme.typography.headlineLarge)
                     Text(
-                        text = if (members.size == 1) "1 member" else "${members.size} members",
+                        text = kind.readableBy,
                         style = MaterialTheme.typography.bodyMedium,
+                        color = if (kind.isPrivate) {
+                            FirepitTheme.colors.textSecondary
+                        } else {
+                            FirepitTheme.colors.warn
+                        },
+                    )
+                    Text(
+                        text = kind.summary,
+                        style = MaterialTheme.typography.bodySmall,
                         color = FirepitTheme.colors.textSecondary,
+                        modifier = Modifier.padding(horizontal = FirepitSpacing.screenMargin),
                     )
                 }
             }
@@ -132,12 +144,16 @@ fun RoomMembersScreen(
                         .padding(horizontal = FirepitSpacing.screenMargin),
                     horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
                 ) {
-                    RoomAction(
-                        icon = FirepitIcons.Qr,
-                        label = "Invite",
-                        onClick = onInvite,
-                        modifier = Modifier.weight(1f),
-                    )
+                    // Only a Firepit room can be invited to: its QR carries a
+                    // room key that the Meshtastic link format cannot hold.
+                    if (kind.isPrivate) {
+                        RoomAction(
+                            icon = FirepitIcons.Qr,
+                            label = "Invite",
+                            onClick = onInvite,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                     RoomAction(
                         icon = if (muted) FirepitIcons.Bell else FirepitIcons.Mute,
                         label = if (muted) "Unmute" else "Mute",
@@ -153,9 +169,13 @@ fun RoomMembersScreen(
                 }
             }
 
-            item { SectionLabel("Members") }
+            // Membership is a Firepit idea: on a Meshtastic channel there is no
+            // roster, and anyone with the key can be on it unannounced.
+            if (kind.isPrivate) {
+                item { SectionLabel("Members") }
+            }
 
-            if (members.isEmpty()) {
+            if (members.isEmpty() && kind.isPrivate) {
                 item {
                     Text(
                         text = "Nobody heard yet.",
@@ -166,7 +186,7 @@ fun RoomMembersScreen(
                 }
             }
 
-            items(members, key = { it.member.nodeNum }) { row ->
+            items(members.takeIf { kind.isPrivate }.orEmpty(), key = { it.member.nodeNum }) { row ->
                 ListItem(
                     colors = ListItemDefaults.colors(containerColor = FirepitTheme.colors.surface2),
                     headlineContent = {

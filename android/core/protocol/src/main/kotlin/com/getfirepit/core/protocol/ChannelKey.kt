@@ -1,5 +1,7 @@
 package com.getfirepit.core.protocol
 
+import okio.ByteString.Companion.toByteString
+
 /**
  * How private a channel's traffic actually is.
  *
@@ -18,16 +20,21 @@ enum class ChannelKey(val label: String) {
 
     companion object {
         /**
-         * Only the full 16 and 32 byte keys count as private.
+         * Only a full key nobody else has counts as private.
          *
-         * Anything else is reported as public. Calling an unrecognised key
-         * private would be the dangerous way round to be wrong.
+         * Length alone is not enough to decide: the published default key is
+         * sixteen bytes, the same as a real AES-128 key, so it is compared by
+         * value. Anything unrecognised is reported as public, because calling
+         * an unknown key private would be the dangerous way round to be wrong.
          */
-        fun of(psk: ByteArray?): ChannelKey = when {
-            psk == null || psk.isEmpty() -> NONE
-            psk.size == 1 && psk[0].toInt() == 0 -> NONE
-            psk.size == 16 || psk.size == 32 -> PRIVATE
-            else -> DEFAULT
+        fun of(psk: ByteArray?): ChannelKey {
+            val expanded = MeshtasticChannel.expandPsk(psk?.toByteString())
+            return when {
+                expanded.size == 0 -> NONE
+                MeshtasticChannel.isWellKnown(expanded) -> DEFAULT
+                expanded.size == 16 || expanded.size == 32 -> PRIVATE
+                else -> DEFAULT
+            }
         }
     }
 }

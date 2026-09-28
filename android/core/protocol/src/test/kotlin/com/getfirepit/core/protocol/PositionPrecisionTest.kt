@@ -2,6 +2,7 @@ package com.getfirepit.core.protocol
 
 import com.getfirepit.core.model.ChannelRole
 import com.getfirepit.core.model.RoomChannel
+import com.getfirepit.core.model.RoomKind
 import kotlin.random.Random
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -177,11 +178,66 @@ class PositionSharingTest {
         assertTrue("a reconnect check must be silent when nothing is wrong", writes.isEmpty())
     }
 
-    private fun channel(index: Int, precision: Int, id: Int = index * 100) = RoomChannel(
+    /**
+     * A shared Meshtastic channel reaches people the group never chose, and the
+     * firmware would broadcast a position there on its own schedule. It is not
+     * somewhere a position may go, however it was asked for.
+     */
+    @Test
+    fun `a standard meshtastic channel can never carry a position`() {
+        val meshtastic = channel(1, PositionPrecision.DISABLED, kind = RoomKind.MESHTASTIC_PRIVATE)
+        val public = channel(2, PositionPrecision.DISABLED, kind = RoomKind.MESHTASTIC_PUBLIC)
+
+        assertFalse(PositionSharing.canShare(meshtastic))
+        assertFalse(PositionSharing.canShare(public))
+    }
+
+    @Test
+    fun `asking to share with a meshtastic channel turns sharing off instead`() {
+        val channels = listOf(
+            channel(0, PositionPrecision.DISABLED),
+            channel(1, 32, id = 111),
+            channel(2, PositionPrecision.DISABLED, id = 222, kind = RoomKind.MESHTASTIC_PRIVATE),
+        )
+
+        val writes = PositionSharing.writesToShareOnly(channels, roomId = 222, precision = 32)
+
+        // The room we were told to share with cannot, so nothing is left sharing.
+        assertEquals(listOf(PrecisionWrite(1, PositionPrecision.DISABLED)), writes)
+    }
+
+    @Test
+    fun `a position already set on a meshtastic channel is reported invalid`() {
+        val channels = listOf(
+            channel(0, PositionPrecision.DISABLED),
+            channel(1, 32, id = 111, kind = RoomKind.MESHTASTIC_PUBLIC),
+        )
+
+        assertFalse(PositionSharing.isValid(channels))
+        assertEquals(
+            listOf(PrecisionWrite(1, PositionPrecision.DISABLED)),
+            PositionSharing.writesToShareOnly(channels, roomId = null, precision = 32),
+        )
+    }
+
+    @Test
+    fun `only a firepit room may carry a position`() {
+        assertTrue(PositionSharing.canShare(channel(1, 32, kind = RoomKind.FIREPIT)))
+        // The primary sets the frequency and carries NodeInfo; never a position.
+        assertFalse(PositionSharing.canShare(channel(0, 32, kind = RoomKind.FIREPIT)))
+    }
+
+    private fun channel(
+        index: Int,
+        precision: Int,
+        id: Int = index * 100,
+        kind: RoomKind = RoomKind.FIREPIT,
+    ) = RoomChannel(
         index = index,
         name = "room$index",
         role = if (index == 0) ChannelRole.PRIMARY else ChannelRole.SECONDARY,
         id = id,
         positionPrecision = precision,
+        kind = kind,
     )
 }

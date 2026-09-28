@@ -3,6 +3,7 @@ package com.getfirepit.app.chat
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -108,6 +109,7 @@ import com.getfirepit.core.model.ReceiptState
 import com.getfirepit.core.protocol.Person
 import com.getfirepit.core.model.MessageStatus
 import com.getfirepit.core.model.RoomChannel
+import com.getfirepit.core.model.RoomKind
 import com.getfirepit.core.protocol.ChannelLoad
 import com.getfirepit.core.protocol.MeshConstants
 import kotlinx.coroutines.launch
@@ -168,6 +170,8 @@ fun ChatsPane(
                 onBack = dismiss,
                 modifier = modifier,
                 muted = current.channelIndex in state.muted,
+                kind = state.channels.firstOrNull { it.index == current.channelIndex }?.kind
+                    ?: RoomKind.MESHTASTIC_PUBLIC,
                 onInvite = { overlay = RoomsOverlay.Invite(current.roomId, current.roomName) },
                 onToggleMute = { viewModel.toggleMute(current.channelIndex) },
                 onLeft = dismiss,
@@ -183,6 +187,10 @@ fun ChatsPane(
             onCreate = { name ->
                 showCreateDialog = false
                 roomsViewModel.createRoom(name)
+            },
+            onCreateShared = { name ->
+                showCreateDialog = false
+                roomsViewModel.addSharedChannel(name)
             },
         )
     }
@@ -261,17 +269,20 @@ fun ChatsPane(
                         channel = channel,
                         viewModel = viewModel,
                         onBack = back,
-                        onInvite = if (channel.isRoom) {
+                        // Firepit issues its own invites and no others: they
+                        // carry a room key the Meshtastic link format cannot.
+                        onInvite = if (channel.kind == RoomKind.FIREPIT) {
                             { overlay = RoomsOverlay.Invite(channel.id, channel.displayName) }
                         } else {
                             null
                         },
+                        // Every room needs a way out, whichever protocol it speaks.
                         onShowMembers = if (channel.isRoom) {
                             { overlay = RoomsOverlay.Members(channel.id, channel.displayName, channel.index) }
                         } else {
                             null
                         },
-                        memberCount = if (channel.isRoom) {
+                        memberCount = if (channel.kind == RoomKind.FIREPIT) {
                             roomsViewModel.members(channel.id)
                                 .collectAsStateWithLifecycle(emptyList()).value
                                 .size
@@ -613,15 +624,22 @@ private fun ChannelRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
     ) {
-        RoomAvatar(RoomIcon.forRoomId(channel.id))
+        RoomAvatar(RoomIcon.forRoomId(channel.iconSeed))
 
         Column(Modifier.weight(1f)) {
-            Text(
-                text = channel.displayName,
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
+            ) {
+                Text(
+                    text = channel.displayName,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (channel.isRoom) RoomKindBadge(channel.kind)
+            }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
@@ -629,7 +647,8 @@ private fun ChannelRow(
                 if (latest?.isOutgoing == true) StatusTick(latest.status)
                 Text(
                     text = when {
-                        latest == null && channel.isRoom -> "Room · slot ${channel.index}"
+                        // Before anyone has spoken, say who would be able to hear it.
+                        latest == null && channel.isRoom -> channel.kind.readableBy
                         latest == null -> "Primary channel"
                         latest.isOutgoing -> latest.text
                         senderName != null -> "$senderName: ${latest.text}"
@@ -778,6 +797,35 @@ private fun DirectChat(
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Which protocol a room speaks, and therefore who can read it.
+ *
+ * Shown wherever a room is named rather than only on an info screen: the
+ * difference between a sealed Firepit room and an ordinary Meshtastic channel
+ * is the difference between private and not, and somebody typing has to be able
+ * to see it without going to look.
+ */
+@Composable
+private fun RoomKindBadge(kind: RoomKind, modifier: Modifier = Modifier) {
+    val colors = FirepitTheme.colors
+    val tint = when (kind) {
+        RoomKind.FIREPIT -> MaterialTheme.colorScheme.primary
+        RoomKind.MESHTASTIC_PRIVATE -> colors.textSecondary
+        RoomKind.MESHTASTIC_PUBLIC -> colors.warn
+        RoomKind.UNENCRYPTED -> colors.danger
+    }
+    Text(
+        text = kind.label,
+        style = MaterialTheme.typography.labelSmall,
+        color = tint,
+        maxLines = 1,
+        modifier = modifier
+            .border(1.dp, tint.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChannelChat(
     state: ChatsUiState,
@@ -807,129 +855,77 @@ private fun ChannelChat(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    if (searching) {
-                        val focus = remember { FocusRequester() }
-                        LaunchedEffect(Unit) { focus.requestFocus() }
-
-                        BasicTextField(
-                            value = state.query,
-                            onValueChange = viewModel::updateQuery,
-                            singleLine = true,
-                            textStyle = MaterialTheme.typography.bodyLarge.copy(
-                                color = FirepitTheme.colors.textPrimary,
-                            ),
-                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .focusRequester(focus),
-                            decorationBox = { field ->
-                                // A bar, not a boxed form field: it sits in the
-                                // header and only ever holds one short phrase.
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
-                                    modifier = Modifier
-                                        .clip(CircleShape)
-                                        .background(FirepitTheme.colors.surface2)
-                                        .padding(horizontal = FirepitSpacing.m, vertical = 10.dp),
-                                ) {
-                                    Icon(
-                                        painter = painterResource(FirepitIcons.Search),
-                                        contentDescription = null,
-                                        tint = FirepitTheme.colors.textSecondary,
-                                        modifier = Modifier.size(18.dp),
-                                    )
-                                    Box(Modifier.weight(1f)) {
-                                        if (state.query.isEmpty()) {
-                                            Text(
-                                                text = "Search this room",
-                                                style = MaterialTheme.typography.bodyLarge,
-                                                color = FirepitTheme.colors.textSecondary,
-                                            )
-                                        }
-                                        field()
-                                    }
-                                    if (state.query.isNotEmpty()) {
-                                        Icon(
-                                            painter = painterResource(FirepitIcons.Close),
-                                            contentDescription = "Clear search",
-                                            tint = FirepitTheme.colors.textSecondary,
-                                            modifier = Modifier
-                                                .size(18.dp)
-                                                .clickable { viewModel.updateQuery("") },
-                                        )
-                                    }
-                                }
-                            },
-                        )
-                    } else {
+            // Two different bars rather than one wearing a mode flag: searching
+            // replaces the whole title, so sharing a shape would mean hiding
+            // most of it half the time.
+            if (searching) {
+                RoomSearchBar(
+                    query = state.query,
+                    onQuery = viewModel::updateQuery,
+                    onClose = {
+                        searching = false
+                        viewModel.updateQuery("")
+                    },
+                )
+            } else {
+                FirepitTopBar(
+                    title = channel.displayName,
+                    onBack = onBack,
+                    leading = { RoomAvatar(RoomIcon.forRoomId(channel.iconSeed), size = 40.dp) },
+                    badge = { if (channel.isRoom) RoomKindBadge(channel.kind) },
+                    subtitle = {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
-                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
                         ) {
-                            RoomAvatar(RoomIcon.forRoomId(channel.id), size = 40.dp)
-                            Column(Modifier.weight(1f)) {
+                            memberCount?.let { count ->
                                 Text(
-                                    text = channel.displayName,
-                                    style = MaterialTheme.typography.titleLarge,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
+                                    text = if (count == 1) "1 member · " else "$count members · ",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = FirepitTheme.colors.textSecondary,
                                 )
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
-                                ) {
-                                    memberCount?.let { count ->
-                                        Text(
-                                            text = if (count == 1) "1 member · " else "$count members · ",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = FirepitTheme.colors.textSecondary,
-                                        )
-                                    }
-                                    LiveRing(size = 8.dp, live = state.connected)
-                                    Text(
-                                        text = if (state.connected) "connected" else "not connected",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = FirepitTheme.colors.textSecondary,
-                                    )
-                                }
                             }
-                        }
-                    }
-                },
-                navigationIcon = {
-                    // Only when the list is hidden behind this pane.
-                    onBack?.let { back -> BackButton(onClick = back) }
-                },
-                actions = {
-                    IconButton(
-                        onClick = {
-                            searching = !searching
-                            if (!searching) viewModel.updateQuery("")
-                        },
-                    ) {
-                        Icon(
-                            painter = painterResource(
-                                if (searching) FirepitIcons.Close else FirepitIcons.Search,
-                            ),
-                            contentDescription = if (searching) "Close search" else "Search messages",
-                        )
-                    }
-                    // Room actions live in Room info, so the bar stays narrow
-                    // enough for the room's name and status to fit.
-                    if (!searching && onShowMembers != null) {
-                        IconButton(onClick = onShowMembers) {
-                            Icon(
-                                painter = painterResource(FirepitIcons.More),
-                                contentDescription = "Room info",
+                            LiveRing(size = 8.dp, live = state.connected)
+                            Text(
+                                text = if (state.connected) "connected" else "not connected",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = FirepitTheme.colors.textSecondary,
                             )
                         }
-                    }
-                },
-            )
+                        if (channel.isRoom) {
+                            Text(
+                                text = channel.kind.readableBy,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (channel.kind.isPrivate) {
+                                    FirepitTheme.colors.textSecondary
+                                } else {
+                                    FirepitTheme.colors.warn
+                                },
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { searching = true }) {
+                            Icon(
+                                painter = painterResource(FirepitIcons.Search),
+                                contentDescription = "Search messages",
+                            )
+                        }
+                        // Room actions live in Room info, so the bar stays narrow
+                        // enough for the room's name and status to fit.
+                        onShowMembers?.let { members ->
+                            IconButton(onClick = members) {
+                                Icon(
+                                    painter = painterResource(FirepitIcons.More),
+                                    contentDescription = "Room info",
+                                )
+                            }
+                        }
+                    },
+                )
+            }
         },
     ) { padding ->
         Column(
@@ -1252,13 +1248,89 @@ private fun OpenAtNewest(
 }
 
 /**
+ * The room header while searching.
+ *
+ * A bar, not a boxed form field: it sits in the header and only ever holds one
+ * short phrase.
+ */@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RoomSearchBar(query: String, onQuery: (String) -> Unit, onClose: () -> Unit) {
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+
+    TopAppBar(
+        title = {
+            BasicTextField(
+                value = query,
+                onValueChange = onQuery,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(
+                    color = FirepitTheme.colors.textPrimary,
+                ),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focus),
+                decorationBox = { field ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(FirepitTheme.colors.surface2)
+                            .padding(horizontal = FirepitSpacing.m, vertical = 10.dp),
+                    ) {
+                        Icon(
+                            painter = painterResource(FirepitIcons.Search),
+                            contentDescription = null,
+                            tint = FirepitTheme.colors.textSecondary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Box(Modifier.weight(1f)) {
+                            if (query.isEmpty()) {
+                                Text(
+                                    text = "Search this room",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = FirepitTheme.colors.textSecondary,
+                                )
+                            }
+                            field()
+                        }
+                        if (query.isNotEmpty()) {
+                            Icon(
+                                painter = painterResource(FirepitIcons.Close),
+                                contentDescription = "Clear search",
+                                tint = FirepitTheme.colors.textSecondary,
+                                modifier = Modifier
+                                    .size(18.dp)
+                                    .clickable { onQuery("") },
+                            )
+                        }
+                    }
+                },
+            )
+        },
+        actions = {
+            IconButton(onClick = onClose) {
+                Icon(
+                    painter = painterResource(FirepitIcons.Close),
+                    contentDescription = "Close search",
+                )
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+        ),
+    )
+}
+
+/**
  * Delivery detail for one message.
  *
  * Only shows what the radio actually reported: absent values are omitted rather
  * than rendered as zero, because "0 dB SNR" and "not measured" are different
  * claims.
- */
-@OptIn(ExperimentalMaterial3Api::class)
+ */@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MessageInfoSheet(
     message: ChatMessage,
