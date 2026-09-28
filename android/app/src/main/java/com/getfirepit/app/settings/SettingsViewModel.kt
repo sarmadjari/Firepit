@@ -5,7 +5,10 @@ import androidx.lifecycle.viewModelScope
 import com.getfirepit.core.data.MeshRepository
 import com.getfirepit.core.data.Owner
 import com.getfirepit.core.data.OwnerRepository
+import com.getfirepit.core.data.RangeRepository
 import com.getfirepit.core.protocol.MessageRetention
+import com.getfirepit.core.protocol.RadioPrivacy
+import com.getfirepit.core.protocol.RangeMode
 import com.getfirepit.core.protocol.RoomLifetime
 import com.getfirepit.core.protocol.Person
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -24,10 +27,49 @@ class SettingsViewModel @Inject constructor(
     private val owners: OwnerRepository,
     private val retention: RetentionStore,
     private val notifications: NotificationPreferences,
-    mesh: MeshRepository,
+    private val range: RangeRepository,
+    private val mesh: MeshRepository,
 ) : ViewModel() {
 
     val theme: StateFlow<ThemeChoice> = themePreferences.choice
+
+    /** How far this node's traffic travels, and whose radios carry it. */
+    val rangeMode: StateFlow<RangeMode> = range.mode
+
+    /** Whether this radio's own name and battery are hidden from other Meshtastic devices. */
+    val radioPrivacy: StateFlow<RadioPrivacy> = range.privacy
+
+    private val _rangeError = MutableStateFlow<String?>(null)
+    val rangeError: StateFlow<String?> = _rangeError.asStateFlow()
+
+    fun chooseRange(choice: RangeMode) {
+        viewModelScope.launch {
+            _rangeError.value = runCatching { range.choose(choice) }
+                .exceptionOrNull()
+                ?.let { it.message ?: "Could not change the range setting" }
+        }
+    }
+
+    /** Takes the radio's primary channel over, hiding its name and battery. */
+    fun makeRadioPrivate() {
+        viewModelScope.launch {
+            _rangeError.value = runCatching { range.makePrivate() }
+                .exceptionOrNull()
+                ?.let { it.message ?: "Could not change the radio" }
+        }
+    }
+
+    /** Leaves the radio on whatever primary channel it already had. */
+    fun keepRadioPublic() {
+        viewModelScope.launch {
+            _rangeError.value = runCatching { range.keepPublic() }
+                .exceptionOrNull()
+                ?.let { it.message ?: "Could not put the radio's own channel back" }
+        }
+    }
+
+    /** True when Firepit replaced this radio's primary and still has the original. */
+    val canRestoreRadio: StateFlow<Boolean> = range.canRestore
 
     val retentionChoice: StateFlow<MessageRetention> = retention.choice
 

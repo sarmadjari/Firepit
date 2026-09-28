@@ -79,6 +79,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.getfirepit.app.rooms.CreateRoomDialog
+import com.getfirepit.app.rooms.MakeRadioPrivateDialog
 import com.getfirepit.app.rooms.InviteScreen
 import com.getfirepit.app.rooms.JoinRoomScreen
 import com.getfirepit.app.rooms.RoomMembersScreen
@@ -192,6 +193,15 @@ fun ChatsPane(
                 showCreateDialog = false
                 roomsViewModel.addSharedChannel(name)
             },
+        )
+    }
+
+    val askToMakeRadioPrivate by roomsViewModel.askToMakeRadioPrivate
+        .collectAsStateWithLifecycle()
+    if (askToMakeRadioPrivate) {
+        MakeRadioPrivateDialog(
+            onMakePrivate = roomsViewModel::makeRadioPrivate,
+            onKeepPublic = roomsViewModel::keepRadioPublic,
         )
     }
 

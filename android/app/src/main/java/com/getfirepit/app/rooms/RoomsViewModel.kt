@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.getfirepit.core.crypto.CodeScanner
 import com.getfirepit.core.crypto.InviteCodec
 import com.getfirepit.core.crypto.ScannedCode
+import com.getfirepit.core.data.RangeRepository
+import com.getfirepit.core.model.RoomKind
 import okio.ByteString.Companion.toByteString
 import com.getfirepit.core.crypto.RoomCrypto
 import com.getfirepit.core.data.MeshRepository
@@ -67,6 +69,7 @@ data class MemberRow(
 class RoomsViewModel @Inject constructor(
     private val rooms: RoomRepository,
     private val mesh: MeshRepository,
+    private val range: RangeRepository,
     private val traceroute: TracerouteClient,
 ) : ViewModel() {
 
@@ -106,6 +109,25 @@ class RoomsViewModel @Inject constructor(
     private val invite = MutableStateFlow<InviteState?>(null)
     private val notice = MutableStateFlow<String?>(null)
     private val failure = MutableStateFlow<String?>(null)
+
+    /**
+     * Whether to ask about taking the radio's primary channel over.
+     *
+     * Only once a private room exists: before that nothing is at stake, and the
+     * question would be an interruption with no context. After it, "should this
+     * radio be private too?" is a sentence that explains itself.
+     */
+    val askToMakeRadioPrivate: StateFlow<Boolean> = combine(
+        range.needsChoice,
+        mesh.channels,
+    ) { needsChoice, channels ->
+        needsChoice && channels.any { it.isRoom && it.kind == RoomKind.FIREPIT }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    fun makeRadioPrivate() = run("Could not change the radio") { range.makePrivate() }
+
+    fun keepRadioPublic() =
+        run("Could not put the radio's own channel back") { range.keepPublic() }
 
     /** Held so a second room's rotation replaces the first instead of racing it. */
     private var rotationJob: Job? = null

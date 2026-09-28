@@ -63,6 +63,8 @@ import com.getfirepit.core.designsystem.theme.identityColorForSlot
 import com.getfirepit.core.designsystem.theme.onIdentityColorFor
 import com.getfirepit.core.protocol.MessageRetention
 import com.getfirepit.core.protocol.RadioCapabilities
+import com.getfirepit.core.protocol.RadioPrivacy
+import com.getfirepit.core.protocol.RangeMode
 import com.getfirepit.core.protocol.RoomLifetime
 import com.getfirepit.core.protocol.OwnerName
 import com.getfirepit.core.protocol.Person
@@ -88,6 +90,9 @@ fun SettingsScreen(
     val roomLifetime by settingsViewModel.roomLifetime.collectAsStateWithLifecycle()
     val showMessageText by settingsViewModel.showMessageText.collectAsStateWithLifecycle()
     val renameError by settingsViewModel.renameError.collectAsStateWithLifecycle()
+    val rangeMode by settingsViewModel.rangeMode.collectAsStateWithLifecycle()
+    val radioPrivacy by settingsViewModel.radioPrivacy.collectAsStateWithLifecycle()
+    val canRestoreRadio by settingsViewModel.canRestoreRadio.collectAsStateWithLifecycle()
 
     // A sub-screen takes the whole display, same as an open chat does.
     LaunchedEffect(section) { onImmersiveChange(section != null) }
@@ -140,6 +145,12 @@ fun SettingsScreen(
             onChooseRoomLifetime = settingsViewModel::chooseRoomLifetime,
             showMessageText = showMessageText,
             onShowMessageText = settingsViewModel::setShowMessageText,
+            rangeMode = rangeMode,
+            radioPrivacy = radioPrivacy,
+            canRestoreRadio = canRestoreRadio,
+            onChooseRange = settingsViewModel::chooseRange,
+            onMakeRadioPrivate = settingsViewModel::makeRadioPrivate,
+            onKeepRadioPublic = settingsViewModel::keepRadioPublic,
             onSavePerson = settingsViewModel::savePerson,
             onUseAsNodeName = settingsViewModel::useAsNodeName,
             onChooseIdentity = settingsViewModel::chooseIdentitySlot,
@@ -175,6 +186,12 @@ private fun SettingsList(
     onChooseRoomLifetime: (RoomLifetime) -> Unit,
     showMessageText: Boolean,
     onShowMessageText: (Boolean) -> Unit,
+    rangeMode: RangeMode,
+    radioPrivacy: RadioPrivacy,
+    canRestoreRadio: Boolean,
+    onChooseRange: (RangeMode) -> Unit,
+    onMakeRadioPrivate: () -> Unit,
+    onKeepRadioPublic: () -> Unit,
     onSavePerson: (String, String) -> Unit,
     onUseAsNodeName: () -> Unit,
     onChooseIdentity: (Int?) -> Unit,
@@ -211,6 +228,14 @@ private fun SettingsList(
                 headlineContent = { Text("Nodes") },
                 supportingContent = { Text(nodeSummary) },
                 modifier = Modifier.clickable { onOpen(SettingsSection.NODES) },
+            )
+            RangeSettings(
+                privacy = radioPrivacy,
+                mode = rangeMode,
+                canRestore = canRestoreRadio,
+                onMakePrivate = onMakeRadioPrivate,
+                onKeepPublic = onKeepRadioPublic,
+                onChooseRange = onChooseRange,
             )
             HorizontalDivider()
 
@@ -381,6 +406,112 @@ private fun SettingRow(
             }
         }
         control()
+    }
+}
+
+/**
+ * What this radio tells the world about itself, and how far its traffic goes.
+ *
+ * Two separate questions, and conflating them is what makes this confusing:
+ * whether the radio's *own* identity is hidden, and which radios carry our
+ * messages. Rooms are private regardless of both, which is said first so that
+ * nobody reads this and starts doubting their messages.
+ */
+@Composable
+private fun RangeSettings(
+    privacy: RadioPrivacy,
+    mode: RangeMode,
+    canRestore: Boolean,
+    onMakePrivate: () -> Unit,
+    onKeepPublic: () -> Unit,
+    onChooseRange: (RangeMode) -> Unit,
+) {
+    // No heading of its own: this sits inside "Radio", and a second one under it
+    // read as a different piece of hardware.
+    SettingsGroup {
+        Text(
+            text = "Your rooms and messages are always private. This only decides whether the " +
+                "radio's own name and battery level are visible to other Meshtastic devices.",
+            style = MaterialTheme.typography.bodySmall,
+            color = FirepitTheme.colors.textSecondary,
+        )
+
+        Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
+            Text("This radio's own identity", style = MaterialTheme.typography.bodyMedium)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
+                // Not a plain enum choice: each answer runs a different action,
+                // and UNDECIDED is a state rather than something to offer.
+                FirepitChip(
+                    label = RadioPrivacy.OPEN.label,
+                    selected = privacy == RadioPrivacy.OPEN,
+                    onClick = onKeepPublic,
+                )
+                FirepitChip(
+                    label = RadioPrivacy.FIREPIT.label,
+                    selected = privacy == RadioPrivacy.FIREPIT,
+                    onClick = onMakePrivate,
+                )
+            }
+
+            Text(
+                // Undecided means nothing has been written, so it is whatever it came as.
+                text = if (privacy == RadioPrivacy.FIREPIT) {
+                    RadioPrivacy.FIREPIT.summary
+                } else {
+                    RadioPrivacy.OPEN.summary
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = if (privacy == RadioPrivacy.FIREPIT) {
+                    FirepitTheme.colors.textSecondary
+                } else {
+                    FirepitTheme.colors.warn
+                },
+            )
+
+            if (privacy == RadioPrivacy.UNDECIDED) {
+                Text(
+                    text = "You haven't chosen yet, so this radio is still set up the way " +
+                        "you found it.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FirepitTheme.colors.textSecondary,
+                )
+            }
+
+            // Whether going back is a real offer depends on having the old channel
+            // to go back to, so it says which case this radio is in.
+            if (privacy == RadioPrivacy.FIREPIT) {
+                Text(
+                    text = if (canRestore) {
+                        "Firepit kept this radio's original channel. Choosing " +
+                            "\"${RadioPrivacy.OPEN.label}\" puts it back."
+                    } else {
+                        "Firepit has no earlier channel for this radio, so " +
+                            "\"${RadioPrivacy.OPEN.label}\" would leave it on Firepit's and " +
+                            "only stop managing it."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (canRestore) {
+                        FirepitTheme.colors.textSecondary
+                    } else {
+                        FirepitTheme.colors.warn
+                    },
+                )
+            }
+        }
+
+        // Only meaningful once the primary is ours: the mode works by changing
+        // that channel's name, which is what the firmware turns into a frequency.
+        if (privacy == RadioPrivacy.FIREPIT) {
+            SettingsChoice(
+                label = "How far messages travel",
+                caption = mode.summary + " Everyone in a group has to use the same setting to " +
+                    "hear each other; joining by QR code sets it for you.",
+                entries = RangeMode.entries,
+                selected = mode,
+                labelOf = RangeMode::label,
+                onChoose = onChooseRange,
+            )
+        }
     }
 }
 

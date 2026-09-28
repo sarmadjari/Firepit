@@ -10,6 +10,7 @@ import com.getfirepit.core.data.ChatPresence
 import com.getfirepit.core.data.LocationRepository
 import com.getfirepit.core.data.MeshRepository
 import com.getfirepit.core.data.NodeClock
+import com.getfirepit.core.data.RangeRepository
 import com.getfirepit.core.data.RoomRepository
 import com.getfirepit.core.data.WaypointRepository
 import dagger.hilt.android.HiltAndroidApp
@@ -21,6 +22,8 @@ class FirepitApplication : Application() {
     @Inject lateinit var meshRepository: MeshRepository
 
     @Inject lateinit var roomRepository: RoomRepository
+
+    @Inject lateinit var rangeRepository: RangeRepository
 
     @Inject lateinit var locationRepository: LocationRepository
 
@@ -42,6 +45,9 @@ class FirepitApplication : Application() {
         // than in a ViewModel.
         mapPreferences.apply()
         meshRepository.start()
+        // Before anything can transmit: a radio still on the factory primary
+        // announces its owner's name to every Meshtastic device in range.
+        rangeRepository.start()
         roomRepository.start()
         waypointRepository.start()
         locationRepository.start()
