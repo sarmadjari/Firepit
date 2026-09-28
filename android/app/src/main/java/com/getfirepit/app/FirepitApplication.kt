@@ -47,12 +47,25 @@ class FirepitApplication : Application() {
         locationRepository.start()
         messageNotifier.start()
         nodeClock.start()
-        // Last, so the stores above are listening before packets arrive.
-        radioSession.reconnectLastRadio()
 
         ProcessLifecycleOwner.get().lifecycle.addObserver(
             object : DefaultLifecycleObserver {
-                override fun onStart(owner: LifecycleOwner) = presence.setForeground(true)
+                private var reconnected = false
+
+                override fun onStart(owner: LifecycleOwner) {
+                    presence.setForeground(true)
+                    // Not from onCreate: Android refuses a foreground service
+                    // started from the background, and the reconnect scan can
+                    // take half a minute to find the radio. Starting the search
+                    // once we are actually in front of somebody means the
+                    // service is allowed, and the link then survives the app
+                    // being swiped away.
+                    if (!reconnected) {
+                        reconnected = true
+                        radioSession.reconnectLastRadio()
+                    }
+                }
+
                 override fun onStop(owner: LifecycleOwner) = presence.setForeground(false)
             },
         )
