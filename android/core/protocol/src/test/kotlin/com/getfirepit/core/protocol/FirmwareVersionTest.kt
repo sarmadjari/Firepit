@@ -2,6 +2,7 @@ package com.getfirepit.core.protocol
 
 import okio.ByteString.Companion.encodeUtf8
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -35,6 +36,47 @@ class FirmwareVersionTest {
     fun `rejects junk rather than guessing`() {
         assertNull(FirmwareVersion.parseOrNull(""))
         assertNull(FirmwareVersion.parseOrNull("unknown"))
+    }
+
+    // --- 2.7 is the floor --------------------------------------------------
+
+    private fun capabilities(firmware: String?) = RadioCapabilities(
+        firmwareVersion = firmware?.let(FirmwareVersion::parseOrNull),
+        supportsPki = true,
+        supportsSigning = false,
+        minAppVersion = 0,
+        nodeDbCount = 0,
+    )
+
+    @Test
+    fun `2_7 is supported`() {
+        assertTrue(capabilities("2.7.0").isSupported)
+        assertTrue(capabilities("2.7.26.54e0d8d").isSupported)
+    }
+
+    @Test
+    fun `newer than 2_7 is supported`() {
+        assertTrue(capabilities("2.8.1-dev").isSupported)
+        assertTrue(capabilities("3.0.0").isSupported)
+    }
+
+    @Test
+    fun `older than 2_7 is not supported`() {
+        assertFalse(capabilities("2.6.11").isSupported)
+        assertFalse(capabilities("2.5.0").isSupported)
+    }
+
+    /** A radio that never said is given the benefit of the doubt rather than blocked. */
+    @Test
+    fun `an unreadable version is not held against the radio`() {
+        assertTrue(capabilities(null).isSupported)
+        assertTrue(capabilities("unknown").isSupported)
+    }
+
+    /** 2.7 has no XEdDSA, so nothing may depend on a signature being available. */
+    @Test
+    fun `signing is a capability, never assumed from the version`() {
+        assertFalse(capabilities("2.7.26").supportsSigning)
     }
 
     @Test

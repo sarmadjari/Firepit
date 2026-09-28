@@ -63,6 +63,7 @@ import com.getfirepit.core.protocol.MeshConstants
 import com.getfirepit.core.protocol.BeaconRate
 import com.getfirepit.core.protocol.DeviceTransport
 import com.getfirepit.core.protocol.NodeRole
+import com.getfirepit.core.protocol.RadioCapabilities
 import com.getfirepit.core.protocol.SavedRadio
 import com.getfirepit.core.transport.LinkState
 
@@ -230,6 +231,9 @@ private fun LinkStatus(link: LinkState) {
         LinkState.Downloading -> "Reading your node…" to FirepitTheme.colors.warn
         is LinkState.Ready -> "Connected" to FirepitTheme.colors.live
         is LinkState.Reconnecting -> "Reconnecting (attempt ${link.attempt}) · ${link.cause}" to FirepitTheme.colors.warn
+        is LinkState.Unsupported ->
+            "Firmware ${link.version ?: "unknown"} · needs " +
+                "${RadioCapabilities.MINIMUM_FIRMWARE} or newer" to FirepitTheme.colors.danger
     }
     Text(label, color = color, style = MaterialTheme.typography.bodyMedium)
 }
@@ -584,6 +588,15 @@ private fun DeviceDetail(
                         SectionLabel("About this device")
                         Field("Node", details.nodeId, monospace = true)
                         Field("Firmware", details.firmware)
+                        if (!details.capabilities.isSupported) {
+                            Text(
+                                text = "Firepit needs ${RadioCapabilities.MINIMUM_FIRMWARE} or " +
+                                    "newer. On this one, private messages and rooms may not " +
+                                    "work as described.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = FirepitTheme.colors.danger,
+                            )
+                        }
                         Field("Hardware", prettyName(details.hardware))
                         Field("Region", details.region.replace('_', ' '))
                         Field("Encryption keys", if (details.capabilities.supportsPki) "Yes" else "No")

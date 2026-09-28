@@ -61,6 +61,7 @@ import com.getfirepit.core.designsystem.theme.identityColorFor
 import com.getfirepit.core.designsystem.theme.identityColorForSlot
 import com.getfirepit.core.designsystem.theme.onIdentityColorFor
 import com.getfirepit.core.protocol.MessageRetention
+import com.getfirepit.core.protocol.RadioCapabilities
 import com.getfirepit.core.protocol.RoomLifetime
 import com.getfirepit.core.protocol.OwnerName
 import com.getfirepit.core.protocol.Person
@@ -318,6 +319,17 @@ private fun SettingsList(
                 headlineContent = { Text("Firepit") },
                 supportingContent = { Text("Meshtastic chat, rooms and maps that work off-grid") },
             )
+            ListItem(
+                headlineContent = { Text("Works with") },
+                supportingContent = {
+                    Text(
+                        "Meshtastic radios running firmware " +
+                            "${RadioCapabilities.MINIMUM_FIRMWARE} or newer. An older node is " +
+                            "refused rather than half-supported, because the privacy Firepit " +
+                            "describes would not hold on it.",
+                    )
+                },
+            )
         }
     }
 }
@@ -556,5 +568,8 @@ private fun LinkState.summary(): String = when (this) {
     LinkState.Downloading -> "Reading settings…"
     is LinkState.Connecting -> "Connecting…"
     is LinkState.Reconnecting -> "Reconnecting…"
+    is LinkState.Unsupported ->
+        "Not connected · firmware ${version ?: "unknown"} is older than " +
+            "${RadioCapabilities.MINIMUM_FIRMWARE}"
     LinkState.Disconnected -> "Not connected"
 }

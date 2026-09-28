@@ -128,6 +128,7 @@ class RadioService : Service() {
         LinkState.Downloading -> getString(R.string.radio_service_downloading)
         is LinkState.Connecting -> getString(R.string.radio_service_connecting)
         is LinkState.Reconnecting -> getString(R.string.radio_service_reconnecting)
+        is LinkState.Unsupported -> getString(R.string.radio_service_unsupported)
         LinkState.Disconnected -> getString(R.string.radio_service_disconnected)
     }
 

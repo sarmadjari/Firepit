@@ -1,5 +1,6 @@
 package com.getfirepit.core.transport
 
+import com.getfirepit.core.protocol.FirmwareVersion
 import com.getfirepit.core.protocol.phoneapi.PhoneApiSession
 import com.getfirepit.core.protocol.phoneapi.RadioSnapshot
 import com.getfirepit.core.protocol.phoneapi.SessionState
@@ -38,10 +39,22 @@ sealed interface LinkState {
 
     /** Link dropped; a retry is scheduled. */
     data class Reconnecting(val attempt: Int, val cause: String) : LinkState
+
+    /**
+     * The radio is older than Firepit supports, and was hung up on.
+     *
+     * Terminal: retrying would only reach the same firmware again, and half
+     * of what this app promises would quietly not hold on it.
+     */
+    data class Unsupported(val version: FirmwareVersion?) : LinkState
 }
 
 /** The radio went away — reset, powered off, or out of range. */
 private class RadioDisconnected : Exception("Radio disconnected")
+
+/** Raised once the config download reveals firmware below [RadioCapabilities.MINIMUM_FIRMWARE]. */
+private class FirmwareTooOld(val version: FirmwareVersion?) :
+    Exception("Firmware ${version ?: "unknown"} is older than Firepit supports")
 
 /**
  * Keeps one radio connected: connect, run the PhoneAPI session, and reconnect
@@ -131,11 +144,26 @@ class RadioLink(private val scope: CoroutineScope) {
                         peripheral.state.first { it is State.Disconnected }
                         throw RadioDisconnected()
                     }
+                    // The firmware version only arrives with the config, so the
+                    // refusal cannot happen any earlier than this.
+                    val versionWatcher = launch {
+                        val ready = session.state.first { it is SessionState.Ready }
+                        val capabilities = (ready as SessionState.Ready).snapshot.capabilities
+                        if (!capabilities.isSupported) throw FirmwareTooOld(capabilities.firmwareVersion)
+                    }
                     session.run()
                     lostWatcher.cancel()
+                    versionWatcher.cancel()
                 }
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: FirmwareTooOld) {
+                // Hang up politely so the radio frees its PhoneAPI slot for
+                // whatever app the owner uses instead.
+                runCatching { currentSession.value?.sendDisconnect() }
+                Log.w(TAG, "refusing ${radio.identifier}: ${e.message}")
+                setState(LinkState.Unsupported(e.version))
+                return
             } catch (e: Exception) {
                 attempt++
                 setState(LinkState.Reconnecting(attempt, e.message ?: e::class.simpleName.orEmpty()))
@@ -153,7 +181,11 @@ class RadioLink(private val scope: CoroutineScope) {
             when (sessionState) {
                 SessionState.Idle -> null
                 SessionState.Downloading -> LinkState.Downloading
-                is SessionState.Ready -> LinkState.Ready(sessionState.snapshot)
+                // Held back until the firmware is known to be good, so the app
+                // never briefly reports a radio it is about to hang up on.
+                is SessionState.Ready ->
+                    LinkState.Ready(sessionState.snapshot)
+                        .takeIf { sessionState.snapshot.capabilities.isSupported }
             }
         }.collect { linkState -> if (linkState != null) setState(linkState) }
     }
@@ -165,9 +197,16 @@ class RadioLink(private val scope: CoroutineScope) {
         val MAX_BACKOFF = 30.seconds
 
         fun describe(state: LinkState): String = when (state) {
-            is LinkState.Ready -> "node=${state.snapshot.myNodeNum} channels=${state.snapshot.channels.size}"
+            is LinkState.Ready -> state.snapshot.let { snapshot ->
+                val capabilities = snapshot.capabilities
+                "node=${snapshot.myNodeNum} channels=${snapshot.channels.size} " +
+                    "firmware=${capabilities.firmwareVersion ?: "unknown"} " +
+                    "pki=${capabilities.supportsPki} signing=${capabilities.supportsSigning}" +
+                    if (capabilities.isSupported) "" else " UNSUPPORTED"
+            }
             is LinkState.Reconnecting -> "attempt=${state.attempt} cause=${state.cause}"
             is LinkState.Connecting -> "attempt=${state.attempt}"
+            is LinkState.Unsupported -> "firmware=${state.version ?: "unknown"} refused"
             else -> ""
         }
 

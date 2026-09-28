@@ -8,6 +8,7 @@
     <string name="radio_service_downloading">Reading node settings…</string>
     <string name="radio_service_connecting">Connecting to your node…</string>
     <string name="radio_service_reconnecting">Reconnecting to your node…</string>
+    <string name="radio_service_unsupported">Node firmware is too old for Firepit</string>
     <string name="radio_service_disconnected">Not connected</string>
     <string name="radio_service_disconnect">Disconnect</string>
 
