@@ -3,6 +3,8 @@ package com.getfirepit.app.radio
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.getfirepit.core.data.MeshRepository
+import com.getfirepit.core.data.AlertClient
+import com.getfirepit.core.data.BuzzResult
 import com.getfirepit.core.data.TracerouteClient
 import com.getfirepit.core.model.MeshNode
 import com.getfirepit.core.protocol.MeshConstants
@@ -12,6 +14,7 @@ import com.getfirepit.core.data.NodeAdminClient
 import com.getfirepit.core.protocol.BeaconRate
 import com.getfirepit.core.protocol.ChannelKey
 import org.meshtastic.proto.Config
+import org.meshtastic.proto.Routing
 import com.getfirepit.core.protocol.RelayReach
 import com.getfirepit.core.data.SessionStore
 import com.getfirepit.core.protocol.NodeRole
@@ -27,6 +30,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -65,6 +69,8 @@ data class RadioUiState(
     val link: LinkState = LinkState.Disconnected,
     val details: RadioDetails? = null,
     val error: String? = null,
+    /** Something that happened but did not fail, and is not worth a dialog. */
+    val notice: String? = null,
     val nodes: List<MeshNode> = emptyList(),
     val myNodeNum: Int? = null,
     val tracing: Int? = null,
@@ -99,24 +105,28 @@ class RadioViewModel @Inject constructor(
     private val owners: OwnerRepository,
     private val admin: NodeAdminClient,
     private val mesh: MeshRepository,
+    private val alerts: AlertClient,
     private val traceroute: TracerouteClient,
 ) : ViewModel() {
 
     private val scanning = MutableStateFlow(false)
     private val found = MutableStateFlow(emptyList<DiscoveredRadio>())
     private val error = MutableStateFlow<String?>(null)
+    private val notice = MutableStateFlow<String?>(null)
     private val tracing = MutableStateFlow<Int?>(null)
     private val traceResult = MutableStateFlow<String?>(null)
     private var scanJob: Job? = null
+    private var noticeJob: Job? = null
 
     val uiState: StateFlow<RadioUiState> = combine(
-        combine(scanning, found, link.state, error) { scanning, found, linkState, error ->
+        combine(scanning, found, link.state, error, notice) { scanning, found, linkState, error, notice ->
             RadioUiState(
                 scanning = scanning,
                 found = found,
                 link = linkState,
                 details = (linkState as? LinkState.Ready)?.snapshot?.toDetails(),
                 error = error,
+                notice = notice,
             )
         },
         mesh.observeNodes(),
@@ -251,6 +261,66 @@ class RadioViewModel @Inject constructor(
     fun setRole(saved: SavedRadio, role: NodeRole) =
         savedRadios.assign(saved.identifier, saved.name, role)
 
+    /**
+     * Rings one radio so it can be told from the others on the desk.
+     *
+     * Nothing comes back to say it sounded, so the notice says what silence
+     * means rather than claiming success.
+     */
+    fun buzz(saved: SavedRadio) {
+        error.value = null
+        val nodeNum = saved.nodeNum
+        if (nodeNum == null) {
+            say("Connect ${saved.name} once so Firepit learns which node it is.")
+            return
+        }
+        if (link.state.value !is LinkState.Ready) {
+            say("Connect a radio first — a buzz travels over the mesh.")
+            return
+        }
+        viewModelScope.launch {
+            say("Buzzing ${saved.name}…", transient = false)
+            runCatching { alerts.buzz(nodeNum) }.fold(
+                onSuccess = { result -> say(describe(result, saved.name)) },
+                onFailure = { cause -> error.value = cause.message ?: "Could not buzz ${saved.name}" },
+            )
+        }
+    }
+
+    private fun describe(result: BuzzResult, name: String): String = when (result) {
+        BuzzResult.Delivered ->
+            "$name took the buzz. Silence means its buzzer alert is off, not that it is missing."
+
+        BuzzResult.ReachedMesh ->
+            "The mesh carried the buzz, but $name never confirmed it. It may be out of range."
+
+        BuzzResult.NoAnswer ->
+            "$name did not answer. It may be off or out of range."
+
+        BuzzResult.NoKey ->
+            "$name has not introduced itself yet, so there is no private way to reach it. " +
+                "Wait for it to appear on the mesh, then try again."
+
+        is BuzzResult.Refused -> when (result.reason) {
+            Routing.Error.NO_CHANNEL ->
+                "$name is not on this phone's primary channel, so it cannot be reached. " +
+                    "Connect it once and Firepit will set the channel."
+
+            else -> "$name refused the buzz: ${result.reason.name.lowercase().replace('_', ' ')}."
+        }
+    }
+
+    /** Said once and then forgotten, so a stale line never describes the current state. */
+    private fun say(message: String, transient: Boolean = true) {
+        notice.value = message
+        noticeJob?.cancel()
+        if (!transient) return
+        noticeJob = viewModelScope.launch {
+            delay(NOTICE_LIFETIME)
+            notice.value = null
+        }
+    }
+
     fun forget(saved: SavedRadio) = savedRadios.forget(saved.identifier)
 
     fun showOnMap(saved: SavedRadio, onMap: Boolean) =
@@ -305,6 +375,9 @@ class RadioViewModel @Inject constructor(
 
         /** A scan nobody stops stops itself. */
         val SCAN_WINDOW = 60.seconds
+
+        /** Long enough to read, short enough not to outlive what it describes. */
+        val NOTICE_LIFETIME = 8.seconds
     }
 
     fun disconnect() {

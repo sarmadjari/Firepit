@@ -65,6 +65,7 @@ import com.getfirepit.core.designsystem.theme.IDENTITY_CHOICES
 import com.getfirepit.core.designsystem.theme.identityColorFor
 import com.getfirepit.core.designsystem.theme.identityColorForSlot
 import com.getfirepit.core.designsystem.theme.onIdentityColorFor
+import com.getfirepit.core.protocol.MessageAlerts
 import com.getfirepit.core.protocol.MessageRetention
 import com.getfirepit.core.protocol.RadioCapabilities
 import com.getfirepit.core.protocol.RadioPrivacy
@@ -96,6 +97,7 @@ fun SettingsScreen(
     val retention by settingsViewModel.retentionChoice.collectAsStateWithLifecycle()
     val roomLifetime by settingsViewModel.roomLifetime.collectAsStateWithLifecycle()
     val showMessageText by settingsViewModel.showMessageText.collectAsStateWithLifecycle()
+    val messageAlerts by settingsViewModel.messageAlerts.collectAsStateWithLifecycle()
     val renameError by settingsViewModel.renameError.collectAsStateWithLifecycle()
     val rangeMode by settingsViewModel.rangeMode.collectAsStateWithLifecycle()
     val radioPrivacy by settingsViewModel.radioPrivacy.collectAsStateWithLifecycle()
@@ -154,6 +156,8 @@ fun SettingsScreen(
             onChooseRoomLifetime = settingsViewModel::chooseRoomLifetime,
             showMessageText = showMessageText,
             onShowMessageText = settingsViewModel::setShowMessageText,
+            messageAlerts = messageAlerts,
+            onChooseMessageAlerts = settingsViewModel::chooseMessageAlerts,
             rangeMode = rangeMode,
             radioPrivacy = radioPrivacy,
             canRestoreRadio = canRestoreRadio,
@@ -212,6 +216,8 @@ private fun SettingsList(
     onChooseRoomLifetime: (RoomLifetime) -> Unit,
     showMessageText: Boolean,
     onShowMessageText: (Boolean) -> Unit,
+    messageAlerts: MessageAlerts,
+    onChooseMessageAlerts: (MessageAlerts) -> Unit,
     rangeMode: RangeMode,
     radioPrivacy: RadioPrivacy,
     canRestoreRadio: Boolean,
@@ -276,6 +282,21 @@ private fun SettingsList(
                 ) {
                     Switch(checked = showMessageText, onCheckedChange = onShowMessageText)
                 }
+
+                SettingsChoice(
+                    label = "Announce a message on",
+                    caption = if (connected) {
+                        messageAlerts.summary
+                    } else {
+                        "Connect your radio to change this."
+                    },
+                    entries = MessageAlerts.entries,
+                    selected = messageAlerts,
+                    labelOf = MessageAlerts::label,
+                    // A radio setting, so there must be a radio to write it to.
+                    enabled = connected,
+                    onChoose = onChooseMessageAlerts,
+                )
             }
             HorizontalDivider()
 

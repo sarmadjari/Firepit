@@ -18,6 +18,7 @@ import org.meshtastic.proto.Channel
 import org.meshtastic.proto.PortNum
 import org.meshtastic.proto.ToRadio
 import org.meshtastic.proto.Config
+import org.meshtastic.proto.ModuleConfig
 import org.meshtastic.proto.SharedContact
 import org.meshtastic.proto.User
 
@@ -85,6 +86,16 @@ class NodeAdminClient @Inject constructor(
     /** Same whole-section replacement as [setDeviceConfig]. Expect a reboot. */
     suspend fun setPositionConfig(position: Config.PositionConfig) {
         send(AdminMessage(session_passkey = sessionPasskey(), set_config = Config(position = position)))
+    }
+
+    /** Whether the radio itself announces an arriving message. Same replacement rule. */
+    suspend fun setExternalNotificationConfig(config: ModuleConfig.ExternalNotificationConfig) {
+        send(
+            AdminMessage(
+                session_passkey = sessionPasskey(),
+                set_module_config = ModuleConfig(external_notification = config),
+            ),
+        )
     }
 
     /** Favourited nodes are never evicted from the radio's bounded NodeDB. */

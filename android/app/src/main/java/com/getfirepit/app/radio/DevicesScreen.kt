@@ -21,13 +21,18 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -124,9 +129,18 @@ private fun DeviceList(
         if (required.values.all { it }) viewModel.startScan()
     }
 
+    val snackbars = remember { SnackbarHostState() }
+    // Indefinite because the view model owns how long a notice is true for;
+    // clearing it here cancels the snackbar.
+    LaunchedEffect(state.notice) {
+        val message = state.notice ?: return@LaunchedEffect
+        snackbars.showSnackbar(message, duration = SnackbarDuration.Indefinite)
+    }
+
     Scaffold(
         modifier = modifier,
         topBar = { FirepitDetailBar(title = "Devices", onBack = onBack) },
+        snackbarHost = { SnackbarHost(snackbars) },
     ) { padding ->
         Column(
             modifier = Modifier
@@ -176,6 +190,7 @@ private fun DeviceList(
                     DeviceRow(
                         radio = radio,
                         status = statusOf(radio, state),
+                        onBuzz = { viewModel.buzz(radio) },
                         onOpen = { onOpen(radio) },
                     )
                 }
@@ -210,6 +225,7 @@ private fun DeviceList(
 private fun DeviceRow(
     radio: SavedRadio,
     status: DeviceStatus,
+    onBuzz: () -> Unit,
     onOpen: () -> Unit,
 ) {
     Card(
@@ -247,6 +263,14 @@ private fun DeviceRow(
             when {
                 status.active -> ActivePill()
                 status.connected -> ConnectedDot()
+            }
+            // Two identical boards are told apart by making one of them sound.
+            IconButton(onClick = onBuzz) {
+                Icon(
+                    painter = painterResource(FirepitIcons.Bell),
+                    contentDescription = "Buzz ${radio.name}",
+                    tint = FirepitTheme.colors.textSecondary,
+                )
             }
             Icon(
                 painter = painterResource(FirepitIcons.Chevron),

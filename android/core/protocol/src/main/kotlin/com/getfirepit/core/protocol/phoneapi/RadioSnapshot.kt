@@ -36,6 +36,8 @@ data class RadioSnapshot(
     val bluetooth: Config.BluetoothConfig? get() = configs.firstNotNullOfOrNull { it.bluetooth }
     val security: Config.SecurityConfig? get() = configs.firstNotNullOfOrNull { it.security }
     val telemetry: ModuleConfig.TelemetryConfig? get() = moduleConfigs.firstNotNullOfOrNull { it.telemetry }
+    val externalNotification: ModuleConfig.ExternalNotificationConfig?
+        get() = moduleConfigs.firstNotNullOfOrNull { it.external_notification }
 
     val capabilities: RadioCapabilities
         get() = RadioCapabilities(

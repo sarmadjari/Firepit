@@ -3,9 +3,11 @@ package com.getfirepit.app.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.getfirepit.core.data.MeshRepository
+import com.getfirepit.core.data.NodeAdminClient
 import com.getfirepit.core.data.Owner
 import com.getfirepit.core.data.OwnerRepository
 import com.getfirepit.core.data.RangeRepository
+import com.getfirepit.core.protocol.MessageAlerts
 import com.getfirepit.core.protocol.MessageRetention
 import com.getfirepit.core.protocol.RadioPrivacy
 import com.getfirepit.core.protocol.RangeMode
@@ -17,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -28,6 +31,7 @@ class SettingsViewModel @Inject constructor(
     private val retention: RetentionStore,
     private val notifications: NotificationPreferences,
     private val range: RangeRepository,
+    private val admin: NodeAdminClient,
     private val mesh: MeshRepository,
 ) : ViewModel() {
 
@@ -76,6 +80,23 @@ class SettingsViewModel @Inject constructor(
     val showMessageText: StateFlow<Boolean> = notifications.showText
 
     fun setShowMessageText(show: Boolean) = notifications.setShowText(show)
+
+    /** Taken from the radio, so it stays right if another app changed it. */
+    val messageAlerts: StateFlow<MessageAlerts> = mesh.snapshot
+        .map { MessageAlerts.of(it?.externalNotification) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MessageAlerts.PHONE_ONLY)
+
+    private val _alertsError = MutableStateFlow<String?>(null)
+    val alertsError: StateFlow<String?> = _alertsError.asStateFlow()
+
+    fun chooseMessageAlerts(choice: MessageAlerts) {
+        viewModelScope.launch {
+            val current = mesh.snapshot.value?.externalNotification
+            _alertsError.value = runCatching {
+                admin.setExternalNotificationConfig(MessageAlerts.applyTo(current, choice))
+            }.exceptionOrNull()?.let { it.message ?: "Could not change the radio's alert" }
+        }
+    }
 
     fun chooseRetention(choice: MessageRetention) {
         viewModelScope.launch { retention.choose(choice) }
