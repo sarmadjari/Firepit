@@ -7,7 +7,10 @@ import com.getfirepit.protocol.meshchat.PersonCard
 import com.getfirepit.protocol.meshchat.Receipt
 import com.getfirepit.protocol.meshchat.RoomGrant
 import com.getfirepit.protocol.meshchat.RosterEntry
+import com.getfirepit.protocol.meshchat.RoomText
+import com.getfirepit.protocol.meshchat.RosterEvent
 import com.getfirepit.protocol.meshchat.RosterSync
+import com.getfirepit.protocol.meshchat.SealedDirect
 import com.getfirepit.protocol.meshchat.SealedMessage
 import okio.ByteString.Companion.toByteString
 import org.junit.Assert.assertEquals
@@ -18,6 +21,8 @@ import org.meshtastic.proto.Constants
 import org.meshtastic.proto.Data
 import org.meshtastic.proto.MeshPacket
 import org.meshtastic.proto.PortNum
+import org.meshtastic.proto.Position
+import org.meshtastic.proto.Waypoint
 
 /**
  * Canary for the vendored protobuf pin (protos/UPSTREAM.md).
@@ -133,10 +138,14 @@ class ProtocolContractTest {
         )
     }
 
+    /**
+     * The roster travels sealed under the room key inside a PKI direct message,
+     * so the envelope and the PKI tag both come out of the entries' share.
+     * Worst case on the wire: negative node numbers are large uint32 values,
+     * which take the full five bytes as a varint.
+     */
     @Test
-    fun `a full roster sync fits in one packet`() {
-        // Worst case on the wire: negative node numbers are large uint32 values,
-        // which take the full five bytes as a varint. Measures 208 of 233.
+    fun `a full roster sync fits in one direct message, sealed`() {
         val control = MeshChatControl(
             version = 1,
             roster_sync = RosterSync(
@@ -147,14 +156,90 @@ class ProtocolContractTest {
                 truncated = true,
             ),
         )
-
         val encoded = MeshChatControl.ADAPTER.encode(control)
-
         assertEquals(control, MeshChatControl.ADAPTER.decode(encoded))
-        assertTrue(
-            "Roster sync is ${encoded.size} bytes, over the ${Constants.DATA_PAYLOAD_LEN.value}-byte payload",
-            encoded.size <= Constants.DATA_PAYLOAD_LEN.value,
+
+        assertFitsDirect(sealedInRoom(encoded.size), "sealed roster sync")
+    }
+
+    /** Sent before the sender's own radio moves on, so members who miss the new key still hear. */
+    @Test
+    fun `a sealed notice that the room moved on fits one packet`() {
+        val notice = MeshChatControl(
+            version = 1,
+            roster_event = RosterEvent(kind = RosterEvent.Kind.KEY_ROTATED, node_num = -1, generation = Int.MAX_VALUE),
         )
+
+        assertFitsBroadcast(sealedInRoom(MeshChatControl.ADAPTER.encode(notice).size), "sealed rotation notice")
+    }
+
+    // --- what the phone seals itself, rather than leaving to the radio ---------
+
+    /** Words at the composer's limit, sealed to the other phone, inside a PKI direct message. */
+    @Test
+    fun `a sealed direct message at the composer's limit fits a direct message`() {
+        val words = MeshChatControl(
+            version = 1,
+            room_text = RoomText(text = "a".repeat(MessagePrivacy.MAX_DIRECT_SEALED_TEXT_BYTES), reply_id = -1),
+        )
+        val sealedSize = MeshChatControl.ADAPTER.encode(words).size + MessagePrivacy.DIRECT_SEALED_OVERHEAD
+        val carried = MeshChatControl(version = 1, sealed_direct = SealedDirect(ciphertext = bytes(sealedSize)))
+
+        assertFitsDirect(MeshChatControl.ADAPTER.encode(carried).size, "sealed direct message")
+    }
+
+    @Test
+    fun `a full receipt for one person fits a direct message, sealed to their phone`() {
+        val receipt = MeshChatControl(
+            receipt = Receipt(
+                delivered = List(ReceiptRules.MAX_IDS_PER_PACKET / 2) { Int.MIN_VALUE + it },
+                read = List(ReceiptRules.MAX_IDS_PER_PACKET / 2) { -1 - it },
+            ),
+        )
+        val sealedSize = MeshChatControl.ADAPTER.encode(receipt).size + MessagePrivacy.DIRECT_SEALED_OVERHEAD
+        val carried = MeshChatControl(sealed_direct = SealedDirect(ciphertext = bytes(sealedSize)))
+
+        assertFitsDirect(MeshChatControl.ADAPTER.encode(carried).size, "sealed direct receipt")
+    }
+
+    /** A pin with every field at its limit, sealed under the room key. */
+    @Test
+    fun `a pin at its limits fits one sealed packet`() {
+        val pin = MeshChatControl(
+            version = 1,
+            pin = Waypoint(
+                id = -1,
+                latitude_i = Int.MIN_VALUE,
+                longitude_i = Int.MIN_VALUE,
+                expire = -1,
+                locked_to = -1,
+                name = "a".repeat(PIN_NAME_BYTES),
+                description = "a".repeat(PIN_DESCRIPTION_BYTES),
+                icon = -1,
+            ),
+        )
+
+        assertFitsBroadcast(sealedInRoom(MeshChatControl.ADAPTER.encode(pin).size), "sealed pin")
+    }
+
+    @Test
+    fun `a sealed position fits one packet with room to spare`() {
+        val position = MeshChatControl(
+            version = 1,
+            position = Position(
+                latitude_i = Int.MIN_VALUE,
+                longitude_i = Int.MIN_VALUE,
+                altitude = Int.MIN_VALUE,
+                time = -1,
+                location_source = Position.LocSource.LOC_EXTERNAL,
+                ground_speed = -1,
+                ground_track = -1,
+            ),
+        )
+        val size = sealedInRoom(MeshChatControl.ADAPTER.encode(position).size)
+
+        assertFitsBroadcast(size, "sealed position")
+        assertTrue("A position is sent over and over, so it should stay small: $size bytes", size <= 120)
     }
 
     // --- keys sealed to phones travel inside PKI direct messages -------------
@@ -187,7 +272,6 @@ class ProtocolContractTest {
                 room_name = "a".repeat(MAX_ROOM_NAME_BYTES),
                 room_psk = bytes(32),
                 generation = Int.MAX_VALUE,
-                position_precision = 32,
                 sealed_key = bytes(SEALED_KEY),
             ),
         )
@@ -249,6 +333,23 @@ class ProtocolContractTest {
         assertTrue("A $what is $size bytes, over the $budget bytes a PKI direct message leaves", size <= budget)
     }
 
+    private fun assertFitsBroadcast(size: Int, what: String) {
+        val budget = Constants.DATA_PAYLOAD_LEN.value
+        assertTrue("A $what is $size bytes, over the $budget-byte payload", size <= budget)
+    }
+
+    /** What [plainSize] bytes of control message become once sealed in a room and wrapped to travel. */
+    private fun sealedInRoom(plainSize: Int): Int {
+        val carried = MeshChatControl(
+            sealed_message = SealedMessage(
+                room_id = -1,
+                generation = Int.MAX_VALUE,
+                ciphertext = bytes(plainSize + SEALING_OVERHEAD),
+            ),
+        )
+        return MeshChatControl.ADAPTER.encode(carried).size
+    }
+
     private fun bytes(count: Int) = ByteArray(count) { 0x7F }.toByteString()
 
     private companion object {
@@ -256,7 +357,11 @@ class ProtocolContractTest {
         const val BROADCAST_NODENUM = -1 // 0xFFFFFFFF as a signed uint32
 
         /** Mirrors RoomRepository.MAX_ROSTER_ENTRIES. */
-        const val MAX_ROSTER_ENTRIES = 14
+        const val MAX_ROSTER_ENTRIES = 10
+
+        /** Mirrors WaypointRepository's byte limits on a pin's name and description. */
+        const val PIN_NAME_BYTES = 30
+        const val PIN_DESCRIPTION_BYTES = 100
 
         /** SealedText.OVERHEAD, restated so core:protocol need not see core:crypto. */
         const val SEALING_OVERHEAD = 29

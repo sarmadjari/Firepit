@@ -1,23 +1,29 @@
 package com.getfirepit.app.radio
 
-import kotlin.time.Duration.Companion.seconds
-import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.coroutines.flow.mapNotNull
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.CoroutineScope
-import com.getfirepit.core.protocol.NodeRole
-import com.getfirepit.core.transport.RadioScanner
-import com.getfirepit.core.data.SessionStore
-import com.getfirepit.core.data.ApplicationScope
-import android.util.Log
 import android.content.Context
+import android.util.Log
+import com.getfirepit.core.data.ApplicationScope
+import com.getfirepit.core.data.PrimaryBackup
+import com.getfirepit.core.data.SessionStore
+import com.getfirepit.core.protocol.NodeRole
+import com.getfirepit.core.protocol.SavedRadio
+import com.getfirepit.core.protocol.phoneapi.RadioSnapshot
 import com.getfirepit.core.transport.DiscoveredRadio
 import com.getfirepit.core.transport.LinkState
 import com.getfirepit.core.transport.RadioLink
+import com.getfirepit.core.transport.RadioScanner
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Ties the foreground service's lifetime to the radio session.
@@ -32,18 +38,60 @@ class RadioSessionController @Inject constructor(
     private val scanner: RadioScanner,
     private val sessionStore: SessionStore,
     private val savedRadios: SavedRadioStore,
+    private val primaryBackup: PrimaryBackup,
     @param:ApplicationScope private val scope: CoroutineScope,
 ) {
+    private val _identityDoubt = MutableStateFlow<String?>(null)
+
+    /**
+     * The saved radio whose address answered with a different identity, or
+     * null. Anything can answer at a Bluetooth address; a radio that suddenly
+     * has another node number or key is either reset, or not this one.
+     */
+    val identityDoubt: StateFlow<String?> = _identityDoubt.asStateFlow()
+
     init {
         // A device is only tied to its mesh identity once it says who it is,
         // which is what lets the map know which markers are your own hardware.
         scope.launch {
             link.state.collect { state ->
-                val nodeNum = (state as? LinkState.Ready)?.snapshot?.myNodeNum ?: return@collect
-                sessionStore.lastRadioId?.let { savedRadios.rememberNode(it, nodeNum) }
+                val snapshot = (state as? LinkState.Ready)?.snapshot
+                val nodeNum = snapshot?.myNodeNum
+                if (nodeNum == null) {
+                    _identityDoubt.value = null
+                    return@collect
+                }
+                val id = sessionStore.lastRadioId ?: return@collect
+                val consistent = savedRadios.rememberNode(id, nodeNum, identityKeyOf(snapshot, nodeNum))
+                _identityDoubt.value = id.takeUnless { consistent }
+                if (!consistent) Log.w(TAG, "radio at $id answered as a different node or key than the one saved")
             }
         }
     }
+
+    /** The person says the radio answering is theirs, reset or reflashed. */
+    fun trustConnectedRadio() {
+        val snapshot = (link.state.value as? LinkState.Ready)?.snapshot ?: return
+        val nodeNum = snapshot.myNodeNum ?: return
+        val id = sessionStore.lastRadioId ?: return
+        savedRadios.trust(id, nodeNum, identityKeyOf(snapshot, nodeNum))
+        _identityDoubt.value = null
+    }
+
+    /**
+     * Stops administering [radio] for good: it is no longer reconnected on
+     * launch, and the copy of its original primary channel goes with it.
+     */
+    fun forget(radio: SavedRadio) {
+        if (sessionStore.lastRadioId == radio.identifier) sessionStore.lastRadioId = null
+        radio.nodeNum?.let(primaryBackup::forget)
+        savedRadios.forget(radio.identifier)
+    }
+
+    private fun identityKeyOf(snapshot: RadioSnapshot, nodeNum: Int): String? =
+        (snapshot.security?.public_key ?: snapshot.nodes[nodeNum]?.user?.public_key)
+            ?.takeIf { it.size > 0 }
+            ?.base64()
 
     fun connect(radio: DiscoveredRadio) {
         sessionStore.lastRadioId = radio.identifier

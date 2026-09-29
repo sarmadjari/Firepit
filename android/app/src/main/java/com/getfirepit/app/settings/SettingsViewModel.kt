@@ -30,6 +30,7 @@ class SettingsViewModel @Inject constructor(
     private val owners: OwnerRepository,
     private val retention: RetentionStore,
     private val notifications: NotificationPreferences,
+    private val screenPrivacy: ScreenPrivacyPreferences,
     private val range: RangeRepository,
     private val admin: NodeAdminClient,
     private val mesh: MeshRepository,
@@ -80,6 +81,16 @@ class SettingsViewModel @Inject constructor(
     val showMessageText: StateFlow<Boolean> = notifications.showText
 
     fun setShowMessageText(show: Boolean) = notifications.setShowText(show)
+
+    /** Whether Firepit's screens may be captured; off unless somebody asks. */
+    val allowScreenCapture: StateFlow<Boolean> = screenPrivacy.allowCapture
+
+    fun setAllowScreenCapture(allow: Boolean) = screenPrivacy.setAllowCapture(allow)
+
+    /** Deletes everything this phone kept about what was said and where anyone was. */
+    fun eraseHistory() {
+        viewModelScope.launch { retention.eraseHistory() }
+    }
 
     /** Taken from the radio, so it stays right if another app changed it. */
     val messageAlerts: StateFlow<MessageAlerts> = mesh.snapshot

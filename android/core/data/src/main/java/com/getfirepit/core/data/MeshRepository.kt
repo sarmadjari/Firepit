@@ -3,12 +3,16 @@ package com.getfirepit.core.data
 import android.util.Log
 import com.getfirepit.core.database.MessageDao
 import com.getfirepit.core.database.NodeDao
+import com.getfirepit.core.database.PeerKeyDao
+import com.getfirepit.core.database.RoomActivityDao
+import com.getfirepit.core.database.RoomMemberDao
 import com.getfirepit.core.database.directLatest
 import com.getfirepit.core.database.find
 import com.getfirepit.core.database.latestPerChannel
 import com.getfirepit.core.database.observeAll
 import com.getfirepit.core.database.observeChannel
 import com.getfirepit.core.database.observeDirect
+import com.getfirepit.core.database.recordActivity
 import com.getfirepit.core.database.save
 import com.getfirepit.core.database.saveIfNew
 import com.getfirepit.core.model.BROADCAST_NODE_NUM
@@ -21,9 +25,14 @@ import com.getfirepit.core.model.RoomKind
 import com.getfirepit.core.protocol.ChannelKey
 import com.getfirepit.core.protocol.ChannelLoad
 import com.getfirepit.core.protocol.ChannelSlotManager
+import com.getfirepit.core.crypto.DirectSeal
+import com.getfirepit.core.crypto.InviteCodec
+import com.getfirepit.core.crypto.KeyEnvelope
+import com.getfirepit.core.crypto.RoomCrypto
 import com.getfirepit.core.crypto.SealedText
 import com.getfirepit.protocol.meshchat.MeshChatControl
 import com.getfirepit.protocol.meshchat.RoomText
+import com.getfirepit.protocol.meshchat.SealedDirect
 import com.getfirepit.protocol.meshchat.SealedMessage
 import com.getfirepit.core.protocol.Carriage
 import com.getfirepit.core.protocol.MeshConstants
@@ -39,8 +48,12 @@ import com.getfirepit.core.transport.LinkState
 import com.getfirepit.core.transport.RadioLink
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.time.Duration
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -51,11 +64,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import okio.ByteString
 import okio.ByteString.Companion.decodeBase64
 import okio.ByteString.Companion.encodeUtf8
@@ -99,9 +114,23 @@ sealed class SendError(message: String) : Exception(message) {
             "by every radio in range.",
     )
 
+    /** A Firepit room still on the radio whose key this phone does not hold. */
+    data object RoomKeyMissing : SendError(
+        "This room's key isn't on this phone, so nothing sent here could be sealed. Leave the " +
+            "room, or ask a member to invite you again.",
+    )
+
+    /** The room moved to a key that never reached us; the old one only reaches whoever was removed. */
+    data object RoomMovedOn : SendError(
+        "This room moved to a new key that didn't reach this phone. Ask a member to invite you again.",
+    )
+
     data class TooLong(val bytes: Int, val limit: Int) :
         SendError("Message is $bytes bytes, over the $limit-byte limit")
 }
+
+/** What a radio said about one of our packets: the id it answers, who said it, and how it went. */
+data class RoutingEvent(val requestId: Int, val from: Int, val error: Routing.Error)
 
 /**
  * Single source of truth for chat and node state.
@@ -117,6 +146,10 @@ class MeshRepository @Inject constructor(
     private val nodeDao: NodeDao,
     private val sessionStore: SessionStore,
     private val roomKeys: RoomKeyStore,
+    private val peerKeyDao: PeerKeyDao,
+    private val memberDao: RoomMemberDao,
+    private val phoneKeys: PhoneKeyStore,
+    private val roomActivity: RoomActivityDao,
     @param:ApplicationScope private val scope: CoroutineScope,
 ) {
     private val pacer = OutboundPacer(System::currentTimeMillis)
@@ -139,6 +172,42 @@ class MeshRepository @Inject constructor(
     /** Newly stored incoming messages. Replays nothing, so a late collector cannot re-notify. */
     private val _incomingMessages = MutableSharedFlow<ChatMessage>(extraBufferCapacity = 16)
     val incomingMessages: SharedFlow<ChatMessage> = _incomingMessages.asSharedFlow()
+
+    /** Every routing answer the radio passes up, for whoever is waiting on one. */
+    private val routing = MutableSharedFlow<RoutingEvent>(extraBufferCapacity = 64)
+
+    /**
+     * Sends [packet] and waits for [from] itself to acknowledge it.
+     *
+     * Our radio accepting a packet says nothing about where it went, and an
+     * implicit ack only says a neighbour repeated it. Only the recipient's own
+     * answer shows it arrived. Our radio refusing it — no key for them, nobody
+     * heard it — ends the wait at once rather than running out the clock.
+     */
+    suspend fun sendAwaitingAck(packet: MeshPacket, from: Int, timeout: Duration): Boolean = coroutineScope {
+        val myNodeNum = _myNodeNum.value
+        // Listening starts before sending: an answer can arrive first.
+        val answer = async(start = CoroutineStart.UNDISPATCHED) {
+            withTimeoutOrNull(timeout) {
+                routing.first { event ->
+                    event.requestId == packet.id &&
+                        (event.from == from || (event.from == myNodeNum && event.error != Routing.Error.NONE))
+                }
+            }
+        }
+        val sent = runCatching { link.send(ToRadio(packet = packet)) }
+            .onFailure { cause -> Log.w(TAG, "could not send ${packet.id} to $from", cause) }
+            .isSuccess
+        if (!sent) {
+            answer.cancel()
+            return@coroutineScope false
+        }
+        val event = answer.await()
+        event != null && event.from == from && event.error == Routing.Error.NONE
+    }
+
+    /** Whether words to [peer] can be sealed to their phone, as that changes. */
+    fun observeDirectSealed(peer: Int): Flow<Boolean> = peerKeyDao.observeKnown(peer)
 
     /** Our own `User`, needed to introduce ourselves when joining a room. */
     val myUser: User?
@@ -171,12 +240,54 @@ class MeshRepository @Inject constructor(
         nodeDao.save(node.copy(longName = longName, shortName = shortName), System.currentTimeMillis())
     }
 
+    /**
+     * A person's phone key, which is what makes a direct message private from
+     * the radios as well as the mesh. Null for anyone who has never shared a
+     * room with us, which includes everybody not running Firepit.
+     */
+    internal suspend fun phoneKeyOf(nodeNum: Int): ByteArray? =
+        peerKeyDao.find(nodeNum)?.phoneKey
+            ?.let { runCatching { it.decodeBase64() }.getOrNull() }
+            ?.toByteArray()
+            ?.takeIf(KeyEnvelope::isValidPublicKey)
+
+    /**
+     * Which conversation a slot holds, for filing its history: the room id when
+     * it has one, so history follows the room between radios, else 0.
+     */
+    private fun conversationIdOf(channel: Int): Int = roomIdForChannel(channel) ?: 0
+
     /** A node's public key, required before anything can be sent to it over PKI. */
     suspend fun publicKeyOf(nodeNum: Int): ByteString? =
         _snapshot.value?.nodes?.get(nodeNum)?.user?.public_key?.takeIf { it.size == PUBLIC_KEY_SIZE }
             ?: nodeDao.find(nodeNum)?.publicKey
                 ?.let { runCatching { it.decodeBase64() }.getOrNull() }
                 ?.takeIf { it.size == PUBLIC_KEY_SIZE }
+
+    /** The key our own radio holds for [nodeNum], as it reported at connection, or null. */
+    internal fun radioKeyOf(nodeNum: Int): ByteString? =
+        _snapshot.value?.nodes?.get(nodeNum)?.user?.public_key?.takeIf { it.size == PUBLIC_KEY_SIZE }
+
+    /**
+     * [nodeNum] as a contact the radio can take back: its own NodeInfo while it
+     * still holds one, else what this phone kept. The radio's node list is
+     * bounded and evicts; this phone's is not, so a member the radio forgot can
+     * be put back instead of silently becoming unreachable.
+     */
+    internal suspend fun contactFor(nodeNum: Int): User? {
+        _snapshot.value?.nodes?.get(nodeNum)?.user?.takeIf { it.public_key.size == PUBLIC_KEY_SIZE }?.let { return it }
+        val node = nodeDao.find(nodeNum) ?: return null
+        val key = node.publicKey
+            ?.let { runCatching { it.decodeBase64() }.getOrNull() }
+            ?.takeIf { it.size == PUBLIC_KEY_SIZE }
+            ?: return null
+        return User(
+            id = MeshConstants.formatNodeId(nodeNum),
+            long_name = node.longName.orEmpty(),
+            short_name = node.shortName.orEmpty(),
+            public_key = key,
+        )
+    }
 
     // Derived from the link, not from myNodeNum: that is remembered across
     // sessions so the map can identify us offline, and would otherwise report a
@@ -186,6 +297,9 @@ class MeshRepository @Inject constructor(
         .stateIn(scope, SharingStarted.Eagerly, false)
 
     private var hopLimit: Int = MeshConstants.DEFAULT_HOP_LIMIT
+
+    /** How far our own packets travel: the radio's own setting, within the firmware's bounds. */
+    internal fun hopLimitForSending(): Int = hopLimit
 
     /**
      * How busy our own radio finds the channel, or null before it says.
@@ -221,8 +335,16 @@ class MeshRepository @Inject constructor(
      * is asked first and nothing else can stand in for it. Everything else is
      * an ordinary Meshtastic channel, described by how private its own key is.
      */
-    private fun kindOf(roomId: Int, psk: ByteArray?): RoomKind = when {
-        roomId != 0 && roomKeys.keyFor(roomId) != null -> RoomKind.FIREPIT
+    private fun kindOf(roomId: Int, psk: ByteArray?, secondary: Boolean): RoomKind = when {
+        roomId != 0 && roomKeys.keyFor(roomId) != null ->
+            if (roomKeys.isSuperseded(roomId)) RoomKind.FIREPIT_MOVED_ON else RoomKind.FIREPIT
+
+        // Shaped like one of ours — an id and a full-length key, which Firepit
+        // gives every room and never gives a Meshtastic channel — but with no
+        // key on this phone. Calling it an ordinary channel would invite words
+        // onto it under a key every member's radio holds.
+        secondary && roomId != 0 && psk?.size == RoomCrypto.PSK_SIZE -> RoomKind.FIREPIT_KEY_MISSING
+
         else -> when (ChannelKey.of(psk)) {
             ChannelKey.PRIVATE -> RoomKind.MESHTASTIC_PRIVATE
             ChannelKey.DEFAULT -> RoomKind.MESHTASTIC_PUBLIC
@@ -242,8 +364,17 @@ class MeshRepository @Inject constructor(
             },
             id = id,
             positionPrecision = channel.settings?.module_settings?.position_precision ?: 0,
-            kind = kindOf(id, channel.settings?.psk?.toByteArray()),
+            kind = kindOf(id, channel.settings?.psk?.toByteArray(), secondary = channel.role == Channel.Role.SECONDARY),
         )
+    }
+
+    /**
+     * Re-reads what each slot is, after something changed that the radio does
+     * not know about: a room moving on without us, or a key arriving.
+     */
+    internal fun refreshRoomKinds() {
+        val channels = _snapshot.value?.channels?.values ?: return
+        _channels.value = channels.sortedBy { it.index }.map(::roomChannelOf)
     }
 
     /**
@@ -292,12 +423,13 @@ class MeshRepository @Inject constructor(
      * Sends text to a room, or to one person when [to] names them.
      *
      * There is no unencrypted path out of here. A room's words are sealed under
-     * a key the radio never holds; one person's words are encrypted to that
-     * person's node key by the firmware. When neither is possible the message
-     * is refused rather than quietly downgraded to the channel key — on the
-     * primary that key is one every Meshtastic radio has, and a direct message
-     * sent that way is readable by the whole mesh. That is precisely what
-     * Meshtastic's own pre-2.5 direct messages did, and why they changed it.
+     * a key the radio never holds; one person's words are sealed to their
+     * phone's key when we know it, and always encrypted to their radio's key by
+     * the firmware as well. When neither is possible the message is refused
+     * rather than quietly downgraded to the channel key — on the primary that
+     * key is one every Meshtastic radio has, and a direct message sent that way
+     * is readable by the whole mesh. That is precisely what Meshtastic's own
+     * pre-2.5 direct messages did, and why they changed it.
      */
     suspend fun sendText(
         channel: Int,
@@ -308,12 +440,14 @@ class MeshRepository @Inject constructor(
         val myNodeNum = _myNodeNum.value ?: throw SendError.NotConnected
         val payload = text.encodeUtf8()
 
-        // A Firepit room only where we actually hold its key. Without one the
-        // slot is an ordinary Meshtastic channel, and pretending otherwise
-        // would seal words that the people on it cannot open.
+        // A Firepit room only where we actually hold its current key. Without
+        // one the slot is either an ordinary Meshtastic channel, or one of ours
+        // this phone can no longer seal for — which is refused, not downgraded.
         val roomId = roomIdForChannel(channel)
-        val roomKey = roomId?.let { roomKeys.keyFor(it) }
+        val roomKey = roomId?.let { roomKeys.sealingKey(it) }
+        val kind = _channels.value.firstOrNull { it.index == channel }?.kind
         val peerKey = to.takeIf { it != BROADCAST_NODE_NUM }?.let { publicKeyOf(it) }
+        val peerPhoneKey = to.takeIf { it != BROADCAST_NODE_NUM }?.let { phoneKeyOf(it) }
 
         val carriage = MessagePrivacy.carriageFor(
             to = to,
@@ -322,6 +456,8 @@ class MeshRepository @Inject constructor(
             sealingRoomId = roomId.takeIf { roomKey != null },
             hasPeerKey = peerKey != null,
             channelKey = channelKeyOf(channel),
+            hasPeerPhoneKey = peerPhoneKey != null,
+            roomKind = kind?.takeIf { it.isStalledRoom },
         )
         val limit = MessagePrivacy.textBudgetFor(carriage)
         if (carriage !is Carriage.Refused && payload.size > limit) {
@@ -333,6 +469,35 @@ class MeshRepository @Inject constructor(
                 Carriage.Reason.NO_PEER_KEY -> SendError.NoPeerKey
                 Carriage.Reason.NOT_A_ROOM -> SendError.NotARoom
                 Carriage.Reason.NOT_ENCRYPTED -> SendError.NotEncrypted
+                Carriage.Reason.ROOM_KEY_MISSING -> SendError.RoomKeyMissing
+                Carriage.Reason.ROOM_MOVED_ON -> SendError.RoomMovedOn
+            }
+
+            // Sealed to their phone, then to their radio by the firmware. The
+            // radios carry it without being able to open it.
+            is Carriage.SealedDirect -> {
+                val sealed = phoneKeys.sealDirect(
+                    requireNotNull(peerPhoneKey),
+                    MeshChatControl(
+                        version = InviteCodec.VERSION,
+                        room_text = RoomText(text = text, reply_id = replyId ?: 0),
+                    ).encode(),
+                    DirectSeal.contextOf(myNodeNum, carriage.nodeNum),
+                )
+                MeshPacketBuilder.meshPacket(
+                    to = carriage.nodeNum,
+                    channel = channel,
+                    portNum = PortNum.PRIVATE_APP,
+                    payload = MeshChatControl(
+                        version = InviteCodec.VERSION,
+                        sealed_direct = SealedDirect(ciphertext = sealed.toByteString()),
+                    ).encode().let(ByteString::of),
+                    hopLimit = hopLimit,
+                    // Decision D-5: the recipient's own ack is the only proof it arrived.
+                    wantAck = true,
+                    pkiEncrypted = true,
+                    publicKey = requireNotNull(peerKey),
+                )
             }
 
             is Carriage.ToOneNode -> MeshPacketBuilder.meshPacket(
@@ -395,9 +560,12 @@ class MeshRepository @Inject constructor(
                 status = MessageStatus.QUEUED,
                 isOutgoing = true,
                 replyId = replyId,
+                roomId = if (to == BROADCAST_NODE_NUM) conversationIdOf(channel) else 0,
             ),
             myNodeNum,
         )
+        // Speaking in a room is what keeps it from counting as quiet.
+        if (carriage is Carriage.SealedRoom) roomActivity.recordActivity(carriage.roomId, System.currentTimeMillis())
 
         pacer.awaitSlot(PortNum.TEXT_MESSAGE_APP)
         runCatching { link.send(ToRadio(packet = packet)) }
@@ -505,22 +673,45 @@ class MeshRepository @Inject constructor(
         )
     }
 
+    /**
+     * A position the firmware broadcast in the open.
+     *
+     * Kept for nodes outside our rooms, where it is all there is. Never for a
+     * member: their phones only ever send positions sealed, so an unsealed one
+     * naming a member was put on the air by whoever holds a radio.
+     */
     private suspend fun handlePosition(packet: MeshPacket, data: Data) {
+        if (!TrustRules.unsealedPositionAcceptable(senderInOurRooms = memberDao.isInAnyRoom(packet.from))) {
+            Log.w(TAG, "dropped an unsealed position for member ${packet.from}")
+            return
+        }
         val position = runCatching { Position.ADAPTER.decode(data.payload) }.getOrNull() ?: return
+        storePosition(packet.from, position, precision = position.precision_bits.takeIf { it != 0 })
+    }
+
+    /**
+     * A member's position, sealed by their phone under the room's key and
+     * already opened and checked by the room layer.
+     */
+    internal suspend fun storeSealedPosition(nodeNum: Int, position: Position) {
+        storePosition(nodeNum, position, precision = PositionPrecision.FULL)
+    }
+
+    private suspend fun storePosition(nodeNum: Int, position: Position, precision: Int?) {
         val latitude = position.latitude_i ?: return
         val longitude = position.longitude_i ?: return
         // 0,0 is in the Atlantic and is what a node with no fix reports.
         if (latitude == 0 && longitude == 0) return
 
         nodeDao.updatePosition(
-            nodeNum = packet.from,
+            nodeNum = nodeNum,
             latitudeI = latitude,
             longitudeI = longitude,
             altitude = position.altitude,
             // Their stamp while it holds up, otherwise the fact we can vouch
             // for: it reached us now.
             positionTime = position.time.ifPlausible() ?: System.currentTimeMillis(),
-            positionPrecision = position.precision_bits.takeIf { it != 0 },
+            positionPrecision = precision,
             groundSpeed = position.ground_speed,
             groundTrack = position.ground_track,
         )
@@ -554,14 +745,25 @@ class MeshRepository @Inject constructor(
     }
 
     /**
-     * Words that arrived sealed. Stored exactly like any other message: the
-     * encryption is how it travelled, not what it is.
+     * Words that arrived sealed in [roomId]. Stored like any other message: the
+     * encryption is how it travelled, and the database is encrypted in its turn.
      */
-    internal suspend fun saveSealedText(packet: MeshPacket, text: String, replyId: Int?) {
-        saveText(packet, sanitizeMeshText(text), replyId, emoji = null)
+    internal suspend fun saveSealedText(packet: MeshPacket, text: String, replyId: Int?, roomId: Int) {
+        saveText(packet, sanitizeMeshText(text), replyId, emoji = null, roomId = roomId)
     }
 
-    private suspend fun saveText(packet: MeshPacket, text: String, replyId: Int?, emoji: Int?) {
+    /** One person's words, sealed by their phone to ours and already opened. */
+    internal suspend fun saveSealedDirectText(packet: MeshPacket, text: String, replyId: Int?) {
+        saveText(packet, sanitizeMeshText(text), replyId, emoji = null, roomId = 0)
+    }
+
+    private suspend fun saveText(
+        packet: MeshPacket,
+        text: String,
+        replyId: Int?,
+        emoji: Int?,
+        roomId: Int = if (packet.to == _myNodeNum.value) 0 else conversationIdOf(packet.channel),
+    ) {
         val myNodeNum = _myNodeNum.value ?: return
         if (packet.from == myNodeNum) return
         if (text.isEmpty()) return
@@ -583,6 +785,7 @@ class MeshRepository @Inject constructor(
             replyId = replyId,
             emoji = emoji,
             signed = packet.xeddsa_signed,
+            roomId = roomId,
         )
 
         // Only announce genuinely new messages: the mesh repeats packets, and a
@@ -596,17 +799,41 @@ class MeshRepository @Inject constructor(
     private suspend fun handleRouting(packet: MeshPacket, data: Data) {
         val myNodeNum = _myNodeNum.value ?: return
         val originalId = data.request_id.takeIf { it != 0 } ?: return
-        val routing = runCatching { Routing.ADAPTER.decode(data.payload) }.getOrNull() ?: return
+        val decoded = runCatching { Routing.ADAPTER.decode(data.payload) }.getOrNull() ?: return
+        val error = decoded.error_reason ?: Routing.Error.NONE
+        routing.tryEmit(RoutingEvent(originalId, packet.from, error))
 
-        val next = MessageStatusRules.fromRouting(routing.error_reason, packet.from, myNodeNum)
-        Log.i(TAG, "routing for $originalId: ${routing.error_reason} from ${packet.from} -> $next")
-        setStatus(originalId, next, routing.error_reason?.takeIf { next.isFailure }?.name)
+        val sent = messageDao.find(originalId)?.takeIf { it.isOutgoing } ?: return
+        val next = MessageStatusRules.fromRouting(error, packet.from, myNodeNum, sentTo = sent.toNodeNum) ?: run {
+            // Packet ids are in every header; anybody can answer one.
+            Log.w(TAG, "routing for $originalId from ${packet.from}, who it was not sent to; ignored")
+            return
+        }
+        Log.i(TAG, "routing for $originalId: $error from ${packet.from} -> $next")
+        setStatus(originalId, next, error.takeIf { next.isFailure }?.name)
     }
 
     private suspend fun handleQueueStatus(status: QueueStatus) {
         val packetId = status.mesh_packet_id.takeIf { it != 0 } ?: return
         val next = MessageStatusRules.fromQueueStatus(status.res)
         setStatus(packetId, next, "QueueStatus res=${status.res}".takeIf { next.isFailure })
+    }
+
+    /**
+     * The person a sealed message went to says their phone could not open it.
+     * Set outright rather than advanced: their radio's acknowledgement may
+     * already have marked it delivered, which it was — to a radio, not a
+     * reader. False when [messageId] is not ours to [by].
+     */
+    internal suspend fun markNotOpened(messageId: Int, by: Int): Boolean {
+        val message = messageDao.find(messageId)?.takeIf { it.isOutgoing && it.toNodeNum == by } ?: return false
+        messageDao.updateStatus(
+            message.id,
+            MessageStatus.FAILED,
+            "Their phone could not open it: it has not learned your key yet. Try again once you've " +
+                "both been connected in a room you share.",
+        )
+        return true
     }
 
     private suspend fun setStatus(packetId: Int, next: MessageStatus, reason: String?) {
@@ -622,6 +849,9 @@ class MeshRepository @Inject constructor(
 
     private suspend fun saveNode(info: NodeInfo) {
         val user = info.user
+        // The radio learned this from an unsealed broadcast, if at all; a
+        // member's position is only believed sealed, from their phone.
+        val position = info.position.takeIf { TrustRules.unsealedPositionAcceptable(memberDao.isInAnyRoom(info.num)) }
         nodeDao.save(
             MeshNode(
                 nodeNum = info.num,
@@ -640,13 +870,13 @@ class MeshRepository @Inject constructor(
                 channelUtilization = info.device_metrics?.channel_utilization,
                 airUtilTx = info.device_metrics?.air_util_tx,
                 isFavorite = info.is_favorite,
-                latitudeI = info.position?.latitude_i?.takeIf { it != 0 },
-                longitudeI = info.position?.longitude_i?.takeIf { it != 0 },
-                altitude = info.position?.altitude,
+                latitudeI = position?.latitude_i?.takeIf { it != 0 },
+                longitudeI = position?.longitude_i?.takeIf { it != 0 },
+                altitude = position?.altitude,
                 // Nothing here says when this reached the radio, so an
                 // unbelievable stamp leaves no time at all rather than a wrong one.
-                positionTime = info.position?.time?.ifPlausible(),
-                positionPrecision = info.position?.precision_bits?.takeIf { it != 0 },
+                positionTime = position?.time?.ifPlausible(),
+                positionPrecision = position?.precision_bits?.takeIf { it != 0 },
             ),
             System.currentTimeMillis(),
         )

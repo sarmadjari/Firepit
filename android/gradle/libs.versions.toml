@@ -35,6 +35,8 @@ hilt = "2.60.1"
 hiltNavigationCompose = "1.4.0"
 lifecycle = "2.11.0"
 room = "2.8.5"
+# The database is encrypted on the phone, with a key the Keystore wraps.
+sqlcipher = "4.19.0"
 
 # QR. ZXing does both generation and decoding, which avoids pulling ML Kit and
 # Play Services in for one barcode format.
@@ -43,6 +45,9 @@ camerax = "1.6.2"
 
 # Map. OpenFreeMap serves the tiles, so there is no key and no per-view billing.
 maplibre = "13.6.1"
+# MapLibre's HTTP client, declared so tile requests can carry a User-Agent that
+# does not name the app. OkHttp 5 is a drop-in replacement for the 4.x it brings.
+okhttp = "5.5.0"
 maplibreAnnotation = "3.0.2"
 
 [libraries]
@@ -84,6 +89,9 @@ hilt-compiler = { group = "com.google.dagger", name = "hilt-compiler", version.r
 room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+room-testing = { group = "androidx.room", name = "room-testing", version.ref = "room" }
+sqlcipher-android = { group = "net.zetetic", name = "sqlcipher-android", version.ref = "sqlcipher" }
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 
 zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
 androidx-camera-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camerax" }

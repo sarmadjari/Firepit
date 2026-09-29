@@ -164,9 +164,12 @@ fun MapScreen(
         }
     }
 
-    LaunchedEffect(state.markers, state.pins, dark) {
+    LaunchedEffect(state.markers, state.pins, dark, offlineOnly) {
         markerLayer.draw(state.markers, state.pins, dark)
-        if (!hasFramedMarkers && state.markers.isNotEmpty()) {
+        // Framed on its own only when the tiles come from this phone. Online,
+        // moving the camera to everyone fetches the tiles around them, which
+        // tells the tile server where the group is; that waits for a tap.
+        if (!hasFramedMarkers && state.markers.isNotEmpty() && offlineOnly) {
             // Only latch once the camera actually moved, or a first draw that
             // beat the style load would leave the map stuck in the Atlantic.
             hasFramedMarkers = markerLayer.frameAll(state.markers)
@@ -188,7 +191,7 @@ fun MapScreen(
             markerLayer.setOnPinClick { pin -> openPin = pin }
             markerLayer.setOnMarkerClick { marker -> if (!marker.isSelf) openMarker = marker }
                 map.style?.let { coverageMask.apply(it, areas, offlineOnly) }
-                hasFramedMarkers = markerLayer.frameAll(state.markers)
+                if (offlineOnly) hasFramedMarkers = markerLayer.frameAll(state.markers)
                 map.addOnMapLongClickListener { point ->
                     droppingAt = point
                     true
@@ -231,6 +234,18 @@ fun MapScreen(
                     .statusBarsPadding()
                     .padding(FirepitSpacing.m),
             )
+
+            // Online, the map waits to be asked before going to where people
+            // are: the tiles it would fetch there tell the tile server the place.
+            if (!hasFramedMarkers && !offlineOnly && state.markers.isNotEmpty()) {
+                Button(
+                    onClick = { hasFramedMarkers = markerLayer.frameAll(state.markers, force = true) },
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .statusBarsPadding()
+                        .padding(top = FirepitSpacing.m),
+                ) { Text("Show everyone") }
+            }
 
             Column(
                 modifier = Modifier

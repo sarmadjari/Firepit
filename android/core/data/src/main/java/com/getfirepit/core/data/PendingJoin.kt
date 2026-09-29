@@ -27,10 +27,12 @@ data class PendingJoin(
     val nodeId: String get() = "!%08x".format(nodeNum)
 
     /**
-     * Their radio's key, short enough to read aloud. Their own screen shows the
-     * same line; if the two differ, the hello is not from the phone in front of you.
+     * Their radio's key and their phone's key as one line, short enough to
+     * read aloud. Their own screen shows the same line; if the two differ, the
+     * hello is not from the phone in front of you — and it is that phone the
+     * room's key will be sealed to.
      */
-    val fingerprint: String? get() = KeyFingerprint.of(joinerKey.base64())
+    val fingerprint: String? get() = KeyFingerprint.ofJoin(joinerKey.toByteArray(), phoneKey.toByteArray())
 }
 
 /** A room we have asked to join, while the answer is still outstanding. */
@@ -44,7 +46,7 @@ data class AwaitedRoom(
      * node whose key we seeded from that same code.
      */
     val inviter: Int,
-    /** Our own radio's key, for reading aloud so the inviter can check it. */
+    /** Our own radio's and phone's keys as one line, for reading aloud so the inviter can check them. */
     val ownFingerprint: String? = null,
     /** Set when the answer came back and it was no. */
     val declined: Boolean = false,

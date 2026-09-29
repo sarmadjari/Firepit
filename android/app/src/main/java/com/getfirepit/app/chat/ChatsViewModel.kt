@@ -6,12 +6,12 @@ import androidx.lifecycle.viewModelScope
 import com.getfirepit.core.data.ChatPresence
 import com.getfirepit.core.data.MeshRepository
 import com.getfirepit.core.data.ReceiptRepository
+import com.getfirepit.core.data.RoomHistory
 import com.getfirepit.core.data.RoomRepository
 import com.getfirepit.core.model.Receipt
 import com.getfirepit.core.database.ChannelStateDao
 import com.getfirepit.core.database.markRead
 import com.getfirepit.core.database.observeMuted
-import com.getfirepit.core.database.setMuted
 import com.getfirepit.core.model.ChatMessage
 import com.getfirepit.app.settings.PersonStore
 import com.getfirepit.core.model.MeshNode
@@ -61,6 +61,11 @@ data class ChatsUiState(
     val latest: Map<Int, ChatMessage> = emptyMap(),
     /** The person whose conversation is open, if it is a direct one. */
     val directPeer: Int? = null,
+    /**
+     * True when words to [directPeer] are sealed to their phone. False means
+     * only the two radios protect them, and whoever holds either can read them.
+     */
+    val directSealed: Boolean = false,
     /** Newest message per person, for the Direct list. */
     val directLatest: List<ChatMessage> = emptyList(),
 ) {
@@ -98,19 +103,25 @@ data class ChatsUiState(
      */
     val sealed: Boolean get() = kind == RoomKind.FIREPIT
 
-    /** A room Firepit will send on, or one person. Anything else has no way to carry words. */
+    /**
+     * A room Firepit will send on, or one person. Anything else has no way to
+     * carry words — including a Firepit room this phone can no longer seal for.
+     */
     val hasPrivateTarget: Boolean
-        get() = directPeer != null || (kind != null && kind != RoomKind.UNENCRYPTED)
+        get() = directPeer != null || kind.let { it != null && it != RoomKind.UNENCRYPTED && !it.isStalledRoom }
+
+    /** True when a direct message would be readable by whoever holds either radio. */
+    val directOnlyByRadio: Boolean get() = directPeer != null && !directSealed
 
     /** True when the open conversation is readable by people outside Firepit. */
     val isOpenConversation: Boolean get() = kind?.isInteroperable == true
 
     val draftBytes: Int get() = draft.toByteArray(Charsets.UTF_8).size
     val textBudget: Int
-        get() = if (sealed) {
-            MeshConstants.MAX_TEXT_BYTES - MessagePrivacy.SEALED_OVERHEAD
-        } else {
-            MeshConstants.MAX_TEXT_BYTES
+        get() = when {
+            directPeer != null && directSealed -> MessagePrivacy.MAX_DIRECT_SEALED_TEXT_BYTES
+            directPeer == null && sealed -> MeshConstants.MAX_TEXT_BYTES - MessagePrivacy.SEALED_OVERHEAD
+            else -> MeshConstants.MAX_TEXT_BYTES
         }
     val remainingBytes: Int get() = textBudget - draftBytes
     val canSend: Boolean
@@ -148,6 +159,7 @@ class ChatsViewModel @Inject constructor(
     private val presence: ChatPresence,
     private val people: PersonStore,
     private val receipts: ReceiptRepository,
+    private val history: RoomHistory,
     rooms: RoomRepository,
 ) : ViewModel() {
 
@@ -168,6 +180,11 @@ class ChatsViewModel @Inject constructor(
             }
         }
 
+    /** The open direct conversation, and whether words in it can be sealed to their phone. */
+    private val directConversation = directPeer.flatMapLatest { peer ->
+        if (peer == null) flowOf(null to false) else repository.observeDirectSealed(peer).map { peer to it }
+    }
+
     // Grouped because combine only has typed overloads up to five flows; a
     // sixth silently degrades to Array<Any?>.
     private val composing = combine(draft, error, replyingTo, inspecting, repository.snapshot) {
@@ -180,11 +197,11 @@ class ChatsViewModel @Inject constructor(
         channelState.observeMuted(),
         query,
         repository.channelLoad,
-        combine(repository.observeLatestPerChannel(), repository.observeDirectLatest(), directPeer) {
-                latest, direct, peer ->
-            Triple(latest, direct, peer)
+        combine(repository.observeLatestPerChannel(), repository.observeDirectLatest(), directConversation) {
+                latest, direct, conversation ->
+            Triple(latest, direct, conversation)
         },
-    ) { unread, muted, query, load, (latest, direct, peer) ->
+    ) { unread, muted, query, load, (latest, direct, conversation) ->
         ReadState(
             unread = unread.associate { it.channel to it.count },
             muted = muted,
@@ -192,7 +209,8 @@ class ChatsViewModel @Inject constructor(
             channelLoad = load,
             latest = latest.associateBy { it.channel },
             directLatest = direct.sortedByDescending { it.sentAt },
-            directPeer = peer,
+            directPeer = conversation.first,
+            directSealed = conversation.second,
         )
     }
 
@@ -234,6 +252,7 @@ class ChatsViewModel @Inject constructor(
             query = self.read.query,
             channelLoad = self.read.channelLoad,
             directPeer = self.read.directPeer,
+            directSealed = self.read.directSealed,
             directLatest = self.read.directLatest,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatsUiState())
@@ -275,7 +294,7 @@ class ChatsViewModel @Inject constructor(
             combine(selected, messages) { channel, messages -> channel to messages }
                 .collect { (channel, messages) ->
                     if (channel != null && messages.isNotEmpty()) {
-                        channelState.markRead(channel, System.currentTimeMillis())
+                        channelState.markRead(channel, System.currentTimeMillis(), history.roomIn(channel))
                     }
                 }
         }
@@ -306,17 +325,20 @@ class ChatsViewModel @Inject constructor(
         val latest: Map<Int, ChatMessage>,
         val directLatest: List<ChatMessage>,
         val directPeer: Int?,
+        val directSealed: Boolean,
     )
 
     fun updateQuery(text: String) {
         query.value = text
     }
 
+    /** Remembered against the room as well, so it survives the room moving slot or radio. */
     fun toggleMute(channel: Int) {
         viewModelScope.launch {
-            channelState.setMuted(channel, channel !in uiState.value.muted)
+            history.setMuted(channel, channel !in uiState.value.muted)
         }
     }
+
 
     fun select(index: Int?) {
         selected.value = index

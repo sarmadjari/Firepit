@@ -4,7 +4,9 @@ import android.content.Context
 import android.util.Base64
 import android.util.Log
 import androidx.core.content.edit
+import com.getfirepit.core.crypto.DirectSeal
 import com.getfirepit.core.crypto.KeyEnvelope
+import com.getfirepit.core.database.KeystoreWrapping
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.security.PrivateKey
 import javax.inject.Inject
@@ -13,12 +15,12 @@ import okio.ByteString
 import okio.ByteString.Companion.toByteString
 
 /**
- * This phone's own key pair, which room keys are sealed to in transit.
+ * This phone's own key pair, which room keys and direct messages are sealed to.
  *
  * The radio's key is not enough: whoever holds the radio can read its private
  * key over Bluetooth, and with it anything encrypted to that radio. This one
  * exists only here, wrapped by the Keystore on disk and unwrapped into memory
- * when a room key has to be opened.
+ * when something sealed to it has to be opened.
  */
 @Singleton
 class PhoneKeyStore @Inject constructor(
@@ -38,6 +40,18 @@ class PhoneKeyStore @Inject constructor(
     fun open(sealed: ByteArray, context: ByteArray): ByteArray? {
         val pair = pair()
         return KeyEnvelope.open(pair.private, pair.public, sealed, context)
+    }
+
+    /** Seals [plaintext] from this phone to the phone holding [peerPublic]. See [DirectSeal]. */
+    fun sealDirect(peerPublic: ByteArray, plaintext: ByteArray, context: ByteArray): ByteArray {
+        val pair = pair()
+        return DirectSeal.seal(pair.private, pair.public, peerPublic, plaintext, context)
+    }
+
+    /** Null when this was not sealed between that phone and this one, or was tampered with. */
+    fun openDirect(peerPublic: ByteArray, sealed: ByteArray, context: ByteArray): ByteArray? {
+        val pair = pair()
+        return DirectSeal.open(pair.private, pair.public, peerPublic, sealed, context)
     }
 
     private fun pair(): Pair = loaded ?: synchronized(this) { loaded ?: (restore() ?: create()).also { loaded = it } }
@@ -60,9 +74,9 @@ class PhoneKeyStore @Inject constructor(
     /**
      * A fresh pair, replacing one the Keystore can no longer open.
      *
-     * That happens when the screen lock is removed; room keys held for this
-     * phone are lost with it, which is the same outcome the room keys
-     * themselves already have.
+     * That happens when the app's data reaches another phone or the Keystore is
+     * reset; room keys held for this phone are lost with it, which is the same
+     * outcome the room keys themselves already have.
      */
     private fun create(): Pair {
         val pair = KeyEnvelope.generateKeyPair()

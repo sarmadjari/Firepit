@@ -7,27 +7,36 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -36,44 +45,36 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
-import com.getfirepit.core.designsystem.component.FirepitIcons
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.runtime.saveable.rememberSaveable
-import com.getfirepit.core.data.Owner
-import com.getfirepit.core.protocol.OwnerName
-import androidx.compose.material3.Switch
-import com.getfirepit.core.protocol.RelayReach
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.getfirepit.core.data.Owner
 import com.getfirepit.core.designsystem.component.BackButton
 import com.getfirepit.core.designsystem.component.FirepitChip
 import com.getfirepit.core.designsystem.component.FirepitDetailBar
+import com.getfirepit.core.designsystem.component.FirepitIcons
 import com.getfirepit.core.designsystem.component.IdentityAvatar
 import com.getfirepit.core.designsystem.component.SectionLabel
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 import com.getfirepit.core.model.MeshNode
-import com.getfirepit.core.protocol.MeshConstants
 import com.getfirepit.core.protocol.BeaconRate
 import com.getfirepit.core.protocol.DeviceTransport
+import com.getfirepit.core.protocol.MeshConstants
 import com.getfirepit.core.protocol.NodeRole
+import com.getfirepit.core.protocol.OwnerName
 import com.getfirepit.core.protocol.RadioCapabilities
+import com.getfirepit.core.protocol.RadioRisk
+import com.getfirepit.core.protocol.RelayReach
 import com.getfirepit.core.protocol.SavedRadio
 import com.getfirepit.core.transport.LinkState
 
@@ -523,10 +524,11 @@ private fun NodeNameFields(owner: Owner?, onRename: (String, String) -> Unit) {
 }
 
 /**
- * How often this radio reports where it is, without the phone.
+ * How often your location goes to the room you share it with.
  *
- * The radio does this on its own, which is the point: it keeps reporting when
- * the phone is dead, off, or out of range.
+ * Stored on the radio, where the setting has always lived, but the phone does
+ * the sending: it seals each fix under the room's key. So it pauses while the
+ * phone is away from the radio.
  */
 @Composable
 private fun BeaconFields(
@@ -538,8 +540,9 @@ private fun BeaconFields(
     Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
         SectionLabel("Beacon")
         Text(
-            text = "How often this radio reports where it is. It does this itself, " +
-                "so it carries on if your phone dies.",
+            text = "How often your location goes to the room you share it with, while you " +
+                "share it. Your phone seals and sends it, so it pauses if your phone is away " +
+                "from this radio.",
             style = MaterialTheme.typography.bodySmall,
             color = FirepitTheme.colors.textSecondary,
         )
@@ -599,29 +602,26 @@ private fun DeviceDetail(
     var confirmingForget by remember { mutableStateOf(false) }
 
     if (confirmingForget) {
-        AlertDialog(
-            onDismissRequest = { confirmingForget = false },
-            title = { Text("Forget ${radio.name}?") },
-            text = {
-                Text(
-                    "Firepit will stop administering this device. The radio keeps " +
-                        "its settings, and you can add it again by scanning.",
-                )
+        ForgetDialog(
+            radio = radio,
+            connected = connected,
+            // Removing it from rooms moves them to new keys, which takes a radio
+            // that carries those rooms — some other one.
+            canRemoveFromRooms = !connected && radio.nodeNum != null && state.connectedTo != null,
+            onForget = { takeRoomsOff ->
+                confirmingForget = false
+                viewModel.forget(radio, takeRoomsOff)
+                onForgotten()
             },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        confirmingForget = false
-                        viewModel.forget(radio)
-                        onForgotten()
-                    },
-                ) { Text("Forget") }
+            onRemoveFromRooms = {
+                confirmingForget = false
+                viewModel.removeFromRooms(radio)
             },
-            dismissButton = {
-                TextButton(onClick = { confirmingForget = false }) { Text("Keep") }
-            },
+            onDismiss = { confirmingForget = false },
         )
     }
+
+    state.newPin?.let { pin -> NewPinDialog(pin = pin, onDismiss = viewModel::dismissNewPin) }
 
     Scaffold(
         modifier = modifier,
@@ -705,6 +705,14 @@ private fun DeviceDetail(
                     )
                 }
             } else {
+                if (state.identityDoubt == radio.identifier) {
+                    item(key = "identity") {
+                        IdentityWarning(onTrust = viewModel::trustConnectedRadio, onDisconnect = viewModel::disconnect)
+                    }
+                }
+                if (state.risks.isNotEmpty()) {
+                    item(key = "security") { SecurityFields(risks = state.risks, onFix = viewModel::fixRisk) }
+                }
                 item(key = "config") {
                     Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
                         SectionLabel("Name on the mesh")
@@ -748,7 +756,7 @@ private fun DeviceDetail(
                 items(details.channels.filter { it.role != "DISABLED" }, key = { it.index }) { channel ->
                     Field(
                         "${channel.index}  ${channel.role.lowercase().replaceFirstChar(Char::uppercase)}",
-                        "${channel.name} · ${channel.key.label}",
+                        "${channel.name} · ${channel.keyLabel}",
                     )
                 }
             }
@@ -805,3 +813,125 @@ private fun RelayFields(
         HorizontalDivider(Modifier.padding(vertical = FirepitSpacing.s))
     }
 }
+
+/**
+ * Forgetting a radio, with what that leaves behind said plainly: the radio
+ * keeps every room's channel key and its own key until something takes them off.
+ */
+@Composable
+private fun ForgetDialog(
+    radio: SavedRadio,
+    connected: Boolean,
+    canRemoveFromRooms: Boolean,
+    onForget: (takeRoomsOff: Boolean) -> Unit,
+    onRemoveFromRooms: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Forget ${radio.name}?") },
+        text = {
+            Text(
+                if (connected) {
+                    "Firepit will stop administering this radio. It still holds your rooms' " +
+                        "channel keys: take the rooms off first if someone else will have it. " +
+                        "Your phone keeps the rooms."
+                } else {
+                    "Firepit will stop administering this radio, but it still holds your rooms' " +
+                        "channel keys. If it is lost or someone else has it, remove it from your " +
+                        "rooms so it gets none of their new keys."
+                },
+            )
+        },
+        confirmButton = {
+            Column(horizontalAlignment = Alignment.End) {
+                if (connected) {
+                    TextButton(onClick = { onForget(true) }) { Text("Take rooms off and forget") }
+                } else if (canRemoveFromRooms) {
+                    TextButton(onClick = onRemoveFromRooms) { Text("Remove it from my rooms") }
+                }
+                TextButton(onClick = { onForget(false) }) { Text("Just forget") }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Keep") } },
+    )
+}
+
+/** The PIN just set, which the phone asks for the next time it connects. */
+@Composable
+private fun NewPinDialog(pin: Int, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("New Bluetooth PIN") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s)) {
+                Text(
+                    text = "%06d".format(pin),
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = FirepitTheme.colors.textPrimary,
+                )
+                Text(
+                    "Write it down. The radio restarts, and your phone will ask for this PIN when " +
+                        "it reconnects. Nobody can pair with the radio without it.",
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("I've written it down") } },
+    )
+}
+
+/** A radio at this address answered as somebody else. */
+@Composable
+private fun IdentityWarning(onTrust: () -> Unit, onDisconnect: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
+        SectionLabel("Not the radio you saved")
+        Text(
+            text = "Something answered at this radio's address with a different identity. If you " +
+                "reset or reflashed it, that is expected. If not, it may not be your radio.",
+            style = MaterialTheme.typography.bodySmall,
+            color = FirepitTheme.colors.danger,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s)) {
+            OutlinedButton(onClick = onDisconnect) { Text("Disconnect") }
+            TextButton(onClick = onTrust) { Text("It's mine") }
+        }
+        HorizontalDivider(Modifier.padding(vertical = FirepitSpacing.s))
+    }
+}
+
+/** What in this radio's own settings lets people read it or run it, each with its fix. */
+@Composable
+private fun SecurityFields(risks: List<RadioRisk>, onFix: (RadioRisk) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s)) {
+        SectionLabel("Security")
+        risks.forEach { risk ->
+            Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
+                Text(risk.title, style = MaterialTheme.typography.bodyMedium, color = FirepitTheme.colors.warn)
+                Text(
+                    text = risk.detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = FirepitTheme.colors.textSecondary,
+                )
+                if (risk.canFix) {
+                    OutlinedButton(onClick = { onFix(risk) }) { Text(fixLabel(risk)) }
+                }
+            }
+        }
+        Text(
+            text = "Each fix restarts the radio.",
+            style = MaterialTheme.typography.bodySmall,
+            color = FirepitTheme.colors.warn,
+        )
+        HorizontalDivider(Modifier.padding(vertical = FirepitSpacing.s))
+    }
+}
+
+private fun fixLabel(risk: RadioRisk): String = when (risk) {
+    RadioRisk.BLUETOOTH_OPEN, RadioRisk.BLUETOOTH_DEFAULT_PIN -> "Set a new PIN"
+    RadioRisk.REMOTE_ADMIN_KEY -> "Remove remote admin"
+    RadioRisk.LEGACY_ADMIN_CHANNEL -> "Turn off the admin channel"
+    RadioRisk.DEBUG_LOG -> "Turn off debug logs"
+    RadioRisk.MQTT_UPLINK, RadioRisk.MQTT_MAP_REPORT -> "Turn off MQTT"
+    RadioRisk.MANAGED -> ""
+}
+

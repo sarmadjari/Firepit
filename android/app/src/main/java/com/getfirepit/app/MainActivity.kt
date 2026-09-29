@@ -9,11 +9,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.getfirepit.app.settings.RetentionStore
 import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.launch
+import androidx.lifecycle.repeatOnLifecycle
+import com.getfirepit.app.privacy.NoPersonalizedLearning
+import com.getfirepit.app.privacy.SecureWindow
 import com.getfirepit.app.settings.PersonStore
+import com.getfirepit.app.settings.ScreenPrivacyPreferences
 import com.getfirepit.app.radio.SavedRadioStore
 import com.getfirepit.app.rooms.RoomJoinPrompts
 import com.getfirepit.app.settings.ThemeChoice
@@ -30,6 +33,7 @@ import com.getfirepit.core.designsystem.theme.LocalIdentitySlots
 import com.getfirepit.core.protocol.NodeRole
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
+import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -46,13 +50,11 @@ class MainActivity : ComponentActivity() {
 
     @Inject lateinit var nodeClock: NodeClock
 
-    @Inject lateinit var retention: RetentionStore
+    @Inject lateinit var screenPrivacy: ScreenPrivacyPreferences
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // At launch rather than on a timer: a phone left closed for a month
-        // should catch up the moment it is opened.
-        lifecycleScope.launch { retention.sweep() }
+        keepOutOfScreenshots()
         enableEdgeToEdge()
         setContent {
             val choice by themePreferences.choice.collectAsStateWithLifecycle()
@@ -105,11 +107,34 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                 ) {
-                    FirepitApp(Modifier.fillMaxSize())
-                    ClockOfferDialog(nodeClock)
-                    RoomJoinPrompts()
+                    NoPersonalizedLearning {
+                        FirepitApp(Modifier.fillMaxSize())
+                        ClockOfferDialog(nodeClock)
+                        RoomJoinPrompts()
+                    }
                 }
             }
         }
+    }
+
+    /**
+     * Keeps conversations and the map out of screenshots, screen recordings and
+     * the Recents snapshot unless the setting allows them. Applied before the
+     * first frame, so not even the opening screen is captured.
+     */
+    private fun keepOutOfScreenshots() {
+        if (!screenPrivacy.allowCapture.value) SecureWindow.hold(window, SCREEN_SETTING)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.CREATED) {
+                screenPrivacy.allowCapture.collect { allow ->
+                    if (allow) SecureWindow.release(window, SCREEN_SETTING) else SecureWindow.hold(window, SCREEN_SETTING)
+                }
+            }
+        }
+    }
+
+    private companion object {
+        /** Stands for the setting among whoever holds the window secure. */
+        const val SCREEN_SETTING = "screen-privacy-setting"
     }
 }

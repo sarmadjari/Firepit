@@ -1,12 +1,11 @@
 package com.getfirepit.app.rooms
 
-import android.view.WindowManager
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -42,6 +41,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.getfirepit.app.privacy.SecureWindow
 import com.getfirepit.core.crypto.InviteCodec
 import com.getfirepit.core.designsystem.component.BackButton
 import com.getfirepit.core.designsystem.component.FirepitChip
@@ -177,12 +177,13 @@ fun InviteScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
     // The code on screen is a way to ask in, so it must not be capturable by
-    // anything on the phone. A camera pointed at it is still a camera, but a
-    // screenshot would outlive the rotation and reach a photo backup.
+    // anything on the phone, whatever the screenshot setting says. A camera
+    // pointed at it is still a camera, but a screenshot would outlive the
+    // rotation and reach a photo backup.
     val window = LocalActivity.current?.window
     DisposableEffect(window) {
-        window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
+        window?.let { SecureWindow.hold(it, INVITE_SCREEN) }
+        onDispose { window?.let { SecureWindow.release(it, INVITE_SCREEN) } }
     }
 
     LaunchedEffect(roomId) { viewModel.startInviteRotation(roomId) }
@@ -347,3 +348,6 @@ fun JoinRoomScreen(
         )
     }
 }
+
+/** Stands for the invite screen among whoever holds the window secure. */
+private const val INVITE_SCREEN = "invite-screen"

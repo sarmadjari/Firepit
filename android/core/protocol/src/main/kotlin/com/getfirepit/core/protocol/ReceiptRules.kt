@@ -27,8 +27,13 @@ sealed interface ReceiptCarriage {
     /** Sealed under the room's own key, on the room's channel. */
     data class SealedRoom(val roomId: Int, val channel: Int) : ReceiptCarriage
 
-    /** Encrypted by the firmware to the one person the message came from. */
-    data class ToOneNode(val nodeNum: Int) : ReceiptCarriage
+    /**
+     * Sealed to the phone of the one person the message came from, inside a
+     * PKI direct message. Somebody whose phone key we never learned — a
+     * stranger, or a person not running Firepit — gets no receipt at all: it
+     * would tell them this phone is on and reading, and prove nothing to them.
+     */
+    data class SealedDirect(val nodeNum: Int) : ReceiptCarriage
 
     /** No private way to say it, so nothing is sent and nothing is tracked. */
     data object None : ReceiptCarriage
@@ -47,12 +52,19 @@ object ReceiptRules {
      *
      * [roomId] is the Firepit room the channel carries **and** whose key we
      * hold — null for a standard Meshtastic channel, which gets no receipts at
-     * all. [peer] is set when the message was a direct one.
+     * all. [peer] is set when the message was a direct one; it takes both
+     * their radio key and their phone key to answer one privately.
      */
-    fun carriageFor(channel: Int, roomId: Int?, peer: Int?, hasPeerKey: Boolean): ReceiptCarriage =
+    fun carriageFor(
+        channel: Int,
+        roomId: Int?,
+        peer: Int?,
+        hasPeerKey: Boolean,
+        hasPeerPhoneKey: Boolean = false,
+    ): ReceiptCarriage =
         when {
             roomId != null -> ReceiptCarriage.SealedRoom(roomId, channel)
-            peer != null && hasPeerKey -> ReceiptCarriage.ToOneNode(peer)
+            peer != null && hasPeerKey && hasPeerPhoneKey -> ReceiptCarriage.SealedDirect(peer)
             else -> ReceiptCarriage.None
         }
 

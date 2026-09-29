@@ -26,10 +26,12 @@ enum class RoomLifetime(val label: String, val silence: Duration?) {
         /**
          * Which rooms have gone quiet for longer than [lifetime].
          *
-         * A room with no messages at all is judged by when it was joined, so a
-         * room created and never used still ages out. A room whose last word is
-         * in the future, because a radio's clock was wrong, is left alone rather
-         * than deleted on the strength of a bad timestamp.
+         * [lastActivity] is when each room last carried anything, or when it
+         * was joined if it never has — recorded as it happens, not read back
+         * from messages, which the retention sweep may already have deleted.
+         * Zero means nothing is known and the room is left alone. A room whose
+         * last word is in the future, because a radio's clock was wrong, is
+         * left alone rather than deleted on the strength of a bad timestamp.
          */
         fun silentRooms(
             lastActivity: Map<Int, Long>,

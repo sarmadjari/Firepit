@@ -1,6 +1,7 @@
 package com.getfirepit.core.protocol
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import com.getfirepit.core.model.MessageStatus
@@ -10,6 +11,7 @@ class MessageStatusRulesTest {
 
     private val myNodeNum = 0x1234
     private val peerNodeNum = 0x5678
+    private val strangerNodeNum = 0x9ABC
 
     @Test
     fun `queue status zero means the radio accepted it`() {
@@ -23,7 +25,7 @@ class MessageStatusRulesTest {
 
     @Test
     fun `ack from our own node is an implicit ack, never a delivery`() {
-        val status = MessageStatusRules.fromRouting(Routing.Error.NONE, ackFrom = myNodeNum, myNodeNum)
+        val status = MessageStatusRules.fromRouting(Routing.Error.NONE, ackFrom = myNodeNum, myNodeNum, sentTo = peerNodeNum)
 
         assertEquals(
             "hearing our own packet rebroadcast proves it entered the mesh, nothing more",
@@ -34,20 +36,47 @@ class MessageStatusRulesTest {
 
     @Test
     fun `ack from the peer is a real delivery`() {
-        val status = MessageStatusRules.fromRouting(Routing.Error.NONE, ackFrom = peerNodeNum, myNodeNum)
+        val status = MessageStatusRules.fromRouting(Routing.Error.NONE, ackFrom = peerNodeNum, myNodeNum, sentTo = peerNodeNum)
 
         assertEquals(MessageStatus.DELIVERED, status)
     }
 
+    /**
+     * A packet id is in every header, so anybody who heard the message can
+     * answer it. Only the person it went to can say it arrived.
+     */
+    @Test
+    fun `an ack from anyone but the recipient proves nothing`() {
+        assertNull(MessageStatusRules.fromRouting(Routing.Error.NONE, strangerNodeNum, myNodeNum, sentTo = peerNodeNum))
+    }
+
+    /** A room message has no single recipient, so nobody else's ack can deliver it. */
+    @Test
+    fun `nobody can claim delivery of a broadcast`() {
+        val broadcast = MeshConstants.BROADCAST_NODENUM
+
+        assertNull(MessageStatusRules.fromRouting(Routing.Error.NONE, peerNodeNum, myNodeNum, sentTo = broadcast))
+        assertEquals(
+            MessageStatus.REACHED_MESH,
+            MessageStatusRules.fromRouting(Routing.Error.NONE, myNodeNum, myNodeNum, sentTo = broadcast),
+        )
+    }
+
+    @Test
+    fun `a stranger cannot mark our message failed either`() {
+        assertNull(MessageStatusRules.fromRouting(Routing.Error.NO_ROUTE, strangerNodeNum, myNodeNum, sentTo = peerNodeNum))
+        assertNull(MessageStatusRules.fromRouting(Routing.Error.MAX_RETRANSMIT, strangerNodeNum, myNodeNum, sentTo = peerNodeNum))
+    }
+
     @Test
     fun `max retransmit means nobody heard it`() {
-        val status = MessageStatusRules.fromRouting(Routing.Error.MAX_RETRANSMIT, myNodeNum, myNodeNum)
+        val status = MessageStatusRules.fromRouting(Routing.Error.MAX_RETRANSMIT, myNodeNum, myNodeNum, sentTo = peerNodeNum)
 
         assertEquals(MessageStatus.UNHEARD, status)
     }
 
     @Test
-    fun `every other routing error is a failure`() {
+    fun `every other routing error from the recipient or our radio is a failure`() {
         val handledSeparately = setOf(Routing.Error.NONE, Routing.Error.MAX_RETRANSMIT)
 
         val errors = listOf(
@@ -70,11 +99,13 @@ class MessageStatusRulesTest {
         ).filterNot { it in handledSeparately }
 
         errors.forEach { error ->
-            assertEquals(
-                "$error should surface as a failure",
-                MessageStatus.FAILED,
-                MessageStatusRules.fromRouting(error, peerNodeNum, myNodeNum),
-            )
+            listOf(peerNodeNum, myNodeNum).forEach { from ->
+                assertEquals(
+                    "$error from $from should surface as a failure",
+                    MessageStatus.FAILED,
+                    MessageStatusRules.fromRouting(error, from, myNodeNum, sentTo = peerNodeNum),
+                )
+            }
         }
     }
 
@@ -82,7 +113,7 @@ class MessageStatusRulesTest {
     fun `a missing error reason is treated as success`() {
         // Wire leaves the field null when the firmware omits it, which the
         // firmware does for a plain ACK.
-        val status = MessageStatusRules.fromRouting(errorReason = null, ackFrom = myNodeNum, myNodeNum)
+        val status = MessageStatusRules.fromRouting(errorReason = null, ackFrom = myNodeNum, myNodeNum, sentTo = peerNodeNum)
 
         assertEquals(MessageStatus.REACHED_MESH, status)
     }

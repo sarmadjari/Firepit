@@ -14,7 +14,7 @@ import com.getfirepit.core.model.MessageStatus
  */
 @Entity(
     tableName = "messages",
-    indices = [Index("channel", "sentAt"), Index("peerNodeNum", "sentAt")],
+    indices = [Index("channel", "sentAt"), Index("peerNodeNum", "sentAt"), Index("roomId")],
 )
 data class MessageEntity(
     @PrimaryKey val id: Int,
@@ -35,6 +35,12 @@ data class MessageEntity(
     val replyId: Int?,
     val emoji: Int?,
     @ColumnInfo(defaultValue = "0") val signed: Boolean,
+    /**
+     * The room a room message belongs to, or 0. [channel] is only where that
+     * room sits on the radio connected now; another radio can carry another
+     * room in the same slot, so history is placed by this, not by the number.
+     */
+    @ColumnInfo(defaultValue = "0") val roomId: Int = 0,
 )
 
 internal fun MessageEntity.toDomain() = ChatMessage(
@@ -54,6 +60,7 @@ internal fun MessageEntity.toDomain() = ChatMessage(
     replyId = replyId,
     emoji = emoji,
     signed = signed,
+    roomId = roomId,
 )
 
 internal fun ChatMessage.toEntity(myNodeNum: Int) = MessageEntity(
@@ -74,4 +81,5 @@ internal fun ChatMessage.toEntity(myNodeNum: Int) = MessageEntity(
     replyId = replyId,
     emoji = emoji,
     signed = signed,
+    roomId = roomId,
 )

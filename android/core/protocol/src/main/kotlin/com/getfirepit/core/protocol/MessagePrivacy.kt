@@ -1,6 +1,7 @@
 package com.getfirepit.core.protocol
 
 import com.getfirepit.core.model.BROADCAST_NODE_NUM
+import com.getfirepit.core.model.RoomKind
 
 /**
  * The one rule about what may go on the air, kept as data rather than as
@@ -34,11 +35,24 @@ sealed interface Carriage {
     }
 
     /**
-     * Handed to the firmware with the recipient's public key, which encrypts to
-     * them and signs as us. Nobody else on the mesh can read it.
+     * Sealed by us to the recipient's phone key, then handed to the firmware
+     * with their radio key as well. Relays read nothing, and neither does
+     * whoever holds either radio: the radios' own keys open only the outer layer.
+     */
+    data class SealedDirect(val nodeNum: Int) : Carriage {
+        override val isPrivate = true
+    }
+
+    /**
+     * Handed to the firmware with the recipient's radio key alone, for somebody
+     * whose phone key we have never learned — typically a person not running
+     * Firepit. The mesh cannot read it, but a radio gives its private key to any
+     * phone that connects, so whoever holds either radio can. The conversation
+     * says so on its face.
      */
     data class ToOneNode(val nodeNum: Int) : Carriage {
-        override val isPrivate = true
+        /** Private from the mesh, never from whoever holds either radio. */
+        override val isPrivate = false
     }
 
     /**
@@ -70,6 +84,19 @@ sealed interface Carriage {
 
         /** A channel with no key at all. Firepit has no reason to send in the clear. */
         NOT_ENCRYPTED,
+
+        /**
+         * A Firepit room whose key is not on this phone. Words sent here could
+         * only travel under the channel key, which every member's radio holds.
+         */
+        ROOM_KEY_MISSING,
+
+        /**
+         * A Firepit room that moved to a new key which never reached us. The
+         * old key is what a removed member still holds, so words sealed under
+         * it would reach them and nobody else.
+         */
+        ROOM_MOVED_ON,
     }
 }
 
@@ -82,7 +109,11 @@ object MessagePrivacy {
      * we hold — null when either is missing, since a room we cannot seal for is
      * not one we can be private in. [isRoomSlot] separates a conversation from
      * slot 0. [channelKey] is how private the radio's own encryption on this
-     * channel is, which is all an interoperable channel has.
+     * channel is, which is all an interoperable channel has. [hasPeerKey] is
+     * their radio key, without which the firmware will not encrypt to them;
+     * [hasPeerPhoneKey] is their phone key, which is what makes a direct
+     * message private from the radios too. [roomKind] names a Firepit room this
+     * phone may not send in.
      */
     fun carriageFor(
         to: Int,
@@ -91,13 +122,24 @@ object MessagePrivacy {
         sealingRoomId: Int?,
         hasPeerKey: Boolean,
         channelKey: ChannelKey,
+        hasPeerPhoneKey: Boolean = false,
+        roomKind: RoomKind? = null,
     ): Carriage = when {
         // One person: their key or nothing. A direct message that falls back to
         // a channel is a direct message the channel can read.
-        to != BROADCAST_NODE_NUM ->
-            if (hasPeerKey) Carriage.ToOneNode(to) else Carriage.Refused(Carriage.Reason.NO_PEER_KEY)
+        to != BROADCAST_NODE_NUM -> when {
+            !hasPeerKey -> Carriage.Refused(Carriage.Reason.NO_PEER_KEY)
+            hasPeerPhoneKey -> Carriage.SealedDirect(to)
+            else -> Carriage.ToOneNode(to)
+        }
 
         !isRoomSlot -> Carriage.Refused(Carriage.Reason.NOT_A_ROOM)
+
+        // Still a Firepit room on the radio, but not one this phone can seal
+        // for. Falling back to the channel key here is exactly the downgrade
+        // the rest of this file exists to prevent.
+        roomKind == RoomKind.FIREPIT_KEY_MISSING -> Carriage.Refused(Carriage.Reason.ROOM_KEY_MISSING)
+        roomKind == RoomKind.FIREPIT_MOVED_ON -> Carriage.Refused(Carriage.Reason.ROOM_MOVED_ON)
 
         // A Firepit room, sealed under a key the radio never holds. Always
         // preferred where it exists.
@@ -114,6 +156,7 @@ object MessagePrivacy {
     /** What the composer may type, given how the message will travel. */
     fun textBudgetFor(carriage: Carriage): Int = when (carriage) {
         is Carriage.SealedRoom -> MeshConstants.MAX_TEXT_BYTES - SEALED_OVERHEAD
+        is Carriage.SealedDirect -> MAX_DIRECT_SEALED_TEXT_BYTES
         is Carriage.ToOneNode -> MeshConstants.MAX_TEXT_BYTES
         is Carriage.OpenChannel -> MeshConstants.MAX_TEXT_BYTES
         is Carriage.Refused -> 0
@@ -125,4 +168,14 @@ object MessagePrivacy {
      * SealedTextTest asserts the two agree.
      */
     const val SEALED_OVERHEAD: Int = 1 + 12 + 16
+
+    /** A sealed direct message costs the same version byte, nonce and tag. DirectSealTest checks it. */
+    const val DIRECT_SEALED_OVERHEAD: Int = 1 + 12 + 16
+
+    /**
+     * What a sealed direct message leaves for words. It rides inside PKI, which
+     * takes 12 bytes of the payload, and the envelope around the words takes
+     * the rest. ProtocolContractTest encodes the largest one to prove it fits.
+     */
+    const val MAX_DIRECT_SEALED_TEXT_BYTES: Int = 170
 }

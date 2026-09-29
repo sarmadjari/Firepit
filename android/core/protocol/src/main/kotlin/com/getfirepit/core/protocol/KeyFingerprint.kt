@@ -18,11 +18,32 @@ object KeyFingerprint {
         val key = publicKeyBase64?.takeIf { it.isNotBlank() } ?: return null
         val raw = runCatching { Base64.getDecoder().decode(key) }.getOrNull() ?: return null
         if (raw.isEmpty()) return null
-        return MessageDigest.getInstance("SHA-256")
-            .digest(raw)
+        return readable(raw)
+    }
+
+    /**
+     * One line for somebody asking to join: their radio's key and their
+     * phone's key together.
+     *
+     * The room's own key is sealed to the phone key, while the firmware only
+     * ever proves the radio key. A line over the radio alone would let whoever
+     * held that radio ask in with a phone of their own and still read the same
+     * line aloud; over both, a match means the phone in front of you is the
+     * one the room key will be sealed to.
+     */
+    fun ofJoin(radioKey: ByteArray, phoneKey: ByteArray): String? {
+        if (radioKey.isEmpty() || phoneKey.isEmpty()) return null
+        return readable(JOIN_DOMAIN.toByteArray() + radioKey + phoneKey)
+    }
+
+    private fun readable(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
             .take(BYTES)
             .joinToString("") { "%02X".format(it) }
             .chunked(4)
             .joinToString(" ")
-    }
+
+    /** Keeps a join line from ever equalling a plain key's, whatever the bytes. */
+    private const val JOIN_DOMAIN = "firepit-join-v1"
 }

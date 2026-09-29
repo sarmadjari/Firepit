@@ -45,11 +45,19 @@ object ChannelSlotManager {
      * off the end. Empty when the room is not present, so a repeated leave is
      * harmless.
      */
-    fun writesForLeaving(channels: List<RoomChannel>, roomId: Int): List<SlotWrite> {
-        val current = rooms(channels)
-        val leaving = current.firstOrNull { it.id == roomId } ?: return emptyList()
+    fun writesForLeaving(channels: List<RoomChannel>, roomId: Int): List<SlotWrite> =
+        slotOf(channels, roomId)?.let { writesForLeavingSlot(channels, it) }.orEmpty()
 
-        val remaining = current.filterNot { it.id == leaving.id }
+    /**
+     * The same, naming the channel by its slot. A Meshtastic channel has no id
+     * of its own, so two of them both answer to id 0 and only the slot says
+     * which one is meant.
+     */
+    fun writesForLeavingSlot(channels: List<RoomChannel>, slot: Int): List<SlotWrite> {
+        val current = rooms(channels)
+        if (current.none { it.index == slot }) return emptyList()
+
+        val remaining = current.filterNot { it.index == slot }
         val writes = remaining.mapIndexedNotNull { position, room ->
             val target = FIRST_ROOM_SLOT + position
             // Only rewrite the ones that actually move.
@@ -66,10 +74,14 @@ object ChannelSlotManager {
      * Ascending, and the leaving room's slot is freed first, so applying these
      * in order never writes onto a slot still holding something.
      */
-    fun slotMovesForLeaving(channels: List<RoomChannel>, roomId: Int): List<Pair<Int, Int>> {
+    fun slotMovesForLeaving(channels: List<RoomChannel>, roomId: Int): List<Pair<Int, Int>> =
+        slotOf(channels, roomId)?.let { slotMovesForLeavingSlot(channels, it) }.orEmpty()
+
+    /** The same, naming the channel by its slot. */
+    fun slotMovesForLeavingSlot(channels: List<RoomChannel>, slot: Int): List<Pair<Int, Int>> {
         val current = rooms(channels)
-        if (current.none { it.id == roomId }) return emptyList()
-        return current.filterNot { it.id == roomId }
+        if (current.none { it.index == slot }) return emptyList()
+        return current.filterNot { it.index == slot }
             .mapIndexedNotNull { position, room ->
                 val target = FIRST_ROOM_SLOT + position
                 if (room.index == target) null else room.index to target
@@ -81,8 +93,10 @@ object ChannelSlotManager {
         rooms(channels).firstOrNull { it.id == roomId }?.index
 
     /** The layout [writesForLeaving] produces, used to assert the result. */
-    fun layoutAfterLeaving(channels: List<RoomChannel>, roomId: Int): List<RoomChannel> =
-        rooms(channels)
-            .filterNot { it.id == roomId }
+    fun layoutAfterLeaving(channels: List<RoomChannel>, roomId: Int): List<RoomChannel> {
+        val slot = slotOf(channels, roomId) ?: return rooms(channels)
+        return rooms(channels)
+            .filterNot { it.index == slot }
             .mapIndexed { position, room -> room.copy(index = FIRST_ROOM_SLOT + position) }
+    }
 }

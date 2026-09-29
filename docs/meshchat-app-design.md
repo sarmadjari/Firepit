@@ -32,13 +32,13 @@ Kept intentionally simple: no accounts, no servers, no public directory. Just a 
 
 ### Location
 - **Live location sharing** for a set duration (minutes / hours / days), auto-expiring
-  - **One room at a time.** Meshtastic sends automatic position broadcasts to a single channel — the lowest-indexed secondary channel with location sharing enabled. The app makes this explicit: the user picks an **active location room**, and switching rooms moves live sharing with it
-  - Broadcast interval auto-scales with the chosen duration
-- **Location requests** — works in *every* room, not just the active one. Any member can ask for someone's location in group or direct chat:
-  - *Current location* → native position exchange (`want_response=true`). The target's firmware answers automatically, no interaction needed
+  - **Sealed by the phone.** The phone seals its own fix under the room key and sends it at the radio's beacon rate (sooner after a real move, when "only when I've moved" is on). The radio's own position broadcast is kept off on every channel: it would travel under the channel key, which anyone holding a member's radio can read, and it would carry on with the phone away. The cost is that sharing pauses while the phone is away from its radio — a Tag in a backpack shares nothing on its own
+  - **One room at a time.** The user picks an **active location room**, and switching rooms moves live sharing with it
+- **Location requests** — any member can ask a member of a room they share where they are:
+  - *Current location* → a sealed question to that member; their phone answers with a sealed position, and only while it is sharing with that room. Asking is not a way round somebody's choice not to share
   - *Live sharing* → prompts the target to pick a duration. Starting live sharing is always their own decision
-- **Pin drops with a comment** — native Waypoint packets (name, description, expiry, lock-to-creator)
-- **Position precision** — always full precision in v1: finding each other in a crowd is the point. Per-room reduced precision is deferred. Native Meshtastic feature, no custom work
+- **Pin drops with a comment** — sealed under the room key (name, description, expiry, lock-to-creator), so only members see them and only a member can change one. Stock Meshtastic apps no longer see Firepit pins
+- **Position precision** — always full precision in v1: finding each other in a crowd is the point, and only the room can read it
 - **Live map** — everyone shown by name with an auto-assigned color; live vs. stale last-known positions look visually different
 - **Smart GPS source** — prefer the node's own GPS; briefly fall back to phone GPS over BLE only when the node has no fix yet; throttle GPS use when node battery is low
 
@@ -127,9 +127,9 @@ Per node, over BLE only:
 - **Room slot manager** — tracks the 7 available channel slots, keeps them consecutive, and handles reindexing when a room is left
 - **Multi-node connection manager** — each connected node keeps its own independent session and state, rather than the official app's single-active-node model. See section 4 for the full connection model
 - **Location**
-  - Pin drops → native Waypoint packets
-  - Live location → firmware auto-broadcast on the active location room; the app manages duration and interval, then stops
-  - Location requests → native position exchange (`want_response=true`), works on any room
+  - Pin drops → sealed pins on the room's slot
+  - Live location → sealed positions sent by the phone to the active location room; the radio's own broadcast stays off
+  - Location requests → a sealed question answered by the other phone, only while it shares with that room
 - **Battery/telemetry** → native Telemetry packets, read-only
 - **Identity** → native NodeInfo packets. The contact list is naturally scoped to whoever shares a room with you, because that's the only way their NodeInfo reaches you
 - **Local-first UI** — messages appear immediately and update state asynchronously. Nothing blocks on a multi-second round trip
@@ -138,32 +138,32 @@ Per node, over BLE only:
 
 Encryption is always on. Nothing to configure, no way to turn it off.
 
-### Encryption — all native
-- **Group messages:** Meshtastic channel encryption using the room's PSK (AES256)
-- **Direct messages:** Meshtastic's native PKI encryption (`pki_encrypted` + `public_key`), giving DMs a pairwise layer on top of the channel key
-- **Broadcast authenticity:** firmware 2.8+ signs broadcast messages with XEdDSA, so a group message can be verified as genuinely from its claimed sender — not just decryptable by key-holders. Shown as a "verified" badge only when the node reports signing support; 2.7 nodes rely on PKI for DMs and key possession for rooms
+### Encryption
 
-**A custom E2E layer was considered and rejected, and that decision has since been partly reversed.** The original reasoning — that X25519 + XChaCha20-Poly1305 would duplicate what native PKI DMs already provide, cost ~40 bytes of a ~200-byte budget, and need group key management that did not exist — still holds for **direct messages**, which remain native PKI and gain nothing from a second layer.
+`docs/security.md` is the authoritative description; this is the design history.
 
-It does not hold for **rooms**. A room's PSK lives on the radio, so anyone holding the hardware can read the room, and every relay carrying the traffic is trusted with the same key the members use. A layer the radio never sees is the only thing that changes that. What exists now:
+- **Rooms:** sealed under a room key that only members' phones hold, inside Meshtastic's channel encryption. Words, positions, pins, names, receipts and roster changes all travel this way
+- **Direct messages:** sealed from one phone's key to the other's, inside Meshtastic's PKI. For somebody whose phone key is unknown — anyone not in a room with us — PKI alone, and the composer says so
+- **At rest:** the database is encrypted with SQLCipher under a key the Keystore wraps; room and phone keys are Keystore-wrapped too
+- **Broadcast authenticity:** firmware 2.8+ signs broadcast messages with XEdDSA. Shown as a "verified" badge only when the node reports signing support
+
+**A custom E2E layer was first considered and rejected, and that decision has since been reversed.** The original reasoning was that native PKI DMs already give a pairwise layer, a second one costs bytes, and rooms had no key management. It does not survive the radio: a radio hands its private key and every channel key to any phone that connects, so anyone holding a member's radio — or pairing with it over Bluetooth — could read rooms, direct messages, positions and pins. A layer the radio never sees is the only thing that changes that. What exists now:
 
 - `RoomCipher` — AES-256-GCM, 28 bytes of overhead, platform crypto only
 - `SealedText` — a version byte plus ciphertext, 171 characters of room inside one packet
-- `RoomKeyStore` — room keys wrapped by the Android Keystore, so copying the phone's files yields nothing
+- `KeyEnvelope` — how a room key reaches one phone, sealed to its P-256 key
+- `DirectSeal` — how one person's words reach one phone, 170 characters inside one PKI packet
+- `RoomKeyStore`, `PhoneKeyStore` — keys wrapped by the Android Keystore
 - `RoomAdmin` — ECDSA P-256, the signatures admin-only invites will rest on
-
-**Sealed room text is not yet wired to the composer**; the primitives are built and tested, and key distribution is the next step. Receipts already travel sealed (see below).
 
 ### Who has read what
 
 Every message records which phones reported holding it and which reported opening it, each with a time, shown in the message's info sheet.
 
 - **Collected, not per message.** One packet carries 40 ids, so a morning's reading costs one transmission rather than forty. Read receipts leave after ~3 s, delivery receipts after ~30 s, both jittered; read supersedes delivered rather than adding to it
-- **Sent only where they can be private.** Sealed under the room key for rooms, encrypted to one person for DMs, and **not sent at all** on an ordinary channel — announcing what you have been reading to everyone in earshot is worse than having no receipt
-- **Accepted only where they were authenticated.** A receipt that arrived neither sealed nor PKI-encrypted is ignored, because anyone on a shared channel can put bytes on it under any name
+- **Sent only where they can be private.** Sealed under the room key for rooms, sealed to the other phone for DMs, and **not sent at all** on an ordinary channel or to anyone whose phone key we do not hold — announcing what you have been reading to everyone in earshot, or to a stranger, is worse than having no receipt
+- **Accepted only sealed.** A receipt that was not sealed is ignored, because whoever holds a radio can put bytes on a channel, or encrypt to us, under any name
 - **Never claims more than it was told.** Only phones that reported appear. Nobody is ever listed as *not* having read something: a phone that says nothing has told us nothing
-
-Room receipts are currently sealed under a key derived from the room PSK (`RoomCrypto.channelKey`), which every member already holds. That keeps relays and non-members out but not someone holding the radio; it moves to the Keystore-held room key once key distribution lands.
 
 ### The radio's clock
 
@@ -249,7 +249,7 @@ The cost is real and accepted: you cannot add someone who is not with you. That 
 **How the design responds:**
 
 - Native packet priority: `ALERT` for urgent pings, `RELIABLE` for chat, background priority for routine position and telemetry — so chat never queues behind background traffic
-- No custom periodic traffic. Chat, position, telemetry, identity and waypoints ride stock portnums; `PortNum.PRIVATE_APP` carries MeshChat's event-only control messages (join hello, roster events, receipts, sealed room messages, live-location requests), one packet each — decision D-2 in the implementation guide
+- One periodic message only. Telemetry and identity ride stock portnums; `PortNum.PRIVATE_APP` carries MeshChat's control messages (join hello, roster events, receipts, sealed room messages, sealed pins, location requests), one packet each — decision D-2 in the implementation guide. The exception is a sealed position, sent at the beacon rate while somebody chooses to share, which replaces the firmware's own position broadcast rather than adding to it
 - Live location on one room only, with interval scaling by duration and further backoff when channel utilization (ChUtil / AirUtilTX) runs high
 - Character counter in the composer — messages that fragment across packets are slower and less reliable
 - No app-invented polling or heartbeats. Only what Meshtastic already broadcasts

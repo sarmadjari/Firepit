@@ -56,6 +56,7 @@ dependencies {
 
     implementation(libs.maplibre.android)
     implementation(libs.maplibre.annotation)
+    implementation(libs.okhttp)
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)

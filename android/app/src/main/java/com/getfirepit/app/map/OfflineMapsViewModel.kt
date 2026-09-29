@@ -22,6 +22,12 @@ data class OfflineMapsUiState(
     val progress: Float? = null,
     val error: String? = null,
     val offlineOnly: Boolean = false,
+    /**
+     * Set when an area has just finished downloading while the map still goes
+     * online: the moment to offer never fetching tiles again, which is what
+     * keeps the tile server from learning where the group looks.
+     */
+    val suggestOfflineOnly: Boolean = false,
 )
 
 @HiltViewModel
@@ -68,10 +74,15 @@ class OfflineMapsViewModel @Inject constructor(
                 state.copy(
                     progress = null,
                     error = result.exceptionOrNull()?.message,
+                    suggestOfflineOnly = result.isSuccess && !state.offlineOnly,
                 )
             }
             refresh()
         }
+    }
+
+    fun dismissOfflineSuggestion() {
+        _uiState.update { it.copy(suggestOfflineOnly = false) }
     }
 
     fun delete(area: OfflineArea) {

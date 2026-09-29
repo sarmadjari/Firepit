@@ -66,9 +66,16 @@ class RangeRepository @Inject constructor(
     private val _primaryIsPublic = MutableStateFlow(false)
     val primaryIsPublic: StateFlow<Boolean> = _primaryIsPublic.asStateFlow()
 
-    /** Whether the person has said what this radio's primary should be. */
+    /**
+     * Whether the person has said what the connected radio's primary should
+     * be. Asked per radio: a second radio may be somebody's node on another
+     * mesh, and a yes given for the first is not a yes for it.
+     */
     private val _privacy = MutableStateFlow(
-        RadioPrivacy.named(preferences.getString(KEY_PRIVACY, null)),
+        mesh.myNodeNum.value.let { lastRadio ->
+            adoptSingleChoice(lastRadio)
+            storedPrivacy(lastRadio)
+        },
     )
     val privacy: StateFlow<RadioPrivacy> = _privacy.asStateFlow()
 
@@ -114,6 +121,9 @@ class RangeRepository @Inject constructor(
                     Log.w(TAG, "radio never listed its channels; leaving the primary alone")
                     return@collect
                 }
+                val nodeNum = mesh.myNodeNum.value
+                adoptSingleChoice(nodeNum)
+                _privacy.value = storedPrivacy(nodeNum)
                 runCatching { inspect() }
                     .onFailure { cause -> Log.w(TAG, "could not read the primary channel", cause) }
             }
@@ -135,12 +145,9 @@ class RangeRepository @Inject constructor(
      * other at all, which is why invites carry it.
      */
     suspend fun choose(choice: RangeMode) {
-        preferences.edit {
-            putString(KEY_MODE, choice.name)
-            putString(KEY_PRIVACY, RadioPrivacy.FIREPIT.name)
-        }
+        preferences.edit { putString(KEY_MODE, choice.name) }
         _mode.value = choice
-        _privacy.value = RadioPrivacy.FIREPIT
+        rememberPrivacy(mesh.myNodeNum.value, RadioPrivacy.FIREPIT)
         if (!mesh.isConnected.value) return
         reconcile(choice)
     }
@@ -166,10 +173,33 @@ class RangeRepository @Inject constructor(
             _primaryIsPublic.value = true
             Log.i(TAG, "put the radio's own primary channel back")
         }
-        preferences.edit { putString(KEY_PRIVACY, RadioPrivacy.OPEN.name) }
-        _privacy.value = RadioPrivacy.OPEN
+        rememberPrivacy(nodeNum ?: mesh.myNodeNum.value, RadioPrivacy.OPEN)
         if (original == null) Log.i(TAG, "leaving the radio's own primary channel alone")
     }
+
+    private fun storedPrivacy(nodeNum: Int?): RadioPrivacy =
+        nodeNum?.let { RadioPrivacy.named(preferences.getString(privacyKey(it), null)) } ?: RadioPrivacy.UNDECIDED
+
+    private fun rememberPrivacy(nodeNum: Int?, privacy: RadioPrivacy) {
+        if (nodeNum != null) preferences.edit { putString(privacyKey(nodeNum), privacy.name) }
+        _privacy.value = privacy
+    }
+
+    /**
+     * One choice used to cover every radio. It was made about the radio in use
+     * then, which is the one connecting now the first time round, so it is
+     * kept for that radio alone; any other radio is asked afresh.
+     */
+    private fun adoptSingleChoice(nodeNum: Int?) {
+        val single = preferences.getString(KEY_PRIVACY, null) ?: return
+        if (nodeNum == null) return
+        preferences.edit {
+            if (!preferences.contains(privacyKey(nodeNum))) putString(privacyKey(nodeNum), single)
+            remove(KEY_PRIVACY)
+        }
+    }
+
+    private fun privacyKey(nodeNum: Int) = "$KEY_PRIVACY.$nodeNum"
 
     /**
      * Adopts the mode an invite was issued under.

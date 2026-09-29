@@ -29,6 +29,7 @@ class MapPreferences @Inject constructor(
     /** Applied at startup so the choice survives a restart, not just a toggle. */
     fun apply() {
         MapLibre.getInstance(context)
+        TileClient.install()
         MapLibre.setConnected(!_offlineOnly.value)
     }
 

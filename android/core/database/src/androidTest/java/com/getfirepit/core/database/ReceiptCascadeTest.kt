@@ -59,7 +59,7 @@ class ReceiptCascadeTest {
         saveMessage(message, sentAt = 1_000, channel = 3)
         receipts.recordRead(message, nodeNum = 5, at = 1_100)
 
-        messages.deleteChannel(channel = 3, broadcast = -1)
+        messages.deleteUnfiled(slot = 3, broadcast = -1)
 
         assertTrue(receipts.observeFor(message).first().isEmpty())
     }

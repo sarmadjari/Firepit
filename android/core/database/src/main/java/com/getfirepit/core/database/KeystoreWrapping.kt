@@ -1,4 +1,4 @@
-package com.getfirepit.core.data
+package com.getfirepit.core.database
 
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -15,10 +15,16 @@ import javax.crypto.spec.GCMParameterSpec
  *
  * The wrapping key never leaves secure hardware, so what lands on disk is
  * useless to anyone who copies the file off the phone. Kept in one place
- * because there is more than one kind of secret that needs this, and two copies
- * of a cipher configuration is how they drift apart.
+ * because there is more than one kind of secret that needs this — room keys,
+ * this phone's own key, and the key the database is encrypted with — and two
+ * copies of a cipher configuration is how they drift apart. It lives here, at
+ * the bottom of the modules that need it, so the database can use it too.
+ *
+ * The keys are usable whenever the app runs, locked screen or not: messages
+ * arrive while the phone is in a pocket. They do not survive the app's data
+ * being copied to another phone, which is the protection they are for.
  */
-internal object KeystoreWrapping {
+object KeystoreWrapping {
 
     private const val TAG = "FirepitKeystore"
     private const val PROVIDER = "AndroidKeyStore"

@@ -45,4 +45,47 @@ class KeyFingerprintTest {
     fun `nonsense is refused rather than shown as a fingerprint`() {
         assertNull(KeyFingerprint.of("not base64 at all!!"))
     }
+
+    @Test
+    fun `a join line reads like any other fingerprint`() {
+        val line = KeyFingerprint.ofJoin(ByteArray(32) { 1 }, ByteArray(33) { 2 })
+
+        assertTrue("not readable as groups: $line", line!!.matches(Regex("[0-9A-F]{4} [0-9A-F]{4} [0-9A-F]{4}")))
+    }
+
+    /**
+     * Whoever holds the joiner's radio could ask in with their own phone. The
+     * line has to change when only the phone does, or reading it aloud proves
+     * nothing about the key the room will be sealed to.
+     */
+    @Test
+    fun `a different phone behind the same radio reads differently`() {
+        val radio = ByteArray(32) { 1 }
+
+        assertNotEquals(
+            KeyFingerprint.ofJoin(radio, ByteArray(33) { 2 }),
+            KeyFingerprint.ofJoin(radio, ByteArray(33) { 3 }),
+        )
+    }
+
+    @Test
+    fun `both phones compute the same join line`() {
+        val radio = ByteArray(32) { (it * 3).toByte() }
+        val phone = ByteArray(33) { (it * 5).toByte() }
+
+        assertEquals(KeyFingerprint.ofJoin(radio, phone), KeyFingerprint.ofJoin(radio.copyOf(), phone.copyOf()))
+    }
+
+    @Test
+    fun `a join line is never a plain key's line`() {
+        val radio = ByteArray(32) { 7 }
+
+        assertNotEquals(KeyFingerprint.of(Base64.getEncoder().encodeToString(radio)), KeyFingerprint.ofJoin(radio, ByteArray(33) { 7 }))
+    }
+
+    @Test
+    fun `a join line needs both keys`() {
+        assertNull(KeyFingerprint.ofJoin(ByteArray(0), ByteArray(33)))
+        assertNull(KeyFingerprint.ofJoin(ByteArray(32), ByteArray(0)))
+    }
 }

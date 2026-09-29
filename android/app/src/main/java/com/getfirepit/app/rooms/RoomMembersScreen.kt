@@ -62,6 +62,8 @@ import java.util.concurrent.TimeUnit
 @Composable
 fun RoomMembersScreen(
     roomId: Int,
+    /** The slot it sits in, which is what names a Meshtastic channel: those have no room id. */
+    channelIndex: Int,
     roomName: String,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
@@ -111,7 +113,7 @@ fun RoomMembersScreen(
                 TextButton(
                     onClick = {
                         confirmingLeave = false
-                        viewModel.leaveRoom(roomId)
+                        viewModel.leaveRoom(roomId, channelIndex)
                         onLeft()
                     },
                 ) { Text("Leave") }
@@ -324,8 +326,9 @@ fun RoomMembersScreen(
             text = {
                 Text(
                     "Nothing can take the old key back from them, so the room moves to a new " +
-                        "one instead. Everyone still here is sent it privately; ${row.displayName} " +
-                        "is not, and can read nothing from now on.\n\n" +
+                        "one instead. Everyone still here is sent it privately and asked to " +
+                        "confirm, which can take a minute; ${row.displayName} is not, and can " +
+                        "read nothing from now on.\n\n" +
                         "They keep whatever they already received.",
                 )
             },

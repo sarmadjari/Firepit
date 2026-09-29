@@ -1,11 +1,12 @@
 package com.getfirepit.core.protocol
 
 /**
- * How often a radio reports where it is, on its own.
+ * How often a shared position goes to its room.
  *
- * This is the radio's job, not the app's: it keeps reporting with the phone
- * dead, off, or out of Bluetooth range, which is the only reason a tracker is
- * worth carrying.
+ * Kept in the radio's position settings, where Meshtastic has always kept it,
+ * but the phone does the sending: it seals each fix under the room's key, which
+ * the radio's own broadcast could not. So it pauses while the phone is away
+ * from its radio.
  */
 enum class BeaconRate(val label: String, val seconds: Int) {
     BRISK("5 min", 300),

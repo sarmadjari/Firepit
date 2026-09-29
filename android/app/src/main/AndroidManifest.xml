@@ -14,8 +14,13 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <!-- Sharing your position, showing it to yourself, and on Android 10-11
-         getting any BLE scan results at all. -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+         getting any BLE scan results at all. The transport module caps its own
+         declaration at API 30, where BLE scanning needed it; without the
+         tools:remove the merger applies that cap here too, and Android 12 and
+         later would only ever grant an approximate position. -->
+    <uses-permission
+        android:name="android.permission.ACCESS_FINE_LOCATION"
+        tools:remove="android:maxSdkVersion" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <!-- Bluetooth on Android 11 and below, where the modern split does not exist. -->

@@ -6,7 +6,9 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.maplibre.android.MapLibre
 import org.maplibre.android.geometry.LatLngBounds
@@ -237,10 +239,41 @@ class OfflineMapRepository @Inject constructor(
         }
     }
 
+    /**
+     * Empties the tiles cached while browsing, and caps how many build up again.
+     *
+     * Downloaded areas are kept: somebody chose those. Browsed tiles are a
+     * record of where the map was looked at — usually where the group was — so
+     * they are not kept past the retention window. MapLibre wants its file
+     * source driven from the main thread.
+     */
+    suspend fun forgetBrowsedTiles(): Boolean = withContext(Dispatchers.Main) {
+        val capped = fileSource { manager.setMaximumAmbientCacheSize(BROWSED_TILE_CAP, it) }
+        val cleared = fileSource { manager.clearAmbientCache(it) }
+        capped && cleared
+    }
+
+    private suspend fun fileSource(call: (OfflineManager.FileSourceCallback) -> Unit): Boolean =
+        suspendCancellableCoroutine { continuation ->
+            call(
+                object : OfflineManager.FileSourceCallback {
+                    override fun onSuccess() = continuation.resume(true)
+
+                    override fun onError(message: String) {
+                        Log.w(TAG, "map cache: $message")
+                        continuation.resume(false)
+                    }
+                },
+            )
+        }
+
     private companion object {
         const val TAG = "FirepitOffline"
         const val KEY_NAME = "name"
         const val KEY_DOWNLOADED_AT = "downloadedAt"
+
+        /** Enough for a day of browsing a trip's area, not a record of every trip. */
+        const val BROWSED_TILE_CAP = 50L * 1024 * 1024
 
         /** Street level only. Going deeper multiplies tiles by four per level. */
         const val MIN_ZOOM = 8.0

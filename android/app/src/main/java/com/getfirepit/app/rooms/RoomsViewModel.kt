@@ -232,8 +232,9 @@ class RoomsViewModel @Inject constructor(
         notice.value = "Created ${room.name}"
     }
 
-    fun leaveRoom(roomId: Int) = run("Could not leave the room") {
-        rooms.leaveRoom(roomId)
+    /** [slot] says which channel is meant when it has no room id of its own. */
+    fun leaveRoom(roomId: Int, slot: Int? = null) = run("Could not leave the room") {
+        rooms.leaveRoom(roomId, slot)
     }
 
     private val _rotation = MutableStateFlow<String?>(null)
@@ -247,16 +248,18 @@ class RoomsViewModel @Inject constructor(
 
     fun removeMember(roomId: Int, nodeNum: Int) = run("Could not remove them") {
         val result = rooms.rotateRoom(roomId, remove = setOf(nodeNum))
+        // Only what each member's own radio confirmed counts as reached.
         _rotation.value = when {
             result.missed.isEmpty() ->
-                "Removed. Everyone still in the room has the new key."
+                "Removed. Everyone still in the room confirmed they have the new key."
             result.reached.isEmpty() ->
-                "Removed, and the room has a new key. Nobody else could be reached to be " +
-                    "given it, so invite them again when they are back in range."
+                "Removed, and the room has a new key. Nobody else confirmed getting it yet. " +
+                    "Firepit will hand it over as each of them is heard again; anyone who " +
+                    "can't be reached for long may need a new invite."
             else ->
                 "Removed, and the room has a new key. ${result.missed.size} member" +
-                    "${if (result.missed.size == 1) "" else "s"} could not be reached; " +
-                    "invite them again when they are back in range."
+                    "${if (result.missed.size == 1) " hasn't" else "s haven't"} confirmed getting it " +
+                    "yet. Firepit will hand it over when they're heard again."
         }
     }
 

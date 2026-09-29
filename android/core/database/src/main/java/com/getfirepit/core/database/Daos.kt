@@ -54,21 +54,58 @@ interface MessageDao {
     @Query("DELETE FROM messages WHERE sentAt < :cutoff")
     suspend fun deleteOlderThan(cutoff: Long): Int
 
-    /** Leaving a room takes its history with it; the key is gone either way. */
-    @Query("DELETE FROM messages WHERE channel = :channel AND toNodeNum = :broadcast")
-    suspend fun deleteChannel(channel: Int, broadcast: Int)
+    /** Which room's history sits in which slot, for following rooms across radios. */
+    @Query("SELECT DISTINCT channel, roomId FROM messages WHERE toNodeNum = :broadcast")
+    suspend fun placements(broadcast: Int): List<RoomPlacement>
+
+    /** Brings a room's history to the slot the room is in now. */
+    @Query(
+        "UPDATE messages SET channel = :slot WHERE roomId = :roomId AND toNodeNum = :broadcast AND channel != :slot",
+    )
+    suspend fun placeRoom(roomId: Int, slot: Int, broadcast: Int)
+
+    /** Marks history kept before rooms were recorded as belonging to the room in its slot now. */
+    @Query("UPDATE messages SET roomId = :roomId WHERE channel = :slot AND roomId = 0 AND toNodeNum = :broadcast")
+    suspend fun stampSlot(slot: Int, roomId: Int, broadcast: Int)
+
+    /** Sets aside other rooms' history sitting in [slot], off every slot the screen can show. */
+    @Query(
+        "UPDATE messages SET channel = :parked WHERE channel = :slot AND roomId != 0 AND roomId != :keep " +
+            "AND toNodeNum = :broadcast",
+    )
+    suspend fun parkOtherRooms(slot: Int, keep: Int, parked: Int, broadcast: Int)
 
     /**
-     * Follows a room to its new slot.
-     *
-     * The firmware requires active channels to be consecutive, so leaving one
-     * shifts the rest down. History is stored per slot, and would otherwise be
-     * read as belonging to whichever room moved into that number.
+     * Sets aside history filed under no room — a Meshtastic channel's, which
+     * has no id — while a room holds its slot. Kept per slot, so it comes back
+     * when a channel without an id is in that slot again.
      */
-    @Query(
-        "UPDATE messages SET channel = :to WHERE channel = :from AND toNodeNum = :broadcast",
-    )
-    suspend fun moveChannel(from: Int, to: Int, broadcast: Int)
+    @Query("UPDATE messages SET channel = :parking WHERE channel = :slot AND roomId = 0 AND toNodeNum = :broadcast")
+    suspend fun parkUnfiled(slot: Int, parking: Int, broadcast: Int)
+
+    @Query("UPDATE messages SET channel = :slot WHERE channel = :parking AND roomId = 0 AND toNodeNum = :broadcast")
+    suspend fun restoreUnfiled(slot: Int, parking: Int, broadcast: Int)
+
+    @Query("DELETE FROM messages WHERE roomId = :roomId AND toNodeNum = :broadcast")
+    suspend fun deleteRoom(roomId: Int, broadcast: Int)
+
+    /** Receipts go with them, by the cascade. */
+    @Query("DELETE FROM messages")
+    suspend fun deleteAll()
+
+    /**
+     * Leaving a channel that has no id takes its history with it. Only rows
+     * filed under no room: a room's own history is deleted by its id.
+     */
+    @Query("DELETE FROM messages WHERE channel = :slot AND roomId = 0 AND toNodeNum = :broadcast")
+    suspend fun deleteUnfiled(slot: Int, broadcast: Int)
+
+    /**
+     * Follows a channel that has no id to its new slot, when leaving another
+     * shifts the rest down. A room's history is placed by its id instead.
+     */
+    @Query("UPDATE messages SET channel = :to WHERE channel = :from AND roomId = 0 AND toNodeNum = :broadcast")
+    suspend fun moveUnfiled(from: Int, to: Int, broadcast: Int)
 
     @Upsert
     suspend fun upsert(message: MessageEntity)
@@ -183,6 +220,36 @@ interface NodeDao {
         """,
     )
     suspend fun markHeard(nodeNum: Int, heardAt: Long, snr: Float?, rssi: Int?, hopsAway: Int?)
+
+    /** Forgets where nodes were, once that is older than the retention window. */
+    @Query(
+        """
+        UPDATE nodes SET latitudeI = NULL, longitudeI = NULL, altitude = NULL, positionTime = NULL,
+            positionPrecision = NULL, groundSpeed = NULL, groundTrack = NULL
+        WHERE latitudeI IS NOT NULL AND (positionTime IS NULL OR positionTime < :cutoff)
+        """,
+    )
+    suspend fun forgetPositionsBefore(cutoff: Long): Int
+
+    /**
+     * Forgets nodes not heard within the window who share no room with us,
+     * along with their battery and signal. [keep] is our own node.
+     */
+    @Query(
+        """
+        DELETE FROM nodes WHERE nodeNum != :keep AND (lastHeard IS NULL OR lastHeard < :cutoff)
+            AND nodeNum NOT IN (SELECT nodeNum FROM room_members)
+        """,
+    )
+    suspend fun forgetStrangersBefore(cutoff: Long, keep: Int): Int
+
+    @Query(
+        """
+        UPDATE nodes SET latitudeI = NULL, longitudeI = NULL, altitude = NULL, positionTime = NULL,
+            positionPrecision = NULL, groundSpeed = NULL, groundTrack = NULL
+        """,
+    )
+    suspend fun forgetAllPositions()
 }
 
 fun NodeDao.observeAll(): Flow<List<MeshNode>> =
@@ -236,12 +303,48 @@ interface MapPinDao {
     @Query("SELECT * FROM deleted_pins WHERE deletedAt > :since")
     suspend fun recentlyDeleted(since: Long): List<DeletedPinEntity>
 
-    /** Pins follow their room when it shifts slot, the way its messages do. */
-    @Query("UPDATE map_pins SET channel = :to WHERE channel = :from")
-    suspend fun moveChannel(from: Int, to: Int)
+    /** Pins filed under no room follow their slot when the rooms shift, the way their messages do. */
+    @Query("UPDATE map_pins SET channel = :to WHERE channel = :from AND roomId = 0")
+    suspend fun moveUnfiled(from: Int, to: Int)
 
-    @Query("DELETE FROM map_pins WHERE channel = :channel")
-    suspend fun deleteChannel(channel: Int)
+    @Query("DELETE FROM map_pins WHERE channel = :slot AND roomId = 0")
+    suspend fun deleteUnfiled(slot: Int)
+
+    @Query("SELECT DISTINCT channel, roomId FROM map_pins")
+    suspend fun placements(): List<RoomPlacement>
+
+    /** Brings a room's pins to the slot the room is in now. */
+    @Query("UPDATE map_pins SET channel = :slot WHERE roomId = :roomId AND channel != :slot")
+    suspend fun placeRoom(roomId: Int, slot: Int)
+
+    @Query("UPDATE map_pins SET roomId = :roomId WHERE channel = :slot AND roomId = 0")
+    suspend fun stampSlot(slot: Int, roomId: Int)
+
+    @Query("UPDATE map_pins SET channel = :parked WHERE channel = :slot AND roomId != 0 AND roomId != :keep")
+    suspend fun parkOtherRooms(slot: Int, keep: Int, parked: Int)
+
+    @Query("UPDATE map_pins SET channel = :parking WHERE channel = :slot AND roomId = 0")
+    suspend fun parkUnfiled(slot: Int, parking: Int)
+
+    @Query("UPDATE map_pins SET channel = :slot WHERE channel = :parking AND roomId = 0")
+    suspend fun restoreUnfiled(slot: Int, parking: Int)
+
+    @Query("DELETE FROM map_pins WHERE roomId = :roomId")
+    suspend fun deleteRoom(roomId: Int)
+
+    /** Expired pins are hidden as they are read; this is what actually removes them. */
+    @Query("DELETE FROM map_pins WHERE expire != 0 AND expire < :nowSeconds")
+    suspend fun deleteExpired(nowSeconds: Long): Int
+
+    @Query("DELETE FROM map_pins")
+    suspend fun deleteAll()
+
+    /** A deletion only needs remembering while somebody could still resend the pin. */
+    @Query("DELETE FROM deleted_pins WHERE deletedAt < :cutoff")
+    suspend fun forgetDeletedBefore(cutoff: Long): Int
+
+    @Query("DELETE FROM deleted_pins")
+    suspend fun forgetAllDeleted()
 }
 
 /** Expired pins are filtered in SQL so a stale one never reaches the map. */
@@ -264,6 +367,10 @@ interface ChannelStateDao {
     @Upsert
     suspend fun upsert(state: ChannelStateEntity)
 
+    /** Marks read state kept before rooms were recorded as belonging to the room in its slot now. */
+    @Query("UPDATE channel_state SET roomId = :roomId WHERE channel = :slot AND roomId = 0")
+    suspend fun stampSlot(slot: Int, roomId: Int)
+
     /**
      * Unread counts per channel. Channels with no row yet are absent, so a
      * conversation is only "unread" once it has been opened at least once or
@@ -283,14 +390,24 @@ interface ChannelStateDao {
 
 data class UnreadCount(val channel: Int, val count: Int)
 
-suspend fun ChannelStateDao.markRead(channel: Int, now: Long) {
-    val existing = find(channel)
-    upsert(ChannelStateEntity(channel, lastReadAt = now, muted = existing?.muted == true))
+suspend fun ChannelStateDao.markRead(channel: Int, now: Long, roomId: Int = 0) {
+    val existing = find(channel)?.takeIf { it.roomId == roomId }
+    upsert(ChannelStateEntity(channel, lastReadAt = now, muted = existing?.muted == true, roomId = roomId))
 }
 
-suspend fun ChannelStateDao.setMuted(channel: Int, muted: Boolean) {
-    val existing = find(channel)
-    upsert(ChannelStateEntity(channel, lastReadAt = existing?.lastReadAt ?: 0L, muted = muted))
+suspend fun ChannelStateDao.setMuted(channel: Int, muted: Boolean, roomId: Int = 0) {
+    val existing = find(channel)?.takeIf { it.roomId == roomId }
+    upsert(ChannelStateEntity(channel, lastReadAt = existing?.lastReadAt ?: 0L, muted = muted, roomId = roomId))
+}
+
+/**
+ * Starts a slot afresh when a different room is in it now, so a room carried by
+ * another radio does not inherit the last room's read position or mute. Its own
+ * mute, [roomMuted], comes with it.
+ */
+suspend fun ChannelStateDao.followRoom(channel: Int, roomId: Int, now: Long, roomMuted: Boolean) {
+    val existing = find(channel) ?: return
+    if (existing.roomId != roomId) upsert(ChannelStateEntity(channel, lastReadAt = now, muted = roomMuted, roomId = roomId))
 }
 
 fun ChannelStateDao.observeMuted(): Flow<Set<Int>> =
@@ -319,6 +436,10 @@ interface RoomMemberDao {
     /** Everyone in any room this phone is in. Leaving a room deletes its rows, so this stays honest. */
     @Query("SELECT DISTINCT nodeNum FROM room_members")
     fun observeAllNodeNums(): Flow<List<Int>>
+
+    /** Whether [nodeNum] is in any room this phone is in. */
+    @Query("SELECT EXISTS(SELECT 1 FROM room_members WHERE nodeNum = :nodeNum)")
+    suspend fun isInAnyRoom(nodeNum: Int): Boolean
 
     @Query("DELETE FROM room_members WHERE roomId = :roomId")
     suspend fun deleteRoom(roomId: Int)
@@ -423,6 +544,13 @@ interface PersonCardDao {
 
     @Query("DELETE FROM person_cards WHERE nodeNum = :nodeNum")
     suspend fun forget(nodeNum: Int)
+
+    /** Cards of people we no longer share any room with. */
+    @Query("DELETE FROM person_cards WHERE nodeNum NOT IN (SELECT nodeNum FROM room_members)")
+    suspend fun forgetOutsideRooms(): Int
+
+    @Query("DELETE FROM person_cards")
+    suspend fun deleteAll()
 }
 
 fun PersonCardDao.observeAll(): Flow<Map<Int, PersonCard>> =
@@ -434,12 +562,116 @@ interface PeerKeyDao {
     @Query("SELECT * FROM peer_keys WHERE nodeNum = :nodeNum")
     suspend fun find(nodeNum: Int): PeerKeyEntity?
 
+    /** Whether words to [nodeNum] can be sealed to their phone, as it changes. */
+    @Query("SELECT EXISTS(SELECT 1 FROM peer_keys WHERE nodeNum = :nodeNum)")
+    fun observeKnown(nodeNum: Int): Flow<Boolean>
+
     @Upsert
     suspend fun upsert(key: PeerKeyEntity)
+
+    /** Keys of people we no longer share any room with; the next room teaches them again. */
+    @Query("DELETE FROM peer_keys WHERE nodeNum NOT IN (SELECT nodeNum FROM room_members)")
+    suspend fun forgetOutsideRooms(): Int
+}
+
+@Dao
+interface RoomActivityDao {
+
+    @Query("SELECT * FROM room_activity")
+    suspend fun all(): List<RoomActivityEntity>
+
+    /** Starts the clock on a room, once; later calls leave the first time alone. */
+    @Query("INSERT OR IGNORE INTO room_activity (roomId, joinedAt, lastActivityAt) VALUES (:roomId, :now, :now)")
+    suspend fun joined(roomId: Int, now: Long)
+
+    @Query("UPDATE room_activity SET lastActivityAt = MAX(lastActivityAt, :now) WHERE roomId = :roomId")
+    suspend fun touch(roomId: Int, now: Long)
+
+    @Query("DELETE FROM room_activity WHERE roomId = :roomId")
+    suspend fun forget(roomId: Int)
+
+    /** Whether the room is muted, whichever radio or slot carries it. */
+    @Query("SELECT EXISTS(SELECT 1 FROM room_activity WHERE roomId = :roomId AND muted = 1)")
+    suspend fun isMuted(roomId: Int): Boolean
+
+    @Query("UPDATE room_activity SET muted = :muted WHERE roomId = :roomId")
+    suspend fun updateMuted(roomId: Int, muted: Boolean)
+}
+
+/** Remembers a room's mute against the room, so it survives the room moving slot or radio. */
+suspend fun RoomActivityDao.setMuted(roomId: Int, muted: Boolean, now: Long) {
+    joined(roomId, now)
+    updateMuted(roomId, muted)
+}
+
+/** Something happened in [roomId]; a room first seen here counts as joined now. */
+suspend fun RoomActivityDao.recordActivity(roomId: Int, now: Long) {
+    joined(roomId, now)
+    touch(roomId, now)
+}
+
+@Dao
+interface PendingHandoverDao {
+
+    @Upsert
+    suspend fun upsert(handover: PendingHandoverEntity)
+
+    @Query("SELECT * FROM pending_handovers WHERE nodeNum = :nodeNum")
+    suspend fun forNode(nodeNum: Int): List<PendingHandoverEntity>
+
+    @Query("SELECT * FROM pending_handovers WHERE roomId = :roomId")
+    suspend fun forRoom(roomId: Int): List<PendingHandoverEntity>
+
+    @Query("SELECT * FROM pending_handovers")
+    suspend fun all(): List<PendingHandoverEntity>
+
+    @Query("DELETE FROM pending_handovers WHERE roomId = :roomId AND nodeNum = :nodeNum")
+    suspend fun delete(roomId: Int, nodeNum: Int)
+
+    @Query("DELETE FROM pending_handovers WHERE roomId = :roomId")
+    suspend fun deleteRoom(roomId: Int)
 }
 
 /** When a channel last carried anything, for deciding whether a room has died. */
 data class ChannelActivity(val channel: Int, val lastAt: Long)
+
+/** A slot and the room whose history or pins are stored against it. */
+data class RoomPlacement(val channel: Int, val roomId: Int)
+
+/** Off every slot the screen can show, for history of a room not on this radio. */
+const val PARKED_CHANNEL = -1
+
+/**
+ * Where a slot's unfiled history waits while a room holds the slot: one place
+ * per slot, below every other channel number, so it goes back where it was.
+ */
+fun unfiledParkingFor(slot: Int): Int = UNFILED_PARKING_BASE - slot
+
+private const val UNFILED_PARKING_BASE = -100
+
+suspend fun MessageDao.placements(): List<RoomPlacement> = placements(BROADCAST_NODE_NUM)
+
+suspend fun MessageDao.placeRoom(roomId: Int, slot: Int) = placeRoom(roomId, slot, BROADCAST_NODE_NUM)
+
+suspend fun MessageDao.stampSlot(slot: Int, roomId: Int) = stampSlot(slot, roomId, BROADCAST_NODE_NUM)
+
+suspend fun MessageDao.parkOtherRooms(slot: Int, keep: Int) = parkOtherRooms(slot, keep, PARKED_CHANNEL, BROADCAST_NODE_NUM)
+
+suspend fun MessageDao.parkUnfiled(slot: Int) = parkUnfiled(slot, unfiledParkingFor(slot), BROADCAST_NODE_NUM)
+
+suspend fun MessageDao.restoreUnfiled(slot: Int) = restoreUnfiled(slot, unfiledParkingFor(slot), BROADCAST_NODE_NUM)
+
+suspend fun MessageDao.deleteUnfiled(slot: Int) = deleteUnfiled(slot, BROADCAST_NODE_NUM)
+
+suspend fun MessageDao.moveUnfiled(from: Int, to: Int) = moveUnfiled(from, to, BROADCAST_NODE_NUM)
+
+suspend fun MessageDao.deleteRoom(roomId: Int) = deleteRoom(roomId, BROADCAST_NODE_NUM)
+
+suspend fun MapPinDao.parkOtherRooms(slot: Int, keep: Int) = parkOtherRooms(slot, keep, PARKED_CHANNEL)
+
+suspend fun MapPinDao.parkUnfiled(slot: Int) = parkUnfiled(slot, unfiledParkingFor(slot))
+
+suspend fun MapPinDao.restoreUnfiled(slot: Int) = restoreUnfiled(slot, unfiledParkingFor(slot))
 
 suspend fun MessageDao.newestPerChannel(): Map<Int, Long> =
     newestPerChannel(BROADCAST_NODE_NUM).associate { it.channel to it.lastAt }

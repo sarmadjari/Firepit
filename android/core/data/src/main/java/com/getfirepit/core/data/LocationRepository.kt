@@ -2,24 +2,29 @@ package com.getfirepit.core.data
 
 import android.location.Location
 import android.util.Log
+import com.getfirepit.core.crypto.InviteCodec
 import com.getfirepit.core.model.MeshNode
-import com.getfirepit.core.protocol.MeshPacketBuilder
-import com.getfirepit.core.protocol.OutboundPacer
+import com.getfirepit.core.protocol.BeaconRate
 import com.getfirepit.core.protocol.PositionPrecision
 import com.getfirepit.core.protocol.PositionSharing
+import com.getfirepit.core.protocol.PrecisionWrite
 import com.getfirepit.core.protocol.ShareDuration
-import com.getfirepit.core.transport.RadioLink
+import com.getfirepit.core.protocol.TrustRules
+import com.getfirepit.protocol.meshchat.MeshChatControl
+import com.getfirepit.protocol.meshchat.PositionQuery
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -30,14 +35,12 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
-import okio.ByteString
-import org.meshtastic.proto.FromRadio
+import org.meshtastic.proto.Config
 import org.meshtastic.proto.MeshPacket
-import org.meshtastic.proto.PortNum
+import org.meshtastic.proto.ModuleSettings
 import org.meshtastic.proto.Position
-import org.meshtastic.proto.ToRadio
 
-/** What came of asking somebody's radio where it is. */
+/** What came of asking somebody where they are. */
 sealed interface PositionAnswer {
 
     /** A position came back, and has already been stored. */
@@ -46,10 +49,10 @@ sealed interface PositionAnswer {
     /** The question went out; the answer will land on the map or not at all. */
     data object Asked : PositionAnswer
 
-    /** They answered, but their radio has no fix to give — no GPS, or none yet. */
-    data object NoFix : PositionAnswer
-
-    /** The question went out and nothing came back inside the window. */
+    /**
+     * Nothing came back inside the window: they are out of range, their phone
+     * is away from their radio, or they are not sharing with the room we share.
+     */
     data object Silent : PositionAnswer
 
     /** Nothing was asked, because there is no radio to ask through. */
@@ -60,34 +63,31 @@ sealed interface PositionAnswer {
 }
 
 /**
- * Position sharing, and the guarantee that it happens on one channel only.
+ * Where we are, told to one room and to nobody else.
  *
- * The radio transmits a position on every channel whose precision is non-zero.
- * Two enabled channels therefore means two audiences, one of which the user
- * never chose. The invariant is re-asserted on every connection rather than
- * trusted to whatever the UI last wrote, because the radio can be changed by
- * another app, another phone, or a factory reset between sessions.
+ * The phone seals its own fix under the room's key and sends it at the beacon
+ * rate, so the radios carrying it — and whoever holds one — read nothing. The
+ * radio's own position broadcast is kept off on every channel, re-asserted on
+ * every connection: it goes out under the channel key, and it would carry on
+ * with the phone away, turning a share the phone ended into one that never
+ * ends. The cost is that sharing pauses while the phone is away from its radio.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @Singleton
 class LocationRepository @Inject constructor(
     private val mesh: MeshRepository,
     private val admin: NodeAdminClient,
-    private val link: RadioLink,
     private val phoneLocation: PhoneLocationSource,
-    private val roomKeys: RoomKeyStore,
     private val rooms: RoomRepository,
     private val sharingStore: SharingStore,
     @param:ApplicationScope private val scope: CoroutineScope,
 ) {
 
-    private val pacer = OutboundPacer(System::currentTimeMillis)
-
     /**
      * Set while the map is on screen.
      *
      * Seeing yourself on a map is a local question with no privacy consequence,
-     * so it must not require opting into broadcasting. Sharing is the separate,
+     * so it must not require opting into sharing. Sharing is the separate,
      * deliberate act below.
      */
     private val mapVisible = MutableStateFlow(false)
@@ -96,13 +96,30 @@ class LocationRepository @Inject constructor(
         mapVisible.value = visible
     }
 
-    /** The room we currently share position with, or null when sharing is off. */
-    fun sharingRoomId(): Int? = PositionSharing.sharingChannels(mesh.channels.value)
-        .firstOrNull()
-        ?.id
-        ?.takeIf { it != 0 }
+    /** The newest fix the phone has, for answering "where are you?" without waiting on GPS. */
+    @Volatile
+    private var lastFix: Location? = null
 
-    /** When sharing stops on its own, or null when nothing stops it. */
+    @Volatile
+    private var lastShared: Location? = null
+
+    @Volatile
+    private var lastSharedAt = 0L
+
+    @Volatile
+    private var lastAnsweredAt = 0L
+
+    /** Members whose sealed position just arrived, for whoever asked them. */
+    private val positionsHeard = MutableSharedFlow<Int>(extraBufferCapacity = 16)
+
+    /**
+     * The room we are sharing with through the radio connected now, or null —
+     * when nothing is shared, or when that room is not on this radio, which
+     * pauses sharing rather than ending it.
+     */
+    fun sharingRoomId(): Int? = activeSharingRoom()
+
+    /** When sharing stops on its own, or null when nothing is shared or nothing stops it. */
     val sharingDeadline: StateFlow<SharingDeadline?> get() = sharingStore.deadline
 
     /** Nodes with a known fix, newest sighting first. */
@@ -111,24 +128,21 @@ class LocationRepository @Inject constructor(
 
     fun start() {
         scope.launch {
-            // Re-check whenever the radio reports its channels, which happens on
-            // every connect and after any channel write.
+            // Whenever the radio reports its channels — every connect, and after
+            // any channel write — make sure it broadcasts our position nowhere.
             mesh.channels.collect { channels ->
                 if (channels.isEmpty()) return@collect
-                if (!PositionSharing.isValid(channels)) {
-                    val sharing = PositionSharing.sharingChannels(channels)
-                    Log.w(TAG, "position enabled on ${sharing.size} channels; disabling all")
-                    disableAll()
-                    return@collect
+                val writes = PositionSharing.writesToSilence(channels)
+                if (writes.isNotEmpty()) {
+                    Log.w(TAG, "the radio broadcasts position on ${writes.size} channels; silencing it")
+                    runCatching { silence(writes) }
+                        .onFailure { cause -> Log.e(TAG, "could not stop the radio broadcasting position", cause) }
                 }
-                // The moment the radio becomes reachable, not 30 s later: a
-                // deadline that ran out while the app was closed is already late.
                 enforceDeadline()
             }
         }
 
-        // The radio transmits with or without this app, so a deadline that only
-        // ticked while we were running would be no deadline at all.
+        // A deadline has to pass whether or not anything else happens.
         scope.launch {
             while (true) {
                 enforceDeadline()
@@ -137,10 +151,10 @@ class LocationRepository @Inject constructor(
         }
 
         scope.launch {
-            // The GPS runs while the map is open or while sharing, and at no
-            // other time. Nothing is transmitted unless a room is chosen.
-            val sharing = mesh.channels.map { channels ->
-                PositionSharing.sharingChannels(channels).isNotEmpty()
+            // The GPS runs while the map is open or while sharing is live, and at
+            // no other time. Nothing is sent unless a room is chosen.
+            val sharing = combine(sharingStore.deadline, mesh.isConnected) { deadline, connected ->
+                deadline != null && connected
             }
             combine(mapVisible, sharing) { visible, sharing -> visible to sharing }
                 .distinctUntilChanged()
@@ -152,9 +166,19 @@ class LocationRepository @Inject constructor(
                     }
                 }
                 .collect { (location, sharing) ->
+                    lastFix = location
                     storeOwnPosition(location)
-                    if (sharing) publish(location)
+                    if (sharing) shareIfDue(location)
                 }
+        }
+
+        scope.launch {
+            rooms.openedInRooms.collect { opened ->
+                runCatching {
+                    opened.control.position?.let { receivePosition(opened, it) }
+                    opened.control.position_query?.let { answerQuery(opened) }
+                }.onFailure { cause -> Log.w(TAG, "bad sealed position traffic", cause) }
+            }
         }
     }
 
@@ -177,19 +201,39 @@ class LocationRepository @Inject constructor(
             altitude = location.altitude.toInt().takeIf { location.hasAltitude() },
             timeMillis = location.time,
         )
-        Log.i(TAG, "own position stored from ${location.provider}, accuracy ${location.accuracy}m")
     }
 
     /**
-     * Hands the phone's fix to the radio as its own position.
-     *
-     * Sent to our own node with hop limit 0, so it never goes on air itself.
-     * The radio then broadcasts it on whichever channel has precision set,
-     * applying the truncation for that channel.
+     * Shares [location] when the beacon interval has passed, or sooner when
+     * smart beaconing is on and we have moved far enough — the same rule the
+     * radio's own broadcast followed, read from the radio's own settings.
      */
-    private suspend fun publish(location: Location) {
-        val myNodeNum = mesh.myNodeNum.value ?: return
+    private suspend fun shareIfDue(location: Location) {
+        val roomId = activeSharingRoom() ?: return
+        val now = System.currentTimeMillis()
+        val config = mesh.snapshot.value?.position
+        // Whatever the radio holds, not only the rates Firepit offers, within
+        // reason: somebody else's app may have set it, and it was their choice.
+        val interval = (config?.position_broadcast_secs?.takeIf { it > 0 } ?: BeaconRate.FIRMWARE_DEFAULT_SECONDS)
+            .coerceAtLeast(MINIMUM_BEACON_SECONDS).seconds
+        val sinceLast = now - lastSharedAt
+        val due = lastSharedAt == 0L || sinceLast >= interval.inWholeMilliseconds ||
+            (config?.position_broadcast_smart_enabled == true && movedEnough(location, config) &&
+                sinceLast >= smartInterval(config).inWholeMilliseconds)
+        if (due) share(roomId, location)
+    }
 
+    private fun movedEnough(location: Location, config: Config.PositionConfig): Boolean {
+        val previous = lastShared ?: return true
+        val minimum = config.broadcast_smart_minimum_distance.takeIf { it > 0 } ?: SMART_DISTANCE_METRES
+        return previous.distanceTo(location) >= minimum
+    }
+
+    private fun smartInterval(config: Config.PositionConfig): Duration =
+        config.broadcast_smart_minimum_interval_secs.takeIf { it > 0 }?.seconds ?: SMART_MINIMUM_INTERVAL
+
+    /** Seals the fix under the room's key and sends it to the room. */
+    private suspend fun share(roomId: Int, location: Location) {
         val position = Position(
             latitude_i = (location.latitude * 1e7).toInt(),
             longitude_i = (location.longitude * 1e7).toInt(),
@@ -199,41 +243,58 @@ class LocationRepository @Inject constructor(
             ground_speed = location.speed.toInt().takeIf { location.hasSpeed() },
             precision_bits = PositionPrecision.FULL,
         )
-
-        pacer.awaitSlot(PortNum.POSITION_APP)
-        runCatching {
-            link.send(
-                ToRadio(
-                    packet = MeshPacketBuilder.localPacket(
-                        myNodeNum = myNodeNum,
-                        portNum = PortNum.POSITION_APP,
-                        payload = position.encode().let(ByteString::of),
-                    ),
-                ),
-            )
-        }.onFailure { cause -> Log.w(TAG, "could not publish phone position", cause) }
+        val sent = rooms.sendSealed(roomId, MeshChatControl(version = InviteCodec.VERSION, position = position))
+        if (sent) {
+            lastShared = location
+            lastSharedAt = System.currentTimeMillis()
+            rooms.noteActivity(roomId)
+        }
     }
 
     /**
-     * Shares position with [roomId] and nowhere else, or stops entirely when
-     * it is null. Writes are derived from the radio's current state, so calling
-     * this when nothing needs changing sends nothing.
-     *
-     * [PositionSharing] refuses a room that may not carry a position, so an
-     * instruction naming one turns sharing off rather than honouring it.
-     *
-     * Private on purpose. Everything that turns sharing *on* must go through
-     * [shareWith], which records when it stops; a caller that reached this
-     * directly would be starting something with no end.
+     * A member's position, sealed by their phone. Believed only under the
+     * room's current key, on the room's own slot.
      */
-    private suspend fun applySharing(roomId: Int?, precision: Int) {
-        val writes = PositionSharing.writesToShareOnly(mesh.channels.value, roomId, precision)
-        if (writes.isEmpty()) return
+    private suspend fun receivePosition(opened: OpenedInRoom, position: Position) {
+        if (!TrustRules.sealedPositionAcceptable(opened.sealedUnderCurrent, opened.onItsSlot)) {
+            Log.w(TAG, "position from ${opened.packet.from} not sealed under room ${opened.roomId}'s current key")
+            return
+        }
+        mesh.storeSealedPosition(opened.packet.from, position)
+        positionsHeard.tryEmit(opened.packet.from)
+        // Somebody sharing where they are is somebody using the room.
+        rooms.noteActivity(opened.roomId)
+    }
 
+    /**
+     * "Where are you?" from a member. Answered with a sealed position to the
+     * room, and only while we are sharing with that room: asking is not a way
+     * round somebody's choice not to share.
+     */
+    private suspend fun answerQuery(opened: OpenedInRoom) {
+        val myNodeNum = mesh.myNodeNum.value ?: return
+        val answerable = TrustRules.positionQueryAnswerable(
+            sealedUnderCurrent = opened.sealedUnderCurrent && opened.onItsSlot,
+            addressedToUs = opened.packet.to == myNodeNum,
+            queryRoom = opened.roomId,
+            sharingWithRoom = activeSharingRoom(),
+        )
+        if (!answerable) return
+        val now = System.currentTimeMillis()
+        if (now - lastAnsweredAt < ANSWER_GAP.inWholeMilliseconds) return
+        val fix = lastFix?.takeIf { now - it.time < FRESH_FIX.inWholeMilliseconds } ?: return
+        lastAnsweredAt = now
+        share(opened.roomId, fix)
+    }
+
+    /**
+     * Writes precision 0 to every channel the radio would broadcast on.
+     *
+     * Thrown rather than skipped when a channel cannot be read: a channel we
+     * could not read is one we could not change.
+     */
+    private suspend fun silence(writes: List<PrecisionWrite>) {
         writes.forEach { write ->
-            // Thrown rather than skipped: a channel we could not read is one we
-            // could not change, and a caller told "done" would forget a deadline
-            // for a radio that is still broadcasting where you are.
             val channel = admin.getChannel(write.index)
                 ?: throw IllegalStateException("could not read channel ${write.index} from the radio")
             val settings = channel.settings
@@ -247,136 +308,93 @@ class LocationRepository @Inject constructor(
                 ),
             )
         }
-        Log.i(TAG, "position sharing set to room $roomId across ${writes.size} channel writes")
+        Log.i(TAG, "the radio's own position broadcast is off on ${writes.size} more channels")
     }
 
     /**
      * Shares with [roomId] for a chosen length of time, or stops when it is null.
      *
-     * The deadline is written down before the radio is, so a crash between the
-     * two leaves a stopping point recorded for something that never started —
-     * which costs nothing — rather than sharing with nothing to stop it.
+     * Only a Firepit room whose key this phone holds: nowhere else can a
+     * position be sealed.
      */
-    suspend fun shareWith(
-        roomId: Int?,
-        choice: ShareDuration,
-        precision: Int = PositionPrecision.FULL,
-    ) {
+    suspend fun shareWith(roomId: Int?, choice: ShareDuration) {
         if (roomId == null) {
             stopSharing()
             return
         }
-        sharingStore.remember(roomId, choice, System.currentTimeMillis())
-        applySharing(roomId, precision)
+        val room = mesh.channels.value.firstOrNull { it.id == roomId && PositionSharing.canShare(it) }
+            ?: throw IllegalArgumentException("Positions can only be shared with a Firepit room")
+        sharingStore.remember(room.id, choice, System.currentTimeMillis())
+        // A fresh share is sent at once rather than at the next beacon.
+        lastSharedAt = 0L
+        lastFix?.let { shareIfDue(it) }
     }
 
     /** Stops sharing if its time has run out. Safe to call as often as you like. */
-    private suspend fun enforceDeadline() {
+    private fun enforceDeadline() {
         val deadline = sharingStore.deadline.value ?: return
         if (!deadline.hasPassed(System.currentTimeMillis())) return
         Log.i(TAG, "sharing with room ${deadline.roomId} has run out; stopping")
-        disableAll()
-    }
-
-    /** Stops sharing and forgets the deadline. */
-    suspend fun stopSharing() {
-        // The deadline is forgotten only once the radio has actually been told.
-        // A radio we cannot see is still transmitting, and clearing first would
-        // turn a share that was meant to end into one nothing will ever end.
-        if (mesh.channels.value.isEmpty()) {
-            Log.w(TAG, "cannot stop sharing yet: the radio has not reported its channels")
-            return
-        }
-        applySharing(roomId = null, precision = PositionPrecision.FULL)
-        sharingStore.clear()
-    }
-
-    private suspend fun disableAll() {
-        runCatching { stopSharing() }
-            .onFailure { cause -> Log.e(TAG, "could not disable position sharing", cause) }
+        stopSharing()
     }
 
     /**
-     * The question itself, or null when there is no private way to ask.
-     *
-     * Carried on the room's channel, so the question and the answer are both
-     * readable only by people already in that room.
+     * Stops sharing. The phone is what sends, so this takes effect at once, on
+     * every radio, whether or not one is connected.
      */
-    private suspend fun positionRequestTo(nodeNum: Int): MeshPacket? {
-        val room = rooms.sharedRoomWith(nodeNum) ?: return null
-        return MeshPacketBuilder.meshPacket(
-            to = nodeNum,
-            channel = room.index,
-            portNum = PortNum.POSITION_APP,
-            // Empty: the question is want_response, not the payload.
-            payload = Position().encode().let(ByteString::of),
-            wantResponse = true,
-            priority = MeshPacket.Priority.BACKGROUND,
-        )
+    fun stopSharing() {
+        sharingStore.clear()
+        lastShared = null
+        lastSharedAt = 0L
+    }
+
+    /** The shared room, if it is a sealed room on the radio connected now. */
+    private fun activeSharingRoom(): Int? {
+        val roomId = sharingStore.deadline.value?.roomId ?: return null
+        return mesh.channels.value.firstOrNull { it.id == roomId && PositionSharing.canShare(it) }?.id
     }
 
     /**
-     * Asks a node where it is without waiting to hear back.
+     * Asks a member where they are without waiting to hear back.
      *
      * For asking several people at once: the answers arrive through the
-     * ordinary position path and move the pins as they land, where the reader
-     * is already looking. Holding a minute open for each person in turn would
-     * take longer than anybody will watch.
+     * ordinary position path and move the pins as they land.
      */
     suspend fun askForPosition(nodeNum: Int): PositionAnswer {
         if (!mesh.isConnected.value) return PositionAnswer.NotConnected
-        // Before the pacer, so somebody we cannot ask costs no waiting.
-        val packet = positionRequestTo(nodeNum) ?: return PositionAnswer.NoSharedRoom
-
-        pacer.awaitSlot(PortNum.POSITION_APP)
-        return runCatching { link.send(ToRadio(packet = packet)) }.fold(
-            onSuccess = { PositionAnswer.Asked },
-            onFailure = { cause ->
-                Log.w(TAG, "could not ask $nodeNum for a position", cause)
-                PositionAnswer.NotConnected
-            },
-        )
+        val room = rooms.sharedRoomWith(nodeNum) ?: return PositionAnswer.NoSharedRoom
+        return if (ask(room.id, nodeNum)) PositionAnswer.Asked else PositionAnswer.NotConnected
     }
 
     /**
-     * Asks a node where it is and waits for its own firmware to answer.
+     * Asks a member where they are and waits for their phone to answer.
      *
-     * The radio on the other end replies by itself, so this reaches somebody
-     * who has Firepit closed, or who is not running it at all. What it cannot
-     * do is reach a radio that is switched off or out of range: silence is the
-     * only answer a mesh has for that, and it is reported as silence rather
-     * than dressed up as a failure.
+     * Sealed in a room we share, both ways, so nobody outside it learns that
+     * the question was asked or what came back. Their phone answers only while
+     * it is sharing with that room and near its radio; silence is the only
+     * answer a mesh has for anything else, and it is reported as silence.
      */
     suspend fun requestPosition(nodeNum: Int, timeout: Duration = REPLY_TIMEOUT): PositionAnswer {
         if (!mesh.isConnected.value) return PositionAnswer.NotConnected
-        val packet = positionRequestTo(nodeNum) ?: return PositionAnswer.NoSharedRoom
-
-        // The same pacer our own broadcasts use: the firmware counts both
-        // against one limit and drops the loser without saying so.
-        pacer.awaitSlot(PortNum.POSITION_APP)
+        val room = rooms.sharedRoomWith(nodeNum) ?: return PositionAnswer.NoSharedRoom
 
         var sendFailed = false
         val heard = withTimeoutOrNull(timeout) {
             coroutineScope {
                 // Listening starts before sending: the answer can arrive first.
-                val reply = async {
-                    link.inbound.first { from ->
-                        from.packet?.from == nodeNum &&
-                            from.packet?.decoded?.portnum == PortNum.POSITION_APP
-                    }
-                }
-                runCatching { link.send(ToRadio(packet = packet)) }.onFailure { cause ->
-                    Log.w(TAG, "could not ask $nodeNum for a position", cause)
+                val answer = async(start = CoroutineStart.UNDISPATCHED) { positionsHeard.first { it == nodeNum } }
+                if (!ask(room.id, nodeNum)) {
                     sendFailed = true
-                    reply.cancel()
+                    answer.cancel()
+                    null
+                } else {
+                    answer.await()
                 }
-                if (sendFailed) null else reply.await()
             }
         }
-
         return when {
             sendFailed -> PositionAnswer.NotConnected
-            heard != null -> answerOf(nodeNum, heard)
+            heard != null -> PositionAnswer.Answered
             else -> {
                 Log.i(TAG, "no position from $nodeNum inside $timeout")
                 PositionAnswer.Silent
@@ -384,27 +402,13 @@ class LocationRepository @Inject constructor(
         }
     }
 
-    /**
-     * Reads the answer, and records how it was protected on the way back.
-     *
-     * The reply is the firmware's own, so how it is encrypted is the radio's
-     * choice rather than ours. Logging it is the only way to know whether the
-     * answer stayed as private as the question.
-     */
-    private fun answerOf(nodeNum: Int, reply: FromRadio): PositionAnswer {
-        val packet = reply.packet ?: return PositionAnswer.Silent
-        val position = packet.decoded?.payload
-            ?.let { runCatching { Position.ADAPTER.decode(it) }.getOrNull() }
-        val hasFix = position?.latitude_i != null && position.longitude_i != null &&
-            !(position.latitude_i == 0 && position.longitude_i == 0)
-
-        Log.i(
-            TAG,
-            "position answer from $nodeNum: pki=${packet.pki_encrypted} " +
-                "channel=${packet.channel} fix=$hasFix precision=${position?.precision_bits}",
+    private suspend fun ask(roomId: Int, nodeNum: Int): Boolean =
+        rooms.sendSealed(
+            roomId,
+            MeshChatControl(version = InviteCodec.VERSION, position_query = PositionQuery()),
+            to = nodeNum,
+            priority = MeshPacket.Priority.RELIABLE,
         )
-        return if (hasFix) PositionAnswer.Answered else PositionAnswer.NoFix
-    }
 
     private companion object {
         const val TAG = "FirepitLocation"
@@ -414,6 +418,20 @@ class LocationRepository @Inject constructor(
 
         /** Fine-grained enough that "for 1 hour" is not visibly a lie. */
         val DEADLINE_CHECK = 30.seconds
-        val ModuleSettingsDefault = org.meshtastic.proto.ModuleSettings()
+
+        /** Shorter than this is a flood on a shared channel, whatever the radio says. */
+        const val MINIMUM_BEACON_SECONDS = 30
+
+        /** The firmware's own smart-beacon defaults, used when the radio leaves them at zero. */
+        const val SMART_DISTANCE_METRES = 100
+        val SMART_MINIMUM_INTERVAL = 30.seconds
+
+        /** One answer to many askers at once is enough. */
+        val ANSWER_GAP = 1.minutes
+
+        /** Older than this, a fix is not "where I am now". */
+        val FRESH_FIX = 5.minutes
+
+        val ModuleSettingsDefault = ModuleSettings()
     }
 }

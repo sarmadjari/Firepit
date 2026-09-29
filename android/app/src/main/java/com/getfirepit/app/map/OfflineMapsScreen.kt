@@ -134,6 +134,24 @@ fun OfflineMapsScreen(
                     Switch(checked = state.offlineOnly, onCheckedChange = viewModel::setOfflineOnly)
                 }
 
+                if (state.suggestOfflineOnly) {
+                    Text(
+                        text = "Downloaded. Turn on offline maps only, and the map stops asking the " +
+                            "tile server for anything — including tiles that would show where you are.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FirepitTheme.colors.textSecondary,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s)) {
+                        Button(
+                            onClick = {
+                                viewModel.setOfflineOnly(true)
+                                viewModel.dismissOfflineSuggestion()
+                            },
+                        ) { Text("Offline only") }
+                        TextButton(onClick = viewModel::dismissOfflineSuggestion) { Text("Not now") }
+                    }
+                }
+
                 HorizontalDivider()
 
                 Text(

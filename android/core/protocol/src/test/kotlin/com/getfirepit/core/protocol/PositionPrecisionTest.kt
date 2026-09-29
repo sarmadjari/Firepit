@@ -105,149 +105,72 @@ class PositionPrecisionTest {
 class PositionSharingTest {
 
     @Test
-    fun `no sharing at all is valid`() {
-        assertTrue(PositionSharing.isValid(listOf(channel(0, 0), channel(1, 0))))
-    }
-
-    @Test
-    fun `one sharing room is valid`() {
-        assertTrue(PositionSharing.isValid(listOf(channel(0, 0), channel(1, 32))))
+    fun `a radio that broadcasts nowhere is correct`() {
+        assertTrue(PositionSharing.isSilent(listOf(channel(0, 0), channel(1, 0), channel(2, 0))))
     }
 
     /**
-     * The firmware sends its own periodic broadcasts on the primary and its key
-     * is one every Meshtastic radio has, so a position there is public however
-     * few channels carry it.
+     * Positions travel sealed by the phone, so the radio's own broadcast is
+     * never wanted: it goes out under a channel key anyone holding a member's
+     * radio can read, and it keeps going with the phone away.
      */
     @Test
-    fun `the primary sharing is never valid, even on its own`() {
-        assertFalse(PositionSharing.isValid(listOf(channel(0, 32), channel(1, 0))))
+    fun `a room broadcasting from the radio is not correct either`() {
+        assertFalse(PositionSharing.isSilent(listOf(channel(0, 0), channel(1, 32))))
     }
 
     @Test
-    fun `a sharing primary is turned off on the next check`() {
-        val channels = listOf(channel(0, 32, id = 0), channel(1, 0, id = 111))
-
-        val writes = PositionSharing.writesToShareOnly(channels, roomId = null, precision = 32)
-
-        assertEquals(listOf(PrecisionWrite(0, 0)), writes)
-    }
-
-    /** A primary carrying a room's id is still the primary. */
-    @Test
-    fun `the primary cannot be chosen as the sharing room`() {
-        val channels = listOf(channel(0, 0, id = 111))
-
-        val writes = PositionSharing.writesToShareOnly(channels, roomId = 111, precision = 32)
-
-        assertTrue("the primary must never be given a precision", writes.isEmpty())
+    fun `a broadcasting primary is not correct`() {
+        assertFalse(PositionSharing.isSilent(listOf(channel(0, 13), channel(1, 0))))
     }
 
     @Test
-    fun `two sharing channels is a privacy failure`() {
-        assertFalse(PositionSharing.isValid(listOf(channel(1, 32), channel(2, 16))))
-    }
-
-    @Test
-    fun `enabling one room disables every other`() {
-        val channels = listOf(channel(0, 0, id = 0), channel(1, 32, id = 111), channel(2, 16, id = 222))
-
-        val writes = PositionSharing.writesToShareOnly(channels, roomId = 222, precision = 32)
+    fun `silencing zeroes every broadcasting channel and touches nothing else`() {
+        val channels = listOf(
+            channel(0, 13, id = 0),
+            channel(1, 0, id = 111),
+            channel(2, 32, id = 222),
+            channel(3, 16, id = 333, kind = RoomKind.MESHTASTIC_PRIVATE),
+        )
 
         assertEquals(
-            listOf(PrecisionWrite(1, 0), PrecisionWrite(2, 32)),
-            writes,
+            listOf(PrecisionWrite(0, 0), PrecisionWrite(2, 0), PrecisionWrite(3, 0)),
+            PositionSharing.writesToSilence(channels),
         )
     }
 
     @Test
-    fun `turning sharing off clears every channel`() {
-        val channels = listOf(channel(1, 32, id = 111), channel(2, 0, id = 222))
+    fun `an already silent radio needs no writes`() {
+        val channels = listOf(channel(0, 0, id = 0), channel(1, 0, id = 111))
 
-        val writes = PositionSharing.writesToShareOnly(channels, roomId = null, precision = 32)
-
-        assertEquals(listOf(PrecisionWrite(1, 0)), writes)
-    }
-
-    @Test
-    fun `an already correct radio needs no writes`() {
-        val channels = listOf(channel(0, 0, id = 0), channel(1, 32, id = 111))
-
-        val writes = PositionSharing.writesToShareOnly(channels, roomId = 111, precision = 32)
-
-        assertTrue("a reconnect check must be silent when nothing is wrong", writes.isEmpty())
+        assertTrue("a reconnect check must be silent when nothing is wrong", PositionSharing.writesToSilence(channels).isEmpty())
     }
 
     /**
      * The trap behind a real bug: a radio we cannot see produces the same empty
-     * answer as a radio that is already correct.
-     *
-     * An expiry check that ran before the link came up therefore concluded
-     * "nothing to do", forgot the deadline, and left the radio transmitting
-     * forever. Callers must establish that the channels are known *before*
-     * reading anything into an empty result.
+     * answer as a radio that is already correct. Callers must establish that the
+     * channels are known *before* reading anything into an empty result.
      */
     @Test
     fun `an unknown radio is indistinguishable from a correct one`() {
-        val unknown = PositionSharing.writesToShareOnly(emptyList(), roomId = null, precision = 32)
-        val correct = PositionSharing.writesToShareOnly(
-            listOf(channel(0, 0, id = 0)),
-            roomId = null,
-            precision = 32,
-        )
+        val unknown = PositionSharing.writesToSilence(emptyList())
+        val correct = PositionSharing.writesToSilence(listOf(channel(0, 0, id = 0)))
 
         assertTrue(unknown.isEmpty())
-        assertTrue(correct.isEmpty())
         assertEquals("no write list can tell these apart", correct, unknown)
     }
 
-    /**
-     * A shared Meshtastic channel reaches people the group never chose, and the
-     * firmware would broadcast a position there on its own schedule. It is not
-     * somewhere a position may go, however it was asked for.
-     */
     @Test
-    fun `a standard meshtastic channel can never carry a position`() {
-        val meshtastic = channel(1, PositionPrecision.DISABLED, kind = RoomKind.MESHTASTIC_PRIVATE)
-        val public = channel(2, PositionPrecision.DISABLED, kind = RoomKind.MESHTASTIC_PUBLIC)
-
-        assertFalse(PositionSharing.canShare(meshtastic))
-        assertFalse(PositionSharing.canShare(public))
-    }
-
-    @Test
-    fun `asking to share with a meshtastic channel turns sharing off instead`() {
-        val channels = listOf(
-            channel(0, PositionPrecision.DISABLED),
-            channel(1, 32, id = 111),
-            channel(2, PositionPrecision.DISABLED, id = 222, kind = RoomKind.MESHTASTIC_PRIVATE),
-        )
-
-        val writes = PositionSharing.writesToShareOnly(channels, roomId = 222, precision = 32)
-
-        // The room we were told to share with cannot, so nothing is left sharing.
-        assertEquals(listOf(PrecisionWrite(1, PositionPrecision.DISABLED)), writes)
-    }
-
-    @Test
-    fun `a position already set on a meshtastic channel is reported invalid`() {
-        val channels = listOf(
-            channel(0, PositionPrecision.DISABLED),
-            channel(1, 32, id = 111, kind = RoomKind.MESHTASTIC_PUBLIC),
-        )
-
-        assertFalse(PositionSharing.isValid(channels))
-        assertEquals(
-            listOf(PrecisionWrite(1, PositionPrecision.DISABLED)),
-            PositionSharing.writesToShareOnly(channels, roomId = null, precision = 32),
-        )
-    }
-
-    @Test
-    fun `only a firepit room may carry a position`() {
-        assertTrue(PositionSharing.canShare(channel(1, 32, kind = RoomKind.FIREPIT)))
+    fun `only a firepit room whose key we hold may receive a position`() {
+        assertTrue(PositionSharing.canShare(channel(1, 0, kind = RoomKind.FIREPIT)))
         // The primary sets the frequency and carries NodeInfo; never a position.
-        assertFalse(PositionSharing.canShare(channel(0, 32, kind = RoomKind.FIREPIT)))
+        assertFalse(PositionSharing.canShare(channel(0, 0, kind = RoomKind.FIREPIT)))
+        // A shared Meshtastic channel reaches people the group never chose.
+        assertFalse(PositionSharing.canShare(channel(1, 0, kind = RoomKind.MESHTASTIC_PRIVATE)))
+        assertFalse(PositionSharing.canShare(channel(2, 0, kind = RoomKind.MESHTASTIC_PUBLIC)))
+        // No key to seal with, or a key the rest of the room has moved on from.
+        assertFalse(PositionSharing.canShare(channel(3, 0, kind = RoomKind.FIREPIT_KEY_MISSING)))
+        assertFalse(PositionSharing.canShare(channel(4, 0, kind = RoomKind.FIREPIT_MOVED_ON)))
     }
 
     private fun channel(

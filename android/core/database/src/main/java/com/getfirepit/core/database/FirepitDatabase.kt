@@ -37,8 +37,10 @@ internal class Converters {
         ReceiptEntity::class,
         PersonCardEntity::class,
         PeerKeyEntity::class,
+        RoomActivityEntity::class,
+        PendingHandoverEntity::class,
     ],
-    version = 11,
+    version = 12,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -51,6 +53,8 @@ abstract class FirepitDatabase : RoomDatabase() {
     abstract fun receiptDao(): ReceiptDao
     abstract fun personCardDao(): PersonCardDao
     abstract fun peerKeyDao(): PeerKeyDao
+    abstract fun roomActivityDao(): RoomActivityDao
+    abstract fun pendingHandoverDao(): PendingHandoverDao
 
     companion object {
         /** Adds the roster table. Messages and nodes are left untouched. */
@@ -246,20 +250,68 @@ abstract class FirepitDatabase : RoomDatabase() {
             }
         }
 
-        fun create(context: Context): FirepitDatabase =
-            Room.databaseBuilder(context, FirepitDatabase::class.java, "firepit.db")
-                .addMigrations(
-                    MIGRATION_1_2,
-                    MIGRATION_2_3,
-                    MIGRATION_3_4,
-                    MIGRATION_4_5,
-                    MIGRATION_5_6,
-                    MIGRATION_6_7,
-                    MIGRATION_7_8,
-                    MIGRATION_8_9,
-                    MIGRATION_9_10,
-                    MIGRATION_10_11,
+        /**
+         * Records which room each message, pin and read position belongs to, so
+         * history follows a room between radios; when each room last spoke, so
+         * a quiet one can be judged after its messages are gone; and who a new
+         * room key has not reached yet.
+         */
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL("ALTER TABLE messages ADD COLUMN roomId INTEGER NOT NULL DEFAULT 0")
+                connection.execSQL("CREATE INDEX IF NOT EXISTS index_messages_roomId ON messages(roomId)")
+                connection.execSQL("ALTER TABLE map_pins ADD COLUMN roomId INTEGER NOT NULL DEFAULT 0")
+                connection.execSQL("ALTER TABLE channel_state ADD COLUMN roomId INTEGER NOT NULL DEFAULT 0")
+                connection.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS room_activity (
+                        roomId INTEGER NOT NULL,
+                        joinedAt INTEGER NOT NULL,
+                        lastActivityAt INTEGER NOT NULL,
+                        muted INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY(roomId)
+                    )
+                    """.trimIndent(),
                 )
+                connection.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS pending_handovers (
+                        roomId INTEGER NOT NULL,
+                        nodeNum INTEGER NOT NULL,
+                        generation INTEGER NOT NULL,
+                        heldGeneration INTEGER NOT NULL,
+                        removed TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        lastTriedAt INTEGER NOT NULL,
+                        PRIMARY KEY(roomId, nodeNum)
+                    )
+                    """.trimIndent(),
+                )
+            }
+        }
+
+        private const val NAME = "firepit.db"
+
+        /** Every upgrade, oldest first; the migration test runs them against the exported schemas. */
+        internal val MIGRATIONS = arrayOf(
+            MIGRATION_1_2,
+            MIGRATION_2_3,
+            MIGRATION_3_4,
+            MIGRATION_4_5,
+            MIGRATION_5_6,
+            MIGRATION_6_7,
+            MIGRATION_7_8,
+            MIGRATION_8_9,
+            MIGRATION_9_10,
+            MIGRATION_10_11,
+            MIGRATION_11_12,
+        )
+
+        /** Opens the database encrypted; see [DatabaseEncryption] for why and how. */
+        fun create(context: Context): FirepitDatabase =
+            Room.databaseBuilder(context, FirepitDatabase::class.java, NAME)
+                .openHelperFactory(EncryptedOpenHelperFactory())
+                .addMigrations(*MIGRATIONS)
                 .build()
     }
 }

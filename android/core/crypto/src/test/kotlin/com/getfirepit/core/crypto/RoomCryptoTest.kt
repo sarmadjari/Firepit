@@ -206,7 +206,6 @@ class InviteCodecTest {
         version = InviteCodec.VERSION,
         room_id = 0x1234_5678,
         room_name = "Camp",
-        position_precision = 32,
         generation = 1,
         inviter = Inviter(
             node_num = 7,

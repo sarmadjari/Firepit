@@ -35,18 +35,20 @@ class SharingViewModel @Inject constructor(
         mesh.channels,
         mesh.myNodeNum,
         location.sharingDeadline,
-    ) { channels, myNodeNum, deadline ->
+        mesh.isConnected,
+    ) { channels, myNodeNum, deadline, connected ->
         val rooms = ChannelSlotManager.rooms(channels).filter(PositionSharing::canShare)
-        val sharing = PositionSharing.sharingChannels(channels).firstOrNull()
+        // The phone does the sharing, so the choice it recorded is the truth;
+        // the radio only tells us whether that room can be reached right now.
+        val room = deadline?.let { chosen -> rooms.firstOrNull { it.id == chosen.roomId } }
         SharingUiState(
             connected = myNodeNum != null,
             rooms = rooms,
-            roomId = sharing?.id?.takeIf { it != 0 },
-            roomName = sharing?.displayName,
+            roomId = deadline?.roomId,
+            roomName = room?.displayName,
             choice = deadline?.choice ?: ShareDuration.DEFAULT,
-            // Only meaningful alongside a room the radio is actually sharing
-            // with, so a stale note never reads as live sharing.
-            endsAt = deadline?.endsAt?.takeIf { sharing != null },
+            endsAt = deadline?.endsAt,
+            paused = deadline != null && (!connected || room == null),
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SharingUiState())
 
@@ -57,10 +59,7 @@ class SharingViewModel @Inject constructor(
         }
     }
 
-    /**
-     * On failure the radio is still sharing and the deadline is kept, so the
-     * banner goes on saying so and the stop can simply be tried again.
-     */
+    /** Takes effect at once, whether or not a radio is connected: the phone is what sends. */
     fun stop() {
         viewModelScope.launch {
             runCatching { location.stopSharing() }
@@ -81,6 +80,11 @@ data class SharingUiState(
     val roomName: String? = null,
     val choice: ShareDuration = ShareDuration.DEFAULT,
     val endsAt: Long? = null,
+    /**
+     * Chosen, but not going anywhere now: the phone is away from its radio, or
+     * the radio connected does not carry the room. It resumes on its own.
+     */
+    val paused: Boolean = false,
 ) {
     val isSharing: Boolean get() = roomId != null
     val hasRooms: Boolean get() = rooms.isNotEmpty()

@@ -142,10 +142,22 @@ class ReceiptRulesTest {
     }
 
     @Test
-    fun `a direct message gets one encrypted to that node`() {
+    fun `a direct message gets one sealed to that person's phone`() {
         assertEquals(
-            ReceiptCarriage.ToOneNode(peer),
-            ReceiptRules.carriageFor(0, roomId = null, peer = peer, hasPeerKey = true),
+            ReceiptCarriage.SealedDirect(peer),
+            ReceiptRules.carriageFor(0, roomId = null, peer = peer, hasPeerKey = true, hasPeerPhoneKey = true),
+        )
+    }
+
+    /**
+     * Somebody whose phone key we never learned is a stranger, or not running
+     * Firepit. A receipt would only tell them this phone is on and reading.
+     */
+    @Test
+    fun `nobody gets a receipt their phone cannot open`() {
+        assertEquals(
+            ReceiptCarriage.None,
+            ReceiptRules.carriageFor(0, roomId = null, peer = peer, hasPeerKey = true, hasPeerPhoneKey = false),
         )
     }
 
@@ -181,16 +193,19 @@ class ReceiptRulesTest {
     /** Every combination either encrypts or sends nothing. There is no open path. */
     @Test
     fun `no combination puts a receipt on the air unencrypted`() {
+        val flags = listOf(false, true)
         listOf(null, room).forEach { roomId ->
             listOf(null, peer).forEach { peerNum ->
-                listOf(false, true).forEach { hasKey ->
-                    val carriage = ReceiptRules.carriageFor(slot, roomId, peerNum, hasKey)
-                    val label = "$roomId/$peerNum/$hasKey -> $carriage"
+                flags.forEach { hasKey ->
+                    flags.forEach { hasPhoneKey ->
+                        val carriage = ReceiptRules.carriageFor(slot, roomId, peerNum, hasKey, hasPhoneKey)
+                        val label = "$roomId/$peerNum/$hasKey/$hasPhoneKey -> $carriage"
 
-                    when (carriage) {
-                        is ReceiptCarriage.SealedRoom -> assertTrue(label, roomId != null)
-                        is ReceiptCarriage.ToOneNode -> assertTrue(label, peerNum != null && hasKey)
-                        ReceiptCarriage.None -> Unit
+                        when (carriage) {
+                            is ReceiptCarriage.SealedRoom -> assertTrue(label, roomId != null)
+                            is ReceiptCarriage.SealedDirect -> assertTrue(label, peerNum != null && hasKey && hasPhoneKey)
+                            ReceiptCarriage.None -> Unit
+                        }
                     }
                 }
             }

@@ -32,8 +32,20 @@ class SessionStore @Inject constructor(
             preferences.edit { putString(KEY_LAST_RADIO, value) }
         }
 
+    /**
+     * Whether history kept before rooms were recorded on each message has been
+     * filed under the rooms in their slots. Done once, on the first radio that
+     * connects after the upgrade — the radio that history came from.
+     */
+    var historyFiledByRoom: Boolean
+        get() = preferences.getBoolean(KEY_HISTORY_FILED, false)
+        set(value) {
+            preferences.edit { putBoolean(KEY_HISTORY_FILED, value) }
+        }
+
     private companion object {
         const val KEY_MY_NODE_NUM = "my_node_num"
         const val KEY_LAST_RADIO = "last_radio_id"
+        const val KEY_HISTORY_FILED = "history_filed_by_room"
     }
 }

@@ -75,14 +75,20 @@ class MessageNotifier @Inject constructor(
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
+        // Who, where and what only when asked for: a notification is read by
+        // whoever is looking at the phone, and copied to notification history
+        // and to any app allowed to read notifications.
         val showText = notificationPreferences.showText.value
+        val title = if (showText) room?.let { "$name in $it" } ?: name else context.getString(R.string.app_name)
         val body = if (showText) message.text else "New message"
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_radio_notification)
-            .setContentTitle(room?.let { "$name in $it" } ?: name)
+            .setContentTitle(title)
             .setContentText(body)
             .apply { if (showText) setStyle(NotificationCompat.BigTextStyle().bigText(message.text)) }
+            // Not bridged to a watch: that is another screen, in plainer view.
+            .setLocalOnly(true)
             // Private, with a public version that names nobody: on a secure lock
             // screen set to hide sensitive content, that is all a passer-by
             // sees. Whether sensitive content shows there at all is the phone
@@ -94,6 +100,7 @@ class MessageNotifier @Inject constructor(
                     .setContentTitle(context.getString(R.string.app_name))
                     .setContentText("New message")
                     .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                    .setLocalOnly(true)
                     .build(),
             )
             .setContentIntent(open)

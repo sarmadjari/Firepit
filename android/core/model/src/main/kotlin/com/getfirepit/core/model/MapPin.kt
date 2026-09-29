@@ -3,9 +3,9 @@ package com.getfirepit.core.model
 /**
  * A pin dropped on the map.
  *
- * Mesh waypoints are public to everyone on the channel and editable by anyone
- * unless [lockedTo] names an owner, so nothing here should be treated as
- * private or authoritative.
+ * Travels sealed under the room's key, so only members see it and only a
+ * member can change it; [lockedTo] then narrows editing to one of them. A
+ * member can still write anything, so a pin is a claim, not a fact.
  */
 data class MapPin(
     val id: Int,
@@ -21,6 +21,8 @@ data class MapPin(
     val icon: String? = null,
     val createdBy: Int,
     val receivedAt: Long,
+    /** The room it belongs to, which outlives the slot the room sits in. */
+    val roomId: Int = 0,
 ) {
     val latitude: Double get() = latitudeI * 1e-7
 

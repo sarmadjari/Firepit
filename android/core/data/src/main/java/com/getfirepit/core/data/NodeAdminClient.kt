@@ -88,6 +88,28 @@ class NodeAdminClient @Inject constructor(
         send(AdminMessage(session_passkey = sessionPasskey(), set_config = Config(position = position)))
     }
 
+    /**
+     * The radio's Bluetooth pairing, whole-section like the rest. Expect a
+     * reboot, after which the phone has to pair again with the new PIN.
+     */
+    suspend fun setBluetoothConfig(bluetooth: Config.BluetoothConfig) {
+        send(AdminMessage(session_passkey = sessionPasskey(), set_config = Config(bluetooth = bluetooth)))
+    }
+
+    /**
+     * The radio's security section, whole. It carries the radio's own key
+     * pair, so this must be built from what the radio reported or the node
+     * would come back as somebody else. Expect a reboot.
+     */
+    suspend fun setSecurityConfig(security: Config.SecurityConfig) {
+        send(AdminMessage(session_passkey = sessionPasskey(), set_config = Config(security = security)))
+    }
+
+    /** The MQTT module, whole-section like the rest. Expect a reboot. */
+    suspend fun setMqttConfig(mqtt: ModuleConfig.MQTTConfig) {
+        send(AdminMessage(session_passkey = sessionPasskey(), set_module_config = ModuleConfig(mqtt = mqtt)))
+    }
+
     /** Whether the radio itself announces an arriving message. Same replacement rule. */
     suspend fun setExternalNotificationConfig(config: ModuleConfig.ExternalNotificationConfig) {
         send(

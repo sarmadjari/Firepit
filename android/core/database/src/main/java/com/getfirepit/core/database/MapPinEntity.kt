@@ -1,5 +1,6 @@
 package com.getfirepit.core.database
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.getfirepit.core.model.MapPin
@@ -7,6 +8,7 @@ import com.getfirepit.core.model.MapPin
 @Entity(tableName = "map_pins")
 data class MapPinEntity(
     @PrimaryKey val id: Int,
+    /** Where its room sits now; see [MessageEntity.roomId] for why that is not its identity. */
     val channel: Int,
     val latitudeI: Int,
     val longitudeI: Int,
@@ -17,6 +19,7 @@ data class MapPinEntity(
     val icon: String?,
     val createdBy: Int,
     val receivedAt: Long,
+    @ColumnInfo(defaultValue = "0") val roomId: Int = 0,
 )
 
 /**
@@ -45,6 +48,7 @@ internal fun MapPinEntity.toDomain() = MapPin(
     icon = icon,
     createdBy = createdBy,
     receivedAt = receivedAt,
+    roomId = roomId,
 )
 
 internal fun MapPin.toEntity() = MapPinEntity(
@@ -59,4 +63,5 @@ internal fun MapPin.toEntity() = MapPinEntity(
     icon = icon,
     createdBy = createdBy,
     receivedAt = receivedAt,
+    roomId = roomId,
 )

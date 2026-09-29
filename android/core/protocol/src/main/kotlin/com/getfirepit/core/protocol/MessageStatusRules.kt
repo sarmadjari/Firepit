@@ -21,21 +21,31 @@ object MessageStatusRules {
         if (res == 0) MessageStatus.SENT_TO_NODE else MessageStatus.FAILED
 
     /**
-     * A `ROUTING_APP` packet whose `request_id` matches a message we sent.
+     * A `ROUTING_APP` packet whose `request_id` matches a message we sent, or
+     * null when it proves nothing about that message.
      *
      * @param ackFrom the `from` field of the routing packet. The firmware sends
      * an implicit ACK from **our own** node number when it overhears our packet
      * being rebroadcast; a real acknowledgement carries the peer's number.
+     * @param sentTo who the message went to. Packet ids are in every header, so
+     * anybody can answer one: only the recipient's own ACK says it arrived, and
+     * only our radio or the recipient may say it failed.
      */
-    fun fromRouting(errorReason: Routing.Error?, ackFrom: Int, myNodeNum: Int): MessageStatus =
-        when (errorReason ?: Routing.Error.NONE) {
-            Routing.Error.NONE ->
-                if (ackFrom == myNodeNum) MessageStatus.REACHED_MESH else MessageStatus.DELIVERED
+    fun fromRouting(errorReason: Routing.Error?, ackFrom: Int, myNodeNum: Int, sentTo: Int): MessageStatus? {
+        val fromUs = ackFrom == myNodeNum
+        val fromRecipient = sentTo != MeshConstants.BROADCAST_NODENUM && ackFrom == sentTo
+        return when (errorReason ?: Routing.Error.NONE) {
+            Routing.Error.NONE -> when {
+                fromUs -> MessageStatus.REACHED_MESH
+                fromRecipient -> MessageStatus.DELIVERED
+                else -> null
+            }
 
-            Routing.Error.MAX_RETRANSMIT -> MessageStatus.UNHEARD
+            Routing.Error.MAX_RETRANSMIT -> MessageStatus.UNHEARD.takeIf { fromUs }
 
-            else -> MessageStatus.FAILED
+            else -> MessageStatus.FAILED.takeIf { fromUs || fromRecipient }
         }
+    }
 
     /**
      * Packets arrive out of order, so status only ever moves forward. Without

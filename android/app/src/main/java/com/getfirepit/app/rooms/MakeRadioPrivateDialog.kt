@@ -41,7 +41,9 @@ fun MakeRadioPrivateDialog(
                 Text(
                     text = "What is still public is the radio itself. Right now it broadcasts " +
                         "its name and battery level in the open, and any Meshtastic device " +
-                        "nearby can see them. Making it private hides those too.",
+                        "nearby can see them. Making it private hides them from ordinary " +
+                        "Meshtastic radios — but not from anyone running Firepit, because " +
+                        "that key comes with the app.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = FirepitTheme.colors.textSecondary,
                 )

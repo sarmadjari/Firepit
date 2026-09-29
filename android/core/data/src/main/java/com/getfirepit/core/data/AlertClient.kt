@@ -109,7 +109,11 @@ class AlertClient @Inject constructor(
                     link.inbound
                         .filter { from ->
                             val data = from.packet?.decoded
-                            data?.portnum == PortNum.ROUTING_APP && data.request_id == packet.id
+                            // Only the node buzzed, or our own radio, can say how it went:
+                            // anybody else answering the id is answering for them.
+                            val sender = from.packet?.from
+                            data?.portnum == PortNum.ROUTING_APP && data.request_id == packet.id &&
+                                (sender == nodeNum || sender == myNodeNum)
                         }
                         .first()
                 }
@@ -118,7 +122,7 @@ class AlertClient @Inject constructor(
                 val answer = reply.await().packet ?: return@coroutineScope BuzzResult.NoAnswer
                 val routing = answer.decoded?.payload
                     ?.let { runCatching { Routing.ADAPTER.decode(it) }.getOrNull() }
-                when (MessageStatusRules.fromRouting(routing?.error_reason, answer.from, myNodeNum)) {
+                when (MessageStatusRules.fromRouting(routing?.error_reason, answer.from, myNodeNum, sentTo = nodeNum)) {
                     MessageStatus.DELIVERED -> BuzzResult.Delivered
                     MessageStatus.REACHED_MESH -> BuzzResult.ReachedMesh
                     else -> BuzzResult.Refused(routing?.error_reason ?: Routing.Error.NONE)

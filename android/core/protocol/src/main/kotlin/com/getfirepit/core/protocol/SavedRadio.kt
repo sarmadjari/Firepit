@@ -43,6 +43,12 @@ data class SavedRadio(
     val transport: DeviceTransport = DeviceTransport.BLUETOOTH,
     val nodeNum: Int? = null,
     val onMap: Boolean = true,
+    /**
+     * The radio's own public key, base64, pinned the first time it said who it
+     * is. Anything can answer at a Bluetooth address; only this radio holds
+     * the matching private key.
+     */
+    val publicKey: String? = null,
 )
 
 /**

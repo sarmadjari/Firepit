@@ -114,7 +114,7 @@ object KeyEnvelope {
     private fun newPair(): KeyPair =
         KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec(CURVE)) }.generateKeyPair()
 
-    private fun agree(privateKey: PrivateKey, publicKey: PublicKey): ByteArray =
+    internal fun agree(privateKey: PrivateKey, publicKey: PublicKey): ByteArray =
         KeyAgreement.getInstance("ECDH").run {
             init(privateKey)
             doPhase(publicKey, true)
@@ -132,7 +132,7 @@ object KeyEnvelope {
         }
     }
 
-    private fun hmac(key: ByteArray, data: ByteArray): ByteArray =
+    internal fun hmac(key: ByteArray, data: ByteArray): ByteArray =
         Mac.getInstance(HMAC).run {
             init(SecretKeySpec(key, HMAC))
             doFinal(data)
@@ -149,7 +149,7 @@ object KeyEnvelope {
      * P-256's prime is 3 mod 4, so the square root is a single exponentiation;
      * checking that it squares back is what rejects an x with no point above it.
      */
-    private fun decode(bytes: ByteArray): ECPublicKey? {
+    internal fun decode(bytes: ByteArray): ECPublicKey? {
         if (bytes.size != PUBLIC_KEY_SIZE || (bytes[0] != EVEN && bytes[0] != ODD)) return null
         val x = BigInteger(1, bytes.copyOfRange(1, PUBLIC_KEY_SIZE))
         if (x >= prime) return null

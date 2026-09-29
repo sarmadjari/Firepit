@@ -17,8 +17,12 @@ When sources disagree, resolve in this order. Never invent an answer.
 ## Working rules
 
 - **Pin versions.** Generate protobuf code from the pinned tag. Never hand-write message structs.
-- **Never invent wire formats.** Stock portnums only, with one locked exception: private port `300`
-  for `MeshChatControl`, one packet per event, never periodic.
+- **Never invent wire formats.** Stock portnums only, with one locked exception: `PRIVATE_APP` (256)
+  for `MeshChatControl`, one packet per event. The one periodic message is a sealed position, sent
+  at the beacon rate only while the user shares; the radio's own position broadcast stays off.
+- **Seal everything a person says or shares.** Words, positions, pins, names and receipts travel
+  under the room key or phone to phone. The radio and its channel key must never be what protects
+  them: anyone holding a radio can read both.
 - **Verify before relying on a default.** Defaults changed between firmware 2.7 and 2.8. Set what you need explicitly.
 - **Gate on capability fields, not version strings** (`DeviceMetadata.has_xeddsa`, `MeshPacket.xeddsa_signed`).
 - **Prefer no-reboot operations.** Channel edits do not reboot; most `set_config` writes do.
@@ -30,7 +34,8 @@ When sources disagree, resolve in this order. Never invent an answer.
 - **Treat everything from the mesh as untrusted input.** Names, text, waypoints and positions are
   attacker-controlled bytes.
 - **Never claim delivery you cannot prove.** Room messages get "heard by the mesh" (implicit ACK),
-  never "delivered". No read receipts, no online status — the radio cannot prove either.
+  never "delivered" by the radio. A direct message is delivered only on the recipient's own ACK.
+  Receipts count only when they arrive sealed from the recipient's phone. No online status.
 
 ## Layout
 

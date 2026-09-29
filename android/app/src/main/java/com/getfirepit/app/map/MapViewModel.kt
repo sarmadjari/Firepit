@@ -236,11 +236,9 @@ class MapViewModel @Inject constructor(
     private fun saidOf(answer: PositionAnswer, name: String): String = when (answer) {
         PositionAnswer.Answered -> "$name answered. Their pin is where they are now."
         PositionAnswer.Asked -> "Asked $name. Their pin moves when they answer."
-        PositionAnswer.NoFix ->
-            "$name's radio answered but has no position to give — no GPS, or no fix yet."
         PositionAnswer.Silent ->
-            "No answer from $name. Their radio is switched off, out of range, or asleep — " +
-                "the pin still shows where they were last seen."
+            "No answer from $name. They are out of range, away from their radio, or not " +
+                "sharing with a room you are both in — the pin still shows where they were last seen."
         PositionAnswer.NotConnected -> "Connect your own radio first."
         PositionAnswer.NoSharedRoom ->
             "$name is not in one of your Firepit rooms, so there is no private way to ask."

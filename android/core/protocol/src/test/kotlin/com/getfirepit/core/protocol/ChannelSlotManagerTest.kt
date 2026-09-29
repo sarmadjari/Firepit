@@ -178,6 +178,36 @@ class ChannelSlotManagerTest {
         }
     }
 
+    /**
+     * Meshtastic channels have no id of their own, so two of them both answer
+     * to 0. Leaving one by id used to take every id-less channel out of the
+     * layout; by slot, only the one meant goes.
+     */
+    @Test
+    fun `leaving one of two channels without an id keeps the other`() {
+        val channels = listOf(primary(), room(1, 0), room(2, 0), room(3, 300))
+
+        val writes = ChannelSlotManager.writesForLeavingSlot(channels, slot = 1)
+
+        assertEquals(
+            listOf(
+                ChannelSlotManager.SlotWrite(1, room(2, 0).copy(index = 1)),
+                ChannelSlotManager.SlotWrite(2, room(3, 300).copy(index = 2)),
+                ChannelSlotManager.SlotWrite(3, null),
+            ),
+            writes,
+        )
+        assertEquals(listOf(2 to 1, 3 to 2), ChannelSlotManager.slotMovesForLeavingSlot(channels, slot = 1))
+    }
+
+    @Test
+    fun `a slot with nothing in it leaves nothing to write`() {
+        val channels = listOf(primary(), room(1, 100))
+
+        assertTrue(ChannelSlotManager.writesForLeavingSlot(channels, slot = 4).isEmpty())
+        assertTrue(ChannelSlotManager.slotMovesForLeavingSlot(channels, slot = 4).isEmpty())
+    }
+
     private companion object {
         const val PRIMARY_ID = 0x4D455348
 

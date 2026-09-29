@@ -46,6 +46,13 @@ With no screen, these lights and the tone patterns above are the only feedback y
 
 ## How to share your current location with trusted people
 
+> **With Firepit:** Firepit turns the radio's own position broadcast off on every
+> channel each time it connects, because that broadcast travels under the
+> channel key, which anyone holding a member's radio can read. Your phone shares
+> your location instead, sealed with the room's key, while it is connected to
+> the Tag. So on a Tag managed by Firepit, the double-press ping below reaches
+> nobody. The steps below describe the stock Meshtastic app.
+
 The double-press "position ping" only reaches people who are on a channel where **location sharing is turned on**. It doesn't ask you who to send it to — it broadcasts to whichever room already has position sharing enabled. So the setup happens in the app, once, before you ever need the button:
 
 1. **In the Meshtastic app**, open the private room/channel your trusted people are in → channel settings → turn on **position sharing** (choose your precision level here too — full precision for close friends, coarser for a larger group)

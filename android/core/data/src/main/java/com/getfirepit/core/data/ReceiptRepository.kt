@@ -1,8 +1,7 @@
 package com.getfirepit.core.data
 
 import android.util.Log
-import com.getfirepit.core.crypto.RoomCipher
-import com.getfirepit.core.crypto.RoomCrypto
+import com.getfirepit.core.crypto.DirectSeal
 import com.getfirepit.core.crypto.SealedText
 import com.getfirepit.core.database.MessageDao
 import com.getfirepit.core.database.ReceiptDao
@@ -21,6 +20,7 @@ import com.getfirepit.core.protocol.TrustRules
 import com.getfirepit.core.transport.RadioLink
 import com.getfirepit.protocol.meshchat.MeshChatControl
 import com.getfirepit.protocol.meshchat.Receipt as ReceiptProto
+import com.getfirepit.protocol.meshchat.SealedDirect
 import com.getfirepit.protocol.meshchat.SealedMessage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -54,6 +54,7 @@ class ReceiptRepository @Inject constructor(
     private val receiptDao: ReceiptDao,
     private val messageDao: MessageDao,
     private val memberDao: RoomMemberDao,
+    private val phoneKeys: PhoneKeyStore,
     @param:ApplicationScope private val scope: CoroutineScope,
 ) {
 
@@ -200,15 +201,18 @@ class ReceiptRepository @Inject constructor(
 
     /**
      * Sent only where it can be sent privately: sealed under a room key, or
-     * addressed to one person and encrypted to them.
+     * sealed to the one person's phone and encrypted to their radio as well.
      *
      * On an ordinary channel a receipt would announce to everyone in earshot
      * what this phone has been reading, which is worse than having no receipt.
+     * Somebody whose phone key we never learned gets none either: it would only
+     * tell a stranger this phone is on and reading.
      */
     private suspend fun send(conversation: Conversation, batch: PendingReceipts): Boolean {
         val myNodeNum = mesh.myNodeNum.value ?: return false
         val roomId = firepitRoomFor(conversation.channel)
         val publicKey = conversation.peer?.let(::publicKeyOf)
+        val peerPhoneKey = conversation.peer?.let { mesh.phoneKeyOf(it) }
         val receipt = ReceiptProto(
             room_id = roomId ?: 0,
             delivered = batch.delivered.toList(),
@@ -221,6 +225,7 @@ class ReceiptRepository @Inject constructor(
             roomId = roomId,
             peer = conversation.peer,
             hasPeerKey = publicKey != null,
+            hasPeerPhoneKey = peerPhoneKey != null,
         )
 
         val packet = when (carriage) {
@@ -231,20 +236,34 @@ class ReceiptRepository @Inject constructor(
                     channel = carriage.channel,
                     portNum = PortNum.PRIVATE_APP,
                     payload = payload,
+                    hopLimit = mesh.hopLimitForSending(),
+                    // Like words, so the header does not tell a receipt from them.
+                    wantAck = true,
                     // Nobody is waiting on a receipt about a receipt.
                     priority = MeshPacket.Priority.BACKGROUND,
                 )
             }
 
-            is ReceiptCarriage.ToOneNode -> MeshPacketBuilder.meshPacket(
-                to = carriage.nodeNum,
-                channel = conversation.channel,
-                portNum = PortNum.PRIVATE_APP,
-                payload = control.encode().let(ByteString::of),
-                pkiEncrypted = true,
-                publicKey = requireNotNull(publicKey),
-                priority = MeshPacket.Priority.BACKGROUND,
-            )
+            is ReceiptCarriage.SealedDirect -> {
+                val sealed = phoneKeys.sealDirect(
+                    requireNotNull(peerPhoneKey),
+                    control.encode(),
+                    DirectSeal.contextOf(myNodeNum, carriage.nodeNum),
+                )
+                MeshPacketBuilder.meshPacket(
+                    to = carriage.nodeNum,
+                    channel = conversation.channel,
+                    portNum = PortNum.PRIVATE_APP,
+                    payload = MeshChatControl(
+                        sealed_direct = SealedDirect(ciphertext = sealed.toByteString()),
+                    ).encode().let(ByteString::of),
+                    hopLimit = mesh.hopLimitForSending(),
+                    wantAck = true,
+                    pkiEncrypted = true,
+                    publicKey = requireNotNull(publicKey),
+                    priority = MeshPacket.Priority.BACKGROUND,
+                )
+            }
 
             ReceiptCarriage.None -> {
                 Log.i(TAG, "no private way to send a receipt on channel ${conversation.channel}")
@@ -273,7 +292,7 @@ class ReceiptRepository @Inject constructor(
      * everyone in earshot what this phone has been reading.
      */
     private fun seal(roomId: Int, myNodeNum: Int, control: MeshChatControl): ByteString? {
-        val key = roomKeys.keyFor(roomId) ?: return null
+        val key = roomKeys.sealingKey(roomId) ?: return null
         val sealed = SealedText.seal(key, control.encode(), SealedText.contextOf(roomId, myNodeNum))
         return MeshChatControl(
             sealed_message = SealedMessage(

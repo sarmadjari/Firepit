@@ -72,12 +72,15 @@ enum class RadioPrivacy(val label: String, val summary: String) {
         summary = "This radio is still set up the way you found it.",
     ),
 
-    /** Slot 0 carries Firepit's key: only Firepit radios can see this node. */
+    /**
+     * Slot 0 carries Firepit's key: ordinary Meshtastic radios no longer see
+     * this node. The key ships in the app, so every Firepit install can.
+     */
     FIREPIT(
         label = "Private to Firepit",
-        summary = "Only Firepit radios can see this one. Its name and battery level stay hidden " +
-            "from everyone else. If you also use this radio on another Meshtastic mesh, it " +
-            "will leave that mesh.",
+        summary = "Ordinary Meshtastic radios no longer see this one. Its name and battery level " +
+            "are still sent in the open to anyone running Firepit, because that key comes with " +
+            "the app. If you also use this radio on another Meshtastic mesh, it will leave that mesh.",
     ),
 
     /** Left as the factory or its owner set it. */
@@ -140,6 +143,15 @@ object PrimaryChannel {
     const val KEY_BASE64: String = "3RrNdyWIx+i2Z2QBs2sRVxXC1uGZs7oqCN3lIyVMl3k="
 
     val key: ByteString = requireNotNull(KEY_BASE64.decodeBase64()) { "primary key is not base64" }
+
+    /** True for the key every copy of Firepit carries, which keeps nothing from anyone who has the app. */
+    fun isAppWideKey(psk: ByteString?): Boolean = psk == key
+
+    /** How a channel's key reads to a person: the app-wide key is named for what it is. */
+    fun keyLabel(psk: ByteString?): String =
+        if (isAppWideKey(psk)) APP_WIDE_KEY_LABEL else ChannelKey.of(psk?.toByteArray()).label
+
+    const val APP_WIDE_KEY_LABEL = "Firepit's shared key: anyone with the app can read it"
 
     fun nameFor(mode: RangeMode): String = when (mode) {
         RangeMode.GROUP_ONLY -> GROUP_NAME

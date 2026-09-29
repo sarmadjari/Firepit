@@ -49,16 +49,39 @@ class SavedRadioStore @Inject constructor(
                     transport = existing?.transport ?: transport,
                     nodeNum = existing?.nodeNum,
                     onMap = existing?.onMap != false,
+                    publicKey = existing?.publicKey,
                 ),
             ),
         )
     }
 
-    /** Learned once the radio says who it is, and kept for when it is away. */
-    fun rememberNode(identifier: String, nodeNum: Int) {
+    /**
+     * Learned once the radio says who it is, and kept for when it is away.
+     *
+     * Only ever filled in, never overwritten: false when the radio answering
+     * at this address is not the one saved here — a different node, or the
+     * same node number under a different key. Anything can answer at a
+     * Bluetooth address; replacing the saved identity would make whatever
+     * answered the radio this phone trusts.
+     */
+    fun rememberNode(identifier: String, nodeNum: Int, publicKey: String?): Boolean {
+        val existing = _radios.value.firstOrNull { it.identifier == identifier } ?: return true
+        val sameNode = existing.nodeNum == null || existing.nodeNum == nodeNum
+        // A radio that once showed a key and now shows none is not the same
+        // radio until the person says so: saying nothing is how an impostor
+        // would get past a comparison.
+        val sameKey = existing.publicKey == null || existing.publicKey == publicKey
+        if (!sameNode || !sameKey) return false
+        if (existing.nodeNum != nodeNum || (existing.publicKey == null && publicKey != null)) {
+            write(SavedRadios.assign(_radios.value, existing.copy(nodeNum = nodeNum, publicKey = publicKey ?: existing.publicKey)))
+        }
+        return true
+    }
+
+    /** The person says the radio answering now is theirs after all, reset or reflashed. */
+    fun trust(identifier: String, nodeNum: Int, publicKey: String?) {
         val existing = _radios.value.firstOrNull { it.identifier == identifier } ?: return
-        if (existing.nodeNum == nodeNum) return
-        write(SavedRadios.assign(_radios.value, existing.copy(nodeNum = nodeNum)))
+        write(SavedRadios.assign(_radios.value, existing.copy(nodeNum = nodeNum, publicKey = publicKey)))
     }
 
     fun showOnMap(identifier: String, onMap: Boolean) {
@@ -80,7 +103,8 @@ class SavedRadioStore @Inject constructor(
                     .put(KEY_ROLE, radio.role.name)
                     .put(KEY_TRANSPORT, radio.transport.name)
                     .put(KEY_NODE, radio.nodeNum ?: JSONObject.NULL)
-                    .put(KEY_ON_MAP, radio.onMap),
+                    .put(KEY_ON_MAP, radio.onMap)
+                    .put(KEY_PUBLIC_KEY, radio.publicKey ?: JSONObject.NULL),
             )
         }
         preferences.edit { putString(KEY_RADIOS, array.toString()) }
@@ -106,6 +130,7 @@ class SavedRadioStore @Inject constructor(
                     transport = transport,
                     nodeNum = item.opt(KEY_NODE)?.takeIf { it != JSONObject.NULL } as? Int,
                     onMap = item.optBoolean(KEY_ON_MAP, true),
+                    publicKey = item.opt(KEY_PUBLIC_KEY)?.takeIf { it != JSONObject.NULL } as? String,
                 )
             }
         }.getOrDefault(emptyList())
@@ -119,5 +144,6 @@ class SavedRadioStore @Inject constructor(
         const val KEY_TRANSPORT = "transport"
         const val KEY_NODE = "node"
         const val KEY_ON_MAP = "onMap"
+        const val KEY_PUBLIC_KEY = "publicKey"
     }
 }

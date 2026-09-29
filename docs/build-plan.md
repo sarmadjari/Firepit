@@ -512,19 +512,17 @@ the app's claims were ahead of its code.
 
 ### Deferred from this stage
 
-- **Encrypted database — not wanted for now.** Android already encrypts the disk of a locked
-  phone, room keys sit in the keystore rather than in the database, and backups are off. What
-  full-database encryption adds on top is protection against an unlocked or rooted phone. Worth
-  having, but a smaller gap than it was before rooms were sealed.
+- **Encrypted database** — deferred here, done in Stage 7.9. The reasoning at the time was that
+  Android already encrypts a locked phone's disk; that holds only until the first unlock after a
+  restart, which is almost never the state a phone is taken in.
 
-  Tried once with SQLCipher and reverted, which is worth recording so the next attempt starts
-  further along. The one-time migration of an existing plaintext database goes through `ATTACH` +
-  `sqlcipher_export()`, and in `sqlcipher-android` 4.9.0 two things go wrong: run through
-  `rawExecSQL` the statement is never stepped and no file appears at all, and run through
-  `rawQuery` the attachment is invisible to the connection the query lands on (`unknown
-  database`). Both leave plaintext in place while the code believes it has encrypted it. A fix
-  needs the migration pinned to one connection, or a different strategy — and the instrumented
-  test that caught this, which is the part actually worth keeping.
+  Tried once with SQLCipher and reverted, which is worth recording. The one-time migration of an
+  existing plaintext database goes through `ATTACH` + `sqlcipher_export()`, and in
+  `sqlcipher-android` 4.9.0 no encrypted file ever appeared. Stage 7.9 hit the same wall on 4.19.0
+  and found a cause: `ATTACH` inherits the main connection's open flags, so a database opened
+  read-write without `CREATE_IF_NECESSARY` cannot create the file it attaches (`SQLITE_CANTOPEN`).
+  The migration now opens with that flag, on one connection out of WAL mode, and checks the copy
+  before the plain file goes. The instrumented test that reads the bytes back caught it both times.
 
 ---
 
@@ -698,6 +696,76 @@ Written up in `docs/security.md` §1: a member can forge sealed text as another 
 messages can be replayed by someone with the room PSK; positions and telemetry are accepted from any
 channel; a member can announce a false phone key for someone else, which cannot let them read that
 person's next key but can make that person miss it.
+
+---
+
+## Stage 7.9 — Data-flow assessment
+
+A second review, of every path data takes: phone to radio, radio to air, air to other phones, and
+what stays on each. Twenty-two findings, all fixed, plus one product decision: **locations and pins
+are sealed like words**, so the radio's own position broadcast is off on every channel and sharing
+pauses while the phone is away from its radio. The WisMesh Tag's button ping no longer reaches
+anyone under Firepit.
+
+### High
+
+- **Removing a member could leave another member talking only to the removed person.** A rotation
+  counted a member as reached once our own radio took the packet; one out of range kept the old
+  keys, which the removed person also held. Now each member counts only on their own ACK, their key
+  goes back into our radio first (`add_contact`), anyone missed is handed the key when next heard
+  (`pending_handovers`), and a sealed `KEY_ROTATED` goes out under the old key before our radio
+  moves, so a member who misses their copy stops sending (`RoomKind.FIREPIT_MOVED_ON`).
+- **Direct messages were protected only by the radios**, which hand their private keys to any
+  connected phone. Now sealed phone to phone (`DirectSeal`: ECDH P-256 between the two phones'
+  keys, HKDF, AES-GCM) inside PKI; people whose phone key is unknown get PKI with a warning.
+- **The Bluetooth link was never checked.** Screenless radios pair with `123456`. The radio's
+  pairing, admin key, managed mode, admin channel, debug log and MQTT settings are now checked on
+  every connection, each with a one-tap fix (`RadioSecurityCheck`), and a saved radio's identity
+  is pinned.
+
+### Medium
+
+- The database is encrypted with SQLCipher 4.19 (`DatabaseEncryption`, key wrapped by the
+  Keystore, opened on first use off the main thread); an old plaintext database is rewritten and
+  checked before the plain file goes. DB v12.
+- Timed sharing now lives on the phone, so it ends on time whichever radio is connected.
+- Forgetting a radio can take Firepit's rooms off it and restore its primary; a lost radio can be
+  rotated out of every room.
+- The primary's key is described as what it is: shared by every copy of the app.
+- "Leave quiet rooms" works (`room_activity`); positions, strangers, cards, phone keys, pins,
+  tombstones and browsed map tiles now expire, and settings can erase history.
+- The join fingerprint covers the joiner's phone key as well as their radio key.
+
+### Low
+
+Pins sealed (so locks answer to the room key); delivery only from the recipient's ACK; roster sync
+and direct receipts sealed, none to strangers; every sealed room packet asks for an ACK; a room
+whose key is missing refuses text; screenshots and Recents blocked by default; notifications name
+nobody unless asked and stay off watches; the map asks before framing the group online and sends a
+neutral User-Agent; keyboards told not to learn; history filed by room, not slot (`RoomHistory`);
+the private-radio choice is per radio. Also: precise location restored on Android 12+, which a
+library manifest had capped at API 30.
+
+### What the review of the fixes caught
+
+An independent review of this stage found eleven problems in the fixes themselves, all corrected:
+leaving an id-less Meshtastic channel deleted every other one's history, and could pick the wrong
+one (channels are now named by slot); leaving raced history placement (slot rewrites and placement
+now share a lock, and a room's history is deleted by its id); a member who missed two rotations was
+sealed a key they could not open (each handover is now sealed under the generation that member
+holds); pending handovers were recorded only after the ACK waits; a notice naming a far-future
+generation could stall a member for good; Meshtastic-channel history could be parked for ever; a
+sealed direct message the other phone could not open read as delivered (`SealedDirectRefused`);
+quiet-room detection ignored your own messages and shared positions; mutes were reset by the upgrade
+and by switching radios (now kept per room); sharing survived leaving the room; and a radio could
+pass the identity pin by reporting no key.
+
+### Verified
+
+493 JVM tests, lint and compiler clean; 19 instrumented tests on an API 37 emulator: the plaintext
+database really is rewritten encrypted, Room opens it, every schema from 1 to 12 upgrades, and the
+history queries keep each room's history with it. The app starts, its database file is ciphertext,
+and a screenshot of it comes out black.
 
 ---
 

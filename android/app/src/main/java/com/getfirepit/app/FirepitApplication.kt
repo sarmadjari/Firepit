@@ -4,13 +4,15 @@ import android.app.Application
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
-import com.getfirepit.app.radio.RadioSessionController
 import com.getfirepit.app.notifications.MessageNotifier
+import com.getfirepit.app.radio.RadioSessionController
+import com.getfirepit.app.settings.RetentionStore
 import com.getfirepit.core.data.ChatPresence
 import com.getfirepit.core.data.LocationRepository
 import com.getfirepit.core.data.MeshRepository
 import com.getfirepit.core.data.NodeClock
 import com.getfirepit.core.data.RangeRepository
+import com.getfirepit.core.data.RoomHistory
 import com.getfirepit.core.data.RoomRepository
 import com.getfirepit.core.data.WaypointRepository
 import dagger.hilt.android.HiltAndroidApp
@@ -39,6 +41,10 @@ class FirepitApplication : Application() {
 
     @Inject lateinit var radioSession: RadioSessionController
 
+    @Inject lateinit var roomHistory: RoomHistory
+
+    @Inject lateinit var retention: RetentionStore
+
     override fun onCreate() {
         super.onCreate()
         // The inbound pump must outlive every screen, so it starts here rather
@@ -49,10 +55,14 @@ class FirepitApplication : Application() {
         // announces its owner's name to every Meshtastic device in range.
         rangeRepository.start()
         roomRepository.start()
+        roomHistory.start()
         waypointRepository.start()
         locationRepository.start()
         messageNotifier.start()
         nodeClock.start()
+        // Now and every few hours: a phone left closed for a month catches up
+        // the moment it starts, and one left running for days keeps up.
+        retention.start()
 
         ProcessLifecycleOwner.get().lifecycle.addObserver(
             object : DefaultLifecycleObserver {

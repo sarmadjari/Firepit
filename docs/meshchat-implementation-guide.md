@@ -23,7 +23,7 @@ When this guide, the design doc, and upstream disagree, resolve in this order:
 ### 0.2 Working rules for the agent
 
 - **Pin versions.** Generate protobuf code from a pinned protobufs tag. Do not hand-write message structs.
-- **Never invent wire formats.** Everything on the air uses stock portnums, with one locked exception (D-2): MeshChat control events (join hello, roster events, receipts, sealed room messages, live-location requests) ride `PortNum.PRIVATE_APP` (256) as a single `MeshChatControl` protobuf whose `oneof` says which — one packet per event, never periodic. `portnums.proto` sanctions this directly: *"To simplify initial development and testing you can use PRIVATE_APP in your code without needing to rebuild protobuf files."* Claiming 300 would mean editing the vendored protos, and the generated `PortNum` enum cannot express a number they do not declare. App-level formats (QR, links, local DB) are yours to define; they are specified in §6.8.
+- **Never invent wire formats.** Everything on the air uses stock portnums, with one locked exception (D-2): MeshChat control events (join hello, roster events, receipts, sealed room messages, sealed pins, sealed direct messages, location requests) ride `PortNum.PRIVATE_APP` (256) as a single `MeshChatControl` protobuf whose `oneof` says which — one packet per event. The one periodic message is a sealed position (D-2, amended 2026-09-29), which replaces the firmware's own position broadcast rather than adding to it. `portnums.proto` sanctions this directly: *"To simplify initial development and testing you can use PRIVATE_APP in your code without needing to rebuild protobuf files."* Claiming 300 would mean editing the vendored protos, and the generated `PortNum` enum cannot express a number they do not declare. App-level formats (QR, links, local DB) are yours to define; they are specified in §6.8.
 - **Verify before relying on a default.** Firmware defaults changed between 2.7 and 2.8 (position precision, telemetry, node numbers). MeshChat must set what it needs explicitly.
 - **Prefer no-reboot operations.** Channel edits do not reboot the node; most `set_config` writes do. Design flows around that (§6.3, §6.7).
 - **Everything the node does for you is rate-limited.** Positions, NodeInfo, and telemetry replies are throttled by the firmware; the phone API also rate-limits outgoing text (2 s) and position/waypoint/alert/telemetry (10 s per portnum). Build queues, not retries-in-a-loop.
@@ -318,12 +318,12 @@ Each feature: **Maps to** (stock Meshtastic mechanism) · **Wire facts** · **Fi
 
 **Maps to:** a `SECONDARY` channel in slots 1–7; the room's PSK is the access control.
 
-**Wire facts:** `Channel{ index, role: SECONDARY, settings: ChannelSettings{ name ≤ 11 bytes, psk: 32 random bytes, id: random fixed32 (room_id), uplink_enabled: false, downlink_enabled: false, module_settings{ position_precision: P, is_muted: false } } }`, written with `AdminMessage{ set_channel }` to the local node.
+**Wire facts:** `Channel{ index, role: SECONDARY, settings: ChannelSettings{ name ≤ 11 bytes, psk: 32 random bytes, id: random fixed32 (room_id), uplink_enabled: false, downlink_enabled: false, module_settings{ position_precision: 0, is_muted: false } } }`, written with `AdminMessage{ set_channel }` to the local node.
 
 **Firmware behaviour:** `set_channel` → `Channels::setChannel` + `saveChanges(SEGMENT_CHANNELS, false)` → **no reboot**. Channel hash and key tables refresh (`onConfigChanged`). Reading back: `get_channel_request = index + 1` (never send 0) → `get_channel_response`.
 
 **Steps — create room**
-1. Generate `psk` (32 bytes, CSPRNG), `room_id` (random fixed32 ≠ 0), name (validate ≤ 11 UTF-8 bytes, no leading/trailing whitespace). `position_precision` is always 32 in v1 (U-2) — no choice in the UI. Room icon: one of eight fixed icons, stored app-side only (U-5).
+1. Generate `psk` (32 bytes, CSPRNG), `room_id` (random fixed32 ≠ 0), name (validate ≤ 11 UTF-8 bytes, no leading/trailing whitespace). `position_precision` is always written as 0 (positions are sealed by the phone, §6.3.1); full precision (U-2) is what the phone seals. Room icon: one of eight fixed icons, stored app-side only (U-5).
 2. Slot manager: pick the lowest free slot in 1..7 (`Channel.role == DISABLED`). If none → "7 rooms max" error.
 3. Write the channel (§Appendix B, "set_channel"). Confirm by reading it back or by the ADMIN_APP response with `request_id`.
 4. Persist the room; if it is the user's first room and location sharing is desired, offer to make it the active location room (§6.3).
@@ -410,6 +410,16 @@ Composer counter: hard stop at **200 bytes of UTF-8** (Apple `TextMessageField.m
 
 #### 6.3.1 Live location sharing (one active room)
 
+> **Superseded 2026-09-29 (build plan Stage 7.9).** Positions are now sealed by the
+> phone: `MeshChatControl.position` (a `meshtastic.Position`) inside a `SealedMessage`
+> under the room key, broadcast on the room's slot at the radio's beacon interval
+> while the user shares (`LocationRepository`). `position_precision` is written as
+> **0 on every channel**, rooms included, and re-asserted on every connection, so
+> the firmware never broadcasts or answers for us: its broadcast travels under the
+> channel key, which anyone holding a member's radio has, and it outlives the phone.
+> Sharing therefore pauses while the phone is away from its radio. The firmware
+> behaviour below is kept because it is what "precision 0 everywhere" defends against.
+
 **Maps to:** firmware `PositionModule` periodic broadcast + per-channel `position_precision`.
 
 **Firmware behaviour (verified, both versions):**
@@ -449,10 +459,17 @@ Apple does exactly this (`AccessoryManager+Position.swift`: `sendPosition(channe
 
 #### 6.3.2 Location requests (any room)
 
-- **Current location:** `MeshPacket{ to: peer, channel: slot of a shared room, want_ack: false, decoded: Data{ portnum: POSITION_APP, payload: <our current Position or empty Position>, want_response: true } }`. POSITION_APP is never PKI-encrypted, so it rides the room key. The peer's firmware answers automatically (`PositionModule::allocReply`) but **at most once per 3 minutes per node** and only if it has a valid position; the reply arrives as a POSITION_APP packet with `request_id = your id`. Show "requested…" and time out after ~3 min. Note that the reply is subject to the peer's precision for that channel.
+- **Current location** *(superseded 2026-09-29: now a sealed `PositionQuery` to the peer on a shared room's slot, answered by the peer's phone with a sealed position, and only while it shares with that room)*: `MeshPacket{ to: peer, channel: slot of a shared room, want_ack: false, decoded: Data{ portnum: POSITION_APP, payload: <our current Position or empty Position>, want_response: true } }`. POSITION_APP is never PKI-encrypted, so it rides the room key. The peer's firmware answers automatically (`PositionModule::allocReply`) but **at most once per 3 minutes per node** and only if it has a valid position; the reply arrives as a POSITION_APP packet with `request_id = your id`. Show "requested…" and time out after ~3 min. Note that the reply is subject to the peer's precision for that channel.
 - **Live sharing request:** app-level. Send a PKI DM on the MeshChat control port carrying `LiveLocationRequest{ room_id, suggested_secs }` (§6.8.5); the peer\'s app shows the duration picker; starting live sharing is always their own decision. Reply is implicit (they start sharing or not).
 
 #### 6.3.3 Pin drops (waypoints)
+
+> **Superseded 2026-09-29.** Pins travel as `MeshChatControl.pin` (a `meshtastic.Waypoint`)
+> inside a `SealedMessage` under the room key, so their place and their lock answer to the
+> room key rather than the channel key. `WAYPOINT_APP` is neither sent nor accepted for rooms;
+> stock Meshtastic apps no longer see Firepit pins. Name ≤ 30 and description ≤ 100 UTF-8 bytes,
+> so a sealed pin at its limits still fits one packet (`ProtocolContractTest`). The delete
+> convention below (resend with `expire = 1`) is unchanged.
 
 **Maps to:** `WAYPOINT_APP` broadcast on the room's slot.
 
@@ -465,7 +482,7 @@ Firmware convention: **delete = resend the same id with `expire = 1`** (`Waypoin
 
 #### 6.3.4 Position precision per room
 
-`ModuleSettings.position_precision` on the room's channel. **v1: always 32 (full precision, U-2)** — no per-room choice in the UI; the invite still carries the value so a future reduced-precision option needs no format change. The firmware supports 0–32 (Appendix C radii); every member's node applies the value from its own channel settings. On 2.8, well-known keys are capped at 15 bits (not applicable to rooms).
+*(Superseded 2026-09-29: every channel is written with precision 0 and positions are sealed at full precision by the phone; the invite's and grant's `position_precision` fields are reserved.)* `ModuleSettings.position_precision` on the room's channel. **v1: always 32 (full precision, U-2)** — no per-room choice in the UI; the invite still carries the value so a future reduced-precision option needs no format change. The firmware supports 0–32 (Appendix C radii); every member's node applies the value from its own channel settings. On 2.8, well-known keys are capped at 15 bits (not applicable to rooms).
 
 #### 6.3.5 Live map
 
@@ -690,10 +707,16 @@ message MeshChatControl {
     KeyRotation key_rotation = 9;                     // re-key after a removal
     PersonCard person_card = 10;                      // name, tag and colour, shared on join
     RoomGrant room_grant = 11;                        // inviter → joiner, PKI DM: the keys
+    SealedDirect sealed_direct = 12;                  // one person's words or receipts, phone to phone, inside PKI
+    meshtastic.Position position = 13;                // a member's fix, inside a SealedMessage
+    meshtastic.Waypoint pin = 14;                     // a pin, inside a SealedMessage
+    PositionQuery position_query = 15;                // "where are you?", inside a SealedMessage
   }
 }
+message SealedDirect { bytes ciphertext = 1; }        // DirectSeal: P-256 ECDH of both phones' keys + HKDF + AES-GCM
+message PositionQuery {}
 message JoinHello { fixed32 invite_id = 1; bytes token = 2; uint32 generation = 3; uint32 app_version = 4; bytes joiner_key = 5; bytes phone_key = 6; }
-message RoomGrant { enum Answer { GRANTED = 0; DECLINED = 1; } reserved 6; Answer answer = 1; fixed32 invite_id = 2; fixed32 room_id = 3; string room_name = 4; bytes room_psk = 5; uint32 generation = 7; uint32 position_precision = 8; bytes sealed_key = 9; }
+message RoomGrant { enum Answer { GRANTED = 0; DECLINED = 1; } reserved 6, 8; Answer answer = 1; fixed32 invite_id = 2; fixed32 room_id = 3; string room_name = 4; bytes room_psk = 5; uint32 generation = 7; bytes sealed_key = 9; }
 message RosterEvent { enum Kind { JOINED = 0; KEY_ROTATED = 1; } Kind kind = 1; uint32 node_num = 2; uint32 invited_by = 3; uint32 generation = 4; bytes phone_key = 5; }
 message KeyRotation { reserved 4; fixed32 room_id = 1; uint32 generation = 2; bytes room_psk = 3; string room_name = 5; repeated fixed32 removed = 6; bytes sealed_key = 7; }
 message PersonCard { string name = 1; string tag = 2; uint32 colour_slot_plus_one = 3; bytes phone_key = 4; }
@@ -701,9 +724,9 @@ message LiveLocationRequest { fixed32 room_id = 1; uint32 suggested_secs = 2; }
 message Receipt { fixed32 room_id = 1; repeated fixed32 delivered = 2; repeated fixed32 read = 3; }
 message SealedMessage { fixed32 room_id = 1; bytes ciphertext = 2; fixed32 reply_id = 3; }
 ```
-Rules: one packet per event, never periodic; unknown fields and kinds are ignored; a control packet is never rendered as chat. Most payloads are ≤ ~40 bytes; a full receipt of 40 ids is ~206 bytes sealed and still inside the 233-byte budget, which `SealedReceiptTest` asserts rather than assumes.
+Rules: one packet per event, except the sealed position, which is sent at the beacon interval only while the user shares; unknown fields and kinds are ignored; a control packet is never rendered as chat. Every sealed room packet asks for an acknowledgement, so the header's `want_ack` bit does not tell words from receipts, cards or positions. Most payloads are ≤ ~40 bytes; a full receipt of 40 ids is ~206 bytes sealed and still inside the 233-byte budget, which `SealedReceiptTest` asserts rather than assumes.
 
-`SealedMessage` wraps an encoded `MeshChatControl`, so opening it yields another control message handled as if it had arrived in the clear — and opening it is itself proof the sender holds the room key. It is only believed on the slot of the room it names, or privately to us (`TrustRules.sealedPlacementOk`), and only a message sealed under the room's **current** generation counts as membership: an older key is what a removed member still holds. A `Receipt` that arrived neither sealed nor PKI-encrypted is **discarded**: on a shared channel anyone can put bytes on the air under any name, and a forged receipt is a lie about who read what; one that did arrive is only recorded from the recipient of a direct message or a member of the message's room. `RosterEvent`, `PersonCard` and `RoomText` are only taken sealed; a `RosterSync` only privately from the inviter who let us in. Relays set to `rebroadcast_mode = CORE_PORTNUMS_ONLY` drop private ports — irrelevant for group-owned infrastructure and for Group-only mode (D-1); in public-relay mode a strict public router may drop a hello on one path, flooding tries the others, and membership stays evidence-based (§5.3) so a lost hello only delays the "invited by" attribution.
+`SealedMessage` wraps an encoded `MeshChatControl`, so opening it yields another control message handled as if it had arrived in the clear — and opening it is itself proof the sender holds the room key. It is only believed on the slot of the room it names, or privately to us (`TrustRules.sealedPlacementOk`), and only a message sealed under the room's **current** generation counts as membership: an older key is what a removed member still holds. A `Receipt` is only believed sealed — under a room key, or phone to phone inside a `SealedDirect` — because whoever holds a radio can put bytes on a channel, or encrypt to us, under any name; one that is sealed is only recorded from the recipient of a direct message or a member of the message's room. `RosterEvent`, `PersonCard`, `RoomText`, positions and pins are only taken sealed under the room's current key; a `RosterSync` only sealed, privately, from the inviter who let us in. A `KEY_ROTATED` event is sent sealed under the key being replaced, before the sender's radio moves on, so a member who misses their own copy of the new key stops sending in the room. Relays set to `rebroadcast_mode = CORE_PORTNUMS_ONLY` drop private ports — irrelevant for group-owned infrastructure and for Group-only mode (D-1); in public-relay mode a strict public router may drop a hello on one path, flooding tries the others, and membership stays evidence-based (§5.3) so a lost hello only delays the "invited by" attribution.
 
 #### 6.8.6 Removing a member / leaving (key rotation)
 
@@ -750,7 +773,7 @@ UI rule: 200-byte cap (Apple parity), soft hint at 165 on 2.8.
 | NodeInfo hello | BACKGROUND | false | |
 | Admin (local) | UNSET → HIGH | false | never on air |
 
-**What MeshChat never does:** custom periodic traffic (the private control port is event-only, D-2), polling for telemetry/positions, hop_limit > 3, MQTT uplink/downlink (`uplink_enabled/downlink_enabled` always false), remote admin.
+**What MeshChat never does:** custom periodic traffic beyond the sealed position that replaces the firmware's own (D-2), polling for telemetry/positions, hop_limit > 3, MQTT uplink/downlink (`uplink_enabled/downlink_enabled` always false), remote admin.
 
 ---
 
@@ -788,7 +811,7 @@ UI rule: 200-byte cap (Apple parity), soft hint at 165 on 2.8.
 | ID | Decision | Default in this guide | Alternatives / trade-off |
 |---|---|---|---|
 | D-1 | **Primary channel (slot 0) policy — locked 2026-09-09 as a two-mode "Range" setting.** Slot 0 carries NodeInfo/telemetry and sets the frequency slot; NodeDB admits only decodable packets | Both modes: app-wide private key (extractable → "semi-public among MeshChat users"), `position_precision = 0`, uplink/downlink off. **Group only (default):** primary name `MeshChat` → own frequency slot; only MeshChat nodes hear and relay; quietest. **Group + public relays:** primary name empty (displays as the preset name) → firmware derives the same frequency slot as the public LongFast mesh, so public nodes rebroadcast our encrypted packets; identity/battery stay private (private key), NodeDB stays clean (undecodable packets are not admitted); cost = shared airtime and our nodes relaying public traffic. Per node, carried in invites (`LoRaProfile.mesh_mode`), joiners align automatically with a notice | Stock public LongFast primary rejected: public names/battery and NodeDB pollution |
-| D-2 | Join-hello transport — **locked 2026-09-09**, port corrected 2026-09-11 | `PortNum.PRIVATE_APP` carrying `MeshChatControl` (§6.8.5): PKI DM for join hello and live-location requests, room broadcast for roster events; one packet per event. An earlier note said port 300; nothing ever sent on it, and the generated `PortNum` enum cannot express a value the vendored protos do not declare | Text DM with a control prefix rejected: the node treats it as a real message (T-Echo screen, buzzer, other apps show garbage) |
+| D-2 | Join-hello transport — **locked 2026-09-09**, port corrected 2026-09-11, amended 2026-09-29 | `PortNum.PRIVATE_APP` carrying `MeshChatControl` (§6.8.5): PKI DM for join hello and live-location requests, room broadcast for roster events; one packet per event. Amended: positions and pins are sealed on this port too, and a sealed position is the one periodic message — it replaces the firmware's position broadcast, which is kept off on every channel. An earlier note said port 300; nothing ever sent on it, and the generated `PortNum` enum cannot express a value the vendored protos do not declare | Text DM with a control prefix rejected: the node treats it as a real message (T-Echo screen, buzzer, other apps show garbage) |
 | D-3 | Roster trust chain propagation — **locked (default accepted 2026-09-09)** | one `JOINED` control broadcast per join | none (only the inviter knows who invited whom) |
 | D-4 (withdrawn) | Link+PIN strength — **locked 2026-09-09** | 8-digit numeric PIN shown as `4821 9306`, Argon2id (64 MiB, t=3, p=1) key derivation, XChaCha20-Poly1305 payload encryption, 15-min soft expiry, single use | 6 digits rejected: a captured link can be brute-forced offline in hours because the payload holds a permanent room key |
 | D-5 | `want_ack` on room messages — **locked (default accepted 2026-09-09)** | true (needed for the "reached mesh" tick; up to 3 retransmits when isolated) | false: no delivery signal at all |

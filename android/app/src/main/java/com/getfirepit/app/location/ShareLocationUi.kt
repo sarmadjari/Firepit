@@ -49,12 +49,14 @@ import kotlin.time.Duration.Companion.seconds
  * clock runs down so "12m left" does not sit there saying 12 all evening.
  */
 @Composable
-fun sharingSummary(state: SharingUiState): String =
-    if (!state.isSharing) {
-        "Not shared with anyone"
-    } else {
-        sharedWith(state.roomName ?: "a room", state.endsAt)
-    }
+fun sharingSummary(state: SharingUiState): String = when {
+    !state.isSharing -> "Not shared with anyone"
+    // Said rather than hidden: somebody who thinks they are being followed on
+    // the map by their group should know when they are not.
+    state.paused -> "Paused: your phone is away from your radio, or it doesn't carry " +
+        "${state.roomName ?: "that room"}. Resumes when it's back"
+    else -> sharedWith(state.roomName ?: "a room", state.endsAt)
+}
 
 /** "Shared with <label> · 3h 12m left", ticking. */
 @Composable
@@ -254,8 +256,10 @@ fun ShareLocationSheet(
 
                 else -> {
                     Text(
-                        text = "Everyone holding this room's key can see where you are, " +
-                            "including people invited later.",
+                        text = "Your phone seals where you are with the room's key and sends it " +
+                            "through your radio, so only people in the room can see it — " +
+                            "including people invited later. It pauses while your phone is away " +
+                            "from your radio.",
                         style = MaterialTheme.typography.bodySmall,
                         color = FirepitTheme.colors.textSecondary,
                     )

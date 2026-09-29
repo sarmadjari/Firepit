@@ -107,11 +107,71 @@ object TrustRules {
 
     /**
      * A roster sync is only the word of the inviter who let us in, sent to us
-     * alone, and only while they are still in the room: an inviter since
-     * removed would otherwise put themselves back on the list new keys go to.
+     * alone, sealed under the room's current key, and only while they are
+     * still in the room: an inviter since removed would otherwise put
+     * themselves back on the list new keys go to. The seal also keeps the
+     * membership list away from the radios it passes through.
      */
-    fun rosterSyncAcceptable(privatelyToUs: Boolean, sender: Int, ourInviter: Int?, senderIsMember: Boolean): Boolean =
-        privatelyToUs && senderIsMember && ourInviter != null && sender == ourInviter
+    fun rosterSyncAcceptable(
+        privatelyToUs: Boolean,
+        sender: Int,
+        ourInviter: Int?,
+        senderIsMember: Boolean,
+        sealedUnderCurrent: Boolean,
+    ): Boolean = privatelyToUs && sealedUnderCurrent && senderIsMember && ourInviter != null && sender == ourInviter
+
+    /**
+     * A notice that the room has moved to a new key.
+     *
+     * Believed only sealed under the key we hold now, from a member, and naming
+     * the very next generation: it arrives before our own copy of the new key,
+     * or instead of it when that copy never reaches us, and either way we must
+     * stop talking under a key the removed member still holds. Exactly the next
+     * one, because a notice is always sealed under the key it replaces — and a
+     * removed member who still holds that key must not be able to name a
+     * generation so far ahead that no real key ever clears it.
+     */
+    fun rotationNoticeAcceptable(
+        sealedUnderCurrent: Boolean,
+        senderIsMember: Boolean,
+        noticeGeneration: Int,
+        currentGeneration: Int,
+    ): Boolean = sealedUnderCurrent && senderIsMember && noticeGeneration == currentGeneration + 1
+
+    /**
+     * A member's position, sealed by their phone.
+     *
+     * Only under the room's current key, on the room's own slot: an older key
+     * is what a removed member still holds, and a room's positions belong in
+     * that room.
+     */
+    fun sealedPositionAcceptable(sealedUnderCurrent: Boolean, onItsRoomSlot: Boolean): Boolean =
+        sealedUnderCurrent && onItsRoomSlot
+
+    /**
+     * An unsealed position, from the firmware's own broadcast or the radio's
+     * node list.
+     *
+     * Never for somebody in one of our rooms: members' positions only travel
+     * sealed, so an unsealed one naming a member was written by whoever holds a
+     * radio, not by them. For anyone else it is all there is, and it is shown
+     * as what it is — a position the mesh reported.
+     */
+    fun unsealedPositionAcceptable(senderInOurRooms: Boolean): Boolean = !senderInOurRooms
+
+    /**
+     * Whether to answer "where are you?".
+     *
+     * Only a question sealed under the room's current key, put to us alone,
+     * about a room we are sharing with right now. Anything else is somebody
+     * finding out where we are without our say.
+     */
+    fun positionQueryAnswerable(
+        sealedUnderCurrent: Boolean,
+        addressedToUs: Boolean,
+        queryRoom: Int,
+        sharingWithRoom: Int?,
+    ): Boolean = sealedUnderCurrent && addressedToUs && sharingWithRoom != null && sharingWithRoom == queryRoom
 
     /**
      * Whether to store a phone key for a node.
@@ -130,22 +190,24 @@ object TrustRules {
     }
 
     /**
-     * Whether a waypoint may create or change a pin.
+     * Whether a pin may be created or changed.
      *
-     * Only on a Firepit room's slot, never locked to somebody else, never moved
-     * to another room, and never overriding the lock its owner set.
+     * Only sealed under a room's current key, so the sender is somebody who
+     * holds it rather than whoever holds a member's radio; never locked to
+     * somebody else, never moved to another room, and never overriding the lock
+     * its owner set. The seal binds [sender], so a lock cannot be dodged by
+     * writing somebody else's number in a header.
      */
     fun pinUpdateAllowed(
-        onFirepitRoom: Boolean,
+        sealedInRoom: Int?,
         sender: Int,
         claimedLock: Int,
         existingLock: Int?,
-        existingChannel: Int?,
-        channel: Int,
+        existingRoom: Int?,
     ): Boolean =
-        onFirepitRoom &&
+        sealedInRoom != null &&
             (claimedLock == 0 || claimedLock == sender) &&
-            (existingChannel == null || existingChannel == channel) &&
+            (existingRoom == null || existingRoom == sealedInRoom) &&
             (existingLock == null || existingLock == 0 || existingLock == sender)
 
     /**

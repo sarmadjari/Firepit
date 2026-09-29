@@ -2,24 +2,27 @@ package com.getfirepit.app.radio
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.getfirepit.core.data.MeshRepository
 import com.getfirepit.core.data.AlertClient
 import com.getfirepit.core.data.BuzzResult
-import com.getfirepit.core.data.TracerouteClient
-import com.getfirepit.core.model.MeshNode
-import com.getfirepit.core.protocol.MeshConstants
+import com.getfirepit.core.data.MeshRepository
+import com.getfirepit.core.data.NodeAdminClient
 import com.getfirepit.core.data.Owner
 import com.getfirepit.core.data.OwnerRepository
-import com.getfirepit.core.data.NodeAdminClient
+import com.getfirepit.core.data.RoomRepository
+import com.getfirepit.core.data.SessionStore
+import com.getfirepit.core.data.TracerouteClient
+import com.getfirepit.core.model.MeshNode
 import com.getfirepit.core.protocol.BeaconRate
 import com.getfirepit.core.protocol.ChannelKey
-import org.meshtastic.proto.Config
-import org.meshtastic.proto.Routing
-import com.getfirepit.core.protocol.RelayReach
-import com.getfirepit.core.data.SessionStore
+import com.getfirepit.core.protocol.MeshConstants
 import com.getfirepit.core.protocol.NodeRole
+import com.getfirepit.core.protocol.PrimaryChannel
 import com.getfirepit.core.protocol.RadioCapabilities
+import com.getfirepit.core.protocol.RadioRisk
+import com.getfirepit.core.protocol.RadioSecurityCheck
+import com.getfirepit.core.protocol.RelayReach
 import com.getfirepit.core.protocol.SavedRadio
+import com.getfirepit.core.protocol.TrustRules
 import com.getfirepit.core.transport.BluetoothPresence
 import com.getfirepit.core.transport.BluetoothState
 import com.getfirepit.core.transport.DiscoveredRadio
@@ -42,6 +45,8 @@ import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import org.meshtastic.proto.Config
+import org.meshtastic.proto.Routing
 
 data class ChannelRow(
     val index: Int,
@@ -49,6 +54,8 @@ data class ChannelRow(
     val name: String,
     val precision: Int,
     val key: ChannelKey,
+    /** What the key is, in words, naming the app-wide key for what it is. */
+    val keyLabel: String = key.label,
 )
 
 data class RadioDetails(
@@ -92,6 +99,12 @@ data class RadioUiState(
     val relayReach: RelayReach? = null,
     val beaconRate: BeaconRate? = null,
     val beaconWhenMoved: Boolean = false,
+    /** Settings on the connected radio that let people read it or run it. */
+    val risks: List<RadioRisk> = emptyList(),
+    /** A Bluetooth PIN just set, shown until dismissed: the phone will ask for it. */
+    val newPin: Int? = null,
+    /** The saved radio whose address answered as a different node or key. */
+    val identityDoubt: String? = null,
 )
 
 @HiltViewModel
@@ -107,6 +120,7 @@ class RadioViewModel @Inject constructor(
     private val mesh: MeshRepository,
     private val alerts: AlertClient,
     private val traceroute: TracerouteClient,
+    private val rooms: RoomRepository,
 ) : ViewModel() {
 
     private val scanning = MutableStateFlow(false)
@@ -115,6 +129,7 @@ class RadioViewModel @Inject constructor(
     private val notice = MutableStateFlow<String?>(null)
     private val tracing = MutableStateFlow<Int?>(null)
     private val traceResult = MutableStateFlow<String?>(null)
+    private val newPin = MutableStateFlow<Int?>(null)
     private var scanJob: Job? = null
     private var noticeJob: Job? = null
 
@@ -131,8 +146,14 @@ class RadioViewModel @Inject constructor(
         },
         mesh.observeNodes(),
         mesh.myNodeNum,
-        combine(tracing, traceResult, savedRadios.radios, owners.owner) { tracing, result, saved, owner ->
-            Extras(tracing, result, saved, owner)
+        combine(
+            tracing,
+            traceResult,
+            savedRadios.radios,
+            owners.owner,
+            combine(newPin, session.identityDoubt) { pin, doubt -> pin to doubt },
+        ) { tracing, result, saved, owner, (pin, doubt) ->
+            Extras(tracing, result, saved, owner, pin, doubt)
         },
         presence.state(),
     ) { base, nodes, me, extras, bluetooth ->
@@ -157,6 +178,9 @@ class RadioViewModel @Inject constructor(
             ),
             beaconWhenMoved =
                 (linkState as? LinkState.Ready)?.snapshot?.position?.position_broadcast_smart_enabled == true,
+            risks = (linkState as? LinkState.Ready)?.snapshot?.let(RadioSecurityCheck::risksOf).orEmpty(),
+            newPin = extras.newPin,
+            identityDoubt = extras.identityDoubt,
             // The radio actually on the other end of the link, which is not
             // necessarily the Personal one once Base stations are administered.
             connectedTo = (linkState as? LinkState.Ready)?.let { sessionStore.lastRadioId },
@@ -321,7 +345,102 @@ class RadioViewModel @Inject constructor(
         }
     }
 
-    fun forget(saved: SavedRadio) = savedRadios.forget(saved.identifier)
+    /**
+     * Stops administering [saved]. When it is the radio connected now and
+     * [takeRoomsOff] is set, Firepit's rooms come off it first and its own
+     * primary channel goes back, so whoever has it next holds none of the
+     * rooms' channel keys. If that fails nothing is forgotten, so it can be
+     * tried again.
+     */
+    fun forget(saved: SavedRadio, takeRoomsOff: Boolean) {
+        error.value = null
+        viewModelScope.launch {
+            val connectedHere = uiState.value.connectedTo == saved.identifier
+            if (connectedHere && takeRoomsOff) {
+                val removed = runCatching { rooms.removeFirepitFromRadio() }
+                    .onFailure { cause -> error.value = cause.message ?: "Could not take the rooms off this radio" }
+                if (removed.isFailure) return@launch
+            }
+            if (connectedHere) session.disconnect()
+            session.forget(saved)
+        }
+    }
+
+    /**
+     * Moves every room [saved] is in to new keys without it, for a radio that
+     * is lost or in somebody else's hands. Needs another radio connected that
+     * carries those rooms.
+     */
+    fun removeFromRooms(saved: SavedRadio) {
+        val nodeNum = saved.nodeNum ?: return
+        error.value = null
+        viewModelScope.launch {
+            runCatching { rooms.removeFromAllRooms(nodeNum) }.fold(
+                onSuccess = { count ->
+                    say(
+                        if (count == 0) {
+                            "${saved.name} isn't in any room this radio carries."
+                        } else {
+                            "${saved.name} was removed from $count room${if (count == 1) "" else "s"}. " +
+                                "It gets none of their new keys."
+                        },
+                        transient = false,
+                    )
+                },
+                onFailure = { cause -> error.value = cause.message ?: "Could not remove it from your rooms" },
+            )
+        }
+    }
+
+    /** Fixes one of [RadioUiState.risks], writing back the radio's own section with only that changed. */
+    fun fixRisk(risk: RadioRisk) {
+        val snapshot = (link.state.value as? LinkState.Ready)?.snapshot ?: return
+        error.value = null
+        viewModelScope.launch {
+            runCatching {
+                when (risk) {
+                    RadioRisk.BLUETOOTH_OPEN, RadioRisk.BLUETOOTH_DEFAULT_PIN -> {
+                        val current = checkNotNull(snapshot.bluetooth) { "The radio did not report its Bluetooth settings" }
+                        val pin = RadioSecurityCheck.newPin()
+                        // Shown before the write: the radio restarts, and the
+                        // phone asks for this the next time it connects.
+                        newPin.value = pin
+                        admin.setBluetoothConfig(RadioSecurityCheck.withPin(current, pin))
+                    }
+
+                    RadioRisk.REMOTE_ADMIN_KEY, RadioRisk.LEGACY_ADMIN_CHANNEL, RadioRisk.DEBUG_LOG -> {
+                        val current = checkNotNull(snapshot.security) { "The radio did not report its security settings" }
+                        // The section carries the radio's own key pair. Without
+                        // it the write would give the node a new identity.
+                        check(current.private_key.size == TrustRules.RADIO_KEY_SIZE) {
+                            "The radio did not report its own key, so its security settings can't be rewritten safely"
+                        }
+                        admin.setSecurityConfig(RadioSecurityCheck.withoutRemoteAccess(current))
+                    }
+
+                    RadioRisk.MQTT_UPLINK, RadioRisk.MQTT_MAP_REPORT -> {
+                        val current = checkNotNull(snapshot.mqtt) { "The radio did not report its MQTT settings" }
+                        admin.setMqttConfig(RadioSecurityCheck.withoutMqtt(current))
+                    }
+
+                    RadioRisk.MANAGED -> Unit
+                }
+            }.fold(
+                onSuccess = { say("Sent to the radio. It restarts to apply the change.") },
+                onFailure = { cause ->
+                    newPin.value = null
+                    error.value = cause.message ?: "Could not change the radio"
+                },
+            )
+        }
+    }
+
+    fun dismissNewPin() {
+        newPin.value = null
+    }
+
+    /** The radio answering is the person's own, reset or reflashed. */
+    fun trustConnectedRadio() = session.trustConnectedRadio()
 
     fun showOnMap(saved: SavedRadio, onMap: Boolean) =
         savedRadios.showOnMap(saved.identifier, onMap)
@@ -402,15 +521,18 @@ private fun com.getfirepit.core.protocol.phoneapi.RadioSnapshot.toDetails() = Ra
             name = channel.settings?.name?.ifBlank { "Default preset" } ?: "",
             precision = channel.settings?.module_settings?.position_precision ?: 0,
             key = ChannelKey.of(channel.settings?.psk?.toByteArray()),
+            keyLabel = PrimaryChannel.keyLabel(channel.settings?.psk),
         )
     },
     knownNodes = nodes.size,
 )
 
-/** Combine takes five sources at most; these four travel together. */
+/** Combine takes five sources at most; these travel together. */
 private data class Extras(
     val tracing: Int?,
     val result: String?,
     val saved: List<SavedRadio>,
     val owner: Owner?,
+    val newPin: Int?,
+    val identityDoubt: String?,
 )

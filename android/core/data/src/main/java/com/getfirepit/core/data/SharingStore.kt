@@ -11,11 +11,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * When location sharing should stop, kept across restarts.
+ * Which room we share our position with, and when that stops, kept across
+ * restarts.
  *
- * The radio keeps transmitting whether or not this app is running, so an expiry
- * held only in memory would quietly become "forever" after a crash — the one
- * case where it matters most.
+ * This is what sharing is: the phone sends a sealed position to this room while
+ * it is set and the radio is connected. Kept on disk so a restart neither
+ * forgets a share somebody chose nor revives one whose time has passed.
  */
 @Singleton
 class SharingStore @Inject constructor(

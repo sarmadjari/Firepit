@@ -38,6 +38,7 @@ data class RadioSnapshot(
     val telemetry: ModuleConfig.TelemetryConfig? get() = moduleConfigs.firstNotNullOfOrNull { it.telemetry }
     val externalNotification: ModuleConfig.ExternalNotificationConfig?
         get() = moduleConfigs.firstNotNullOfOrNull { it.external_notification }
+    val mqtt: ModuleConfig.MQTTConfig? get() = moduleConfigs.firstNotNullOfOrNull { it.mqtt }
 
     val capabilities: RadioCapabilities
         get() = RadioCapabilities(

@@ -168,6 +168,7 @@ fun ChatsPane(
 
             is RoomsOverlay.Members -> RoomMembersScreen(
                 roomId = current.roomId,
+                channelIndex = current.channelIndex,
                 roomName = current.roomName,
                 onBack = dismiss,
                 modifier = modifier,
@@ -829,6 +830,7 @@ private fun RoomKindBadge(kind: RoomKind, modifier: Modifier = Modifier) {
         RoomKind.MESHTASTIC_PRIVATE -> colors.textSecondary
         RoomKind.MESHTASTIC_PUBLIC -> colors.warn
         RoomKind.UNENCRYPTED -> colors.danger
+        RoomKind.FIREPIT_KEY_MISSING, RoomKind.FIREPIT_MOVED_ON -> colors.warn
     }
     Text(
         text = kind.label,
@@ -1140,6 +1142,9 @@ private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
         // the field, so the send button aligned to the bottom of the hint and
         // shifted down whenever one appeared.
         val hint: Pair<String, Color>? = when {
+            // A room this phone can no longer seal for says exactly why.
+            state.kind?.isStalledRoom == true -> state.kind?.summary.orEmpty() to FirepitTheme.colors.warn
+
             !state.hasPrivateTarget ->
                 "Firepit won't send here. Open a room, or a conversation with one person." to
                     FirepitTheme.colors.warn
@@ -1150,6 +1155,12 @@ private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
             // Said on every message, not once on joining: this is the
             // difference between a room and a Meshtastic channel.
             state.isOpenConversation -> state.kind?.summary.orEmpty() to FirepitTheme.colors.warn
+
+            // Somebody who has never shared a room with us: their phone key is
+            // unknown, so only the two radios protect this.
+            state.directOnlyByRadio ->
+                "Only your two radios protect this, so anyone holding either one can read it. " +
+                    "Share a room with them to seal it to their phone." to FirepitTheme.colors.warn
 
             state.losesSignature ->
                 "Over ${MeshConstants.SIGNED_BROADCAST_TEXT_BUDGET} bytes: sent unsigned" to

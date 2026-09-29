@@ -1,7 +1,9 @@
 package com.getfirepit.core.protocol
 
 import com.getfirepit.core.model.BROADCAST_NODE_NUM
+import com.getfirepit.core.model.RoomKind
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -25,7 +27,11 @@ class MessagePrivacyTest {
         sealingRoomId: Int? = roomId,
         hasPeerKey: Boolean = true,
         channelKey: ChannelKey = ChannelKey.PRIVATE,
-    ) = MessagePrivacy.carriageFor(to, channel, isRoomSlot, sealingRoomId, hasPeerKey, channelKey)
+        hasPeerPhoneKey: Boolean = false,
+        roomKind: RoomKind? = null,
+    ) = MessagePrivacy.carriageFor(
+        to, channel, isRoomSlot, sealingRoomId, hasPeerKey, channelKey, hasPeerPhoneKey, roomKind,
+    )
 
     @Test
     fun `a firepit room is sealed`() {
@@ -33,8 +39,53 @@ class MessagePrivacyTest {
     }
 
     @Test
-    fun `a direct message goes to that node's key`() {
-        assertEquals(Carriage.ToOneNode(peer), carriage(to = peer))
+    fun `a direct message is sealed to their phone when we know its key`() {
+        val result = carriage(to = peer, hasPeerPhoneKey = true)
+
+        assertEquals(Carriage.SealedDirect(peer), result)
+        assertTrue(result.isPrivate)
+    }
+
+    /**
+     * Without their phone key the firmware's PKI is all there is, and a radio
+     * hands its private key to any phone that connects. It is still sent — this
+     * is how Firepit reaches people not running it — but never called private.
+     */
+    @Test
+    fun `a direct message without their phone key rides the radios alone, and says so`() {
+        val result = carriage(to = peer)
+
+        assertEquals(Carriage.ToOneNode(peer), result)
+        assertFalse(result.isPrivate)
+    }
+
+    @Test
+    fun `a phone key without a radio key is no way to send`() {
+        assertEquals(
+            Carriage.Refused(Carriage.Reason.NO_PEER_KEY),
+            carriage(to = peer, hasPeerKey = false, hasPeerPhoneKey = true),
+        )
+    }
+
+    /**
+     * A room still on the radio whose key this phone lost. The only way left
+     * to send is the channel key, which every member's radio holds.
+     */
+    @Test
+    fun `a firepit room whose key is missing is refused, never downgraded to the channel`() {
+        assertEquals(
+            Carriage.Refused(Carriage.Reason.ROOM_KEY_MISSING),
+            carriage(sealingRoomId = null, roomKind = RoomKind.FIREPIT_KEY_MISSING),
+        )
+    }
+
+    /** The old key is what a removed member still holds. */
+    @Test
+    fun `a room that moved on to a key we never got is refused`() {
+        assertEquals(
+            Carriage.Refused(Carriage.Reason.ROOM_MOVED_ON),
+            carriage(sealingRoomId = null, roomKind = RoomKind.FIREPIT_MOVED_ON),
+        )
     }
 
     /**
@@ -115,6 +166,8 @@ class MessagePrivacyTest {
         )
         assertEquals(Carriage.ToOneNode(peer), carriage(to = peer, sealingRoomId = null))
         assertEquals(Carriage.SealedRoom(roomId, roomSlot), carriage(hasPeerKey = false))
+        // A room key is no substitute for somebody's phone key.
+        assertEquals(Carriage.ToOneNode(peer), carriage(to = peer, sealingRoomId = roomId, hasPeerPhoneKey = false))
     }
 
     /**
@@ -124,37 +177,19 @@ class MessagePrivacyTest {
      */
     @Test
     fun `nothing downgrades into the open by accident`() {
-        val targets = listOf(BROADCAST_NODE_NUM, peer)
-        val channels = 0..ChannelSlotManager.LAST_ROOM_SLOT
-        val sealing = listOf(null, roomId)
         val flags = listOf(false, true)
-
-        targets.forEach { to ->
-            channels.forEach { channel ->
-                sealing.forEach { room ->
-                    flags.forEach { isRoomSlot ->
-                        flags.forEach { peerKey ->
-                            ChannelKey.entries.forEach { key ->
-                                val result = MessagePrivacy
-                                    .carriageFor(to, channel, isRoomSlot, room, peerKey, key)
-                                val label = "$to/$channel/$isRoomSlot/$room/$peerKey/$key -> $result"
-
-                                when (result) {
-                                    // Only ever a broadcast on a room slot we hold no seal for.
-                                    is Carriage.OpenChannel -> assertTrue(
-                                        label,
-                                        to == BROADCAST_NODE_NUM && isRoomSlot && room == null,
-                                    )
-
-                                    is Carriage.SealedRoom -> assertTrue(
-                                        label,
-                                        to == BROADCAST_NODE_NUM && isRoomSlot && room != null,
-                                    )
-
-                                    is Carriage.ToOneNode ->
-                                        assertTrue(label, to != BROADCAST_NODE_NUM && peerKey)
-
-                                    is Carriage.Refused -> Unit
+        val cases = sequence {
+            for (to in listOf(BROADCAST_NODE_NUM, peer)) {
+                for (channel in 0..ChannelSlotManager.LAST_ROOM_SLOT) {
+                    for (room in listOf(null, roomId)) {
+                        for (isRoomSlot in flags) {
+                            for (peerKey in flags) {
+                                for (phoneKey in flags) {
+                                    for (kind in listOf(null, RoomKind.FIREPIT_KEY_MISSING, RoomKind.FIREPIT_MOVED_ON)) {
+                                        for (key in ChannelKey.entries) {
+                                            yield(Case(to, channel, isRoomSlot, room, peerKey, phoneKey, kind, key))
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -162,7 +197,47 @@ class MessagePrivacyTest {
                 }
             }
         }
+
+        cases.forEach { case ->
+            val result = with(case) {
+                MessagePrivacy.carriageFor(to, channel, isRoomSlot, room, peerKey, key, phoneKey, kind)
+            }
+            val label = "$case -> $result"
+
+            when (result) {
+                // Only ever a broadcast on a room slot we hold no seal for, and
+                // never one that is a Firepit room we lost the key to.
+                is Carriage.OpenChannel -> assertTrue(
+                    label,
+                    case.to == BROADCAST_NODE_NUM && case.isRoomSlot && case.room == null && case.kind == null,
+                )
+
+                is Carriage.SealedRoom -> assertTrue(
+                    label,
+                    case.to == BROADCAST_NODE_NUM && case.isRoomSlot && case.room != null,
+                )
+
+                is Carriage.SealedDirect ->
+                    assertTrue(label, case.to != BROADCAST_NODE_NUM && case.peerKey && case.phoneKey)
+
+                is Carriage.ToOneNode ->
+                    assertTrue(label, case.to != BROADCAST_NODE_NUM && case.peerKey && !case.phoneKey)
+
+                is Carriage.Refused -> Unit
+            }
+        }
     }
+
+    private data class Case(
+        val to: Int,
+        val channel: Int,
+        val isRoomSlot: Boolean,
+        val room: Int?,
+        val peerKey: Boolean,
+        val phoneKey: Boolean,
+        val kind: RoomKind?,
+        val key: ChannelKey,
+    )
 
     /** A direct message is never affected by how weak the channel's key is. */
     @Test
@@ -183,6 +258,10 @@ class MessagePrivacyTest {
         assertEquals(
             MeshConstants.MAX_TEXT_BYTES - MessagePrivacy.SEALED_OVERHEAD,
             MessagePrivacy.textBudgetFor(Carriage.SealedRoom(roomId, roomSlot)),
+        )
+        assertEquals(
+            MessagePrivacy.MAX_DIRECT_SEALED_TEXT_BYTES,
+            MessagePrivacy.textBudgetFor(Carriage.SealedDirect(peer)),
         )
         assertEquals(
             MeshConstants.MAX_TEXT_BYTES,

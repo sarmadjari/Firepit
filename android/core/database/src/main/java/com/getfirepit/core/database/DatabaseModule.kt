@@ -41,4 +41,10 @@ object DatabaseModule {
 
     @Provides
     fun provideMapPinDao(database: FirepitDatabase): MapPinDao = database.mapPinDao()
+
+    @Provides
+    fun provideRoomActivityDao(database: FirepitDatabase): RoomActivityDao = database.roomActivityDao()
+
+    @Provides
+    fun providePendingHandoverDao(database: FirepitDatabase): PendingHandoverDao = database.pendingHandoverDao()
 }

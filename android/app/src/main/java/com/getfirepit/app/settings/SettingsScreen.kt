@@ -97,6 +97,7 @@ fun SettingsScreen(
     val retention by settingsViewModel.retentionChoice.collectAsStateWithLifecycle()
     val roomLifetime by settingsViewModel.roomLifetime.collectAsStateWithLifecycle()
     val showMessageText by settingsViewModel.showMessageText.collectAsStateWithLifecycle()
+    val allowScreenCapture by settingsViewModel.allowScreenCapture.collectAsStateWithLifecycle()
     val messageAlerts by settingsViewModel.messageAlerts.collectAsStateWithLifecycle()
     val renameError by settingsViewModel.renameError.collectAsStateWithLifecycle()
     val rangeMode by settingsViewModel.rangeMode.collectAsStateWithLifecycle()
@@ -156,6 +157,9 @@ fun SettingsScreen(
             onChooseRoomLifetime = settingsViewModel::chooseRoomLifetime,
             showMessageText = showMessageText,
             onShowMessageText = settingsViewModel::setShowMessageText,
+            allowScreenCapture = allowScreenCapture,
+            onAllowScreenCapture = settingsViewModel::setAllowScreenCapture,
+            onEraseHistory = settingsViewModel::eraseHistory,
             messageAlerts = messageAlerts,
             onChooseMessageAlerts = settingsViewModel::chooseMessageAlerts,
             rangeMode = rangeMode,
@@ -216,6 +220,9 @@ private fun SettingsList(
     onChooseRoomLifetime: (RoomLifetime) -> Unit,
     showMessageText: Boolean,
     onShowMessageText: (Boolean) -> Unit,
+    allowScreenCapture: Boolean,
+    onAllowScreenCapture: (Boolean) -> Unit,
+    onEraseHistory: () -> Unit,
     messageAlerts: MessageAlerts,
     onChooseMessageAlerts: (MessageAlerts) -> Unit,
     rangeMode: RangeMode,
@@ -230,6 +237,32 @@ private fun SettingsList(
     onChooseTheme: (ThemeChoice) -> Unit,
     onOpen: (SettingsSection) -> Unit,
 ) {
+    var confirmingErase by remember { mutableStateOf(false) }
+    if (confirmingErase) {
+        AlertDialog(
+            onDismissRequest = { confirmingErase = false },
+            title = { Text("Erase history?") },
+            text = {
+                Text(
+                    "Deletes every message, pin, last-known position, name card and browsed map " +
+                        "tile on this phone. Your rooms and downloaded areas stay. Everyone else " +
+                        "keeps their own copy.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmingErase = false
+                        onEraseHistory()
+                    },
+                ) { Text("Erase") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingErase = false }) { Text("Keep") }
+            },
+        )
+    }
+
     Scaffold(
         modifier = modifier,
         topBar = { FirepitTopBar(title = "Settings") },
@@ -276,9 +309,10 @@ private fun SettingsList(
             SectionLabel("Notifications")
             SettingsGroup {
                 SettingRow(
-                    label = "Show message text",
-                    caption = "Off shows only who it is from. A notification is read by " +
-                        "whoever is looking at the phone, which is not always you.",
+                    label = "Show who and what",
+                    caption = "Off shows only that a message arrived, not who sent it, where or " +
+                        "what it says. A notification is read by whoever is looking at the phone, " +
+                        "which is not always you.",
                 ) {
                     Switch(checked = showMessageText, onCheckedChange = onShowMessageText)
                 }
@@ -323,6 +357,25 @@ private fun SettingsList(
                     onChoose = onChooseRoomLifetime,
                 )
             }
+            HorizontalDivider()
+
+            SectionLabel("Privacy")
+            SettingsGroup {
+                SettingRow(
+                    label = "Allow screenshots",
+                    caption = "Off keeps conversations and the map out of screenshots, screen " +
+                        "recordings and the recent-apps view. Invite codes are never captured.",
+                ) {
+                    Switch(checked = allowScreenCapture, onCheckedChange = onAllowScreenCapture)
+                }
+            }
+            ListItem(
+                headlineContent = { Text("Erase history on this phone") },
+                supportingContent = {
+                    Text("Messages, pins, where people were, their names, and the map tiles you looked at")
+                },
+                modifier = Modifier.clickable { confirmingErase = true },
+            )
             HorizontalDivider()
 
             SectionLabel("Map")
@@ -478,8 +531,9 @@ private fun RangeSettings(
     // read as a different piece of hardware.
     SettingsGroup {
         Text(
-            text = "Your rooms and messages are always private. This only decides whether the " +
-                "radio's own name and battery level are visible to other Meshtastic devices.",
+            text = "Your rooms, messages, pins and locations are always sealed. This only decides " +
+                "who can see the radio's own name and battery level: every Meshtastic device, " +
+                "or only devices running Firepit.",
             style = MaterialTheme.typography.bodySmall,
             color = FirepitTheme.colors.textSecondary,
         )
@@ -578,6 +632,7 @@ private fun PersonFields(
     onChooseIdentity: (Int?) -> Unit,
 ) {
     var pickingColour by remember { mutableStateOf(false) }
+    var confirmingRadioName by remember { mutableStateOf(false) }
     var name by rememberSaveable(person) { mutableStateOf(person?.name.orEmpty()) }
     var tag by rememberSaveable(person) { mutableStateOf(person?.tag.orEmpty()) }
     // Nothing records whether a stored tag was typed or derived, so ask the
@@ -687,20 +742,43 @@ private fun PersonFields(
             // Offered rather than done: this is the one action here that leaves
             // the phone and reconfigures hardware.
             TextButton(
-                onClick = onUseAsNodeName,
+                onClick = { confirmingRadioName = true },
                 enabled = connected && person != null && !changed,
             ) {
                 Text("Use on my radio")
             }
         }
         Text(
-            text = if (connected) {
-                "Others see your device's name, not this one. Copy it across if you want to match."
-            } else {
-                "Others see your device's name, not this one."
-            },
+            text = "People in your rooms see this name, sealed. Everyone else nearby sees your " +
+                "radio's own name, which it broadcasts in the open.",
             style = MaterialTheme.typography.bodySmall,
             color = FirepitTheme.colors.textSecondary,
+        )
+    }
+
+    if (confirmingRadioName) {
+        AlertDialog(
+            onDismissRequest = { confirmingRadioName = false },
+            title = { Text("Put your name on your radio?") },
+            text = {
+                Text(
+                    "Your radio announces its name every few hours to every radio in range. " +
+                        "In private mode that is under a key built into Firepit, so anyone with " +
+                        "the app can read it; otherwise every Meshtastic radio can. Only do this " +
+                        "if you are happy for strangers nearby to see it.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmingRadioName = false
+                        onUseAsNodeName()
+                    },
+                ) { Text("Use it") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingRadioName = false }) { Text("Keep the radio's name") }
+            },
         )
     }
 

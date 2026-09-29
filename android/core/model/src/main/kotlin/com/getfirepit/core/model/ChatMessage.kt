@@ -11,6 +11,9 @@ const val BROADCAST_NODE_NUM: Int = -1
  * @param channel slot index 0-7 for room traffic. Direct messages are PKI
  * encrypted and always report channel 0, so [isDirect] decides which it is.
  * @param rxTime the radio's clock, which may be absent on nodes without an RTC.
+ * @param roomId which room a room message belongs to, or 0. A slot is only a
+ * place on one radio: another radio can carry another room there, so history
+ * follows the room rather than the number.
  */
 data class ChatMessage(
     val id: Int,
@@ -30,6 +33,7 @@ data class ChatMessage(
     val emoji: Int? = null,
     /** True only when a 2.8 node signed the broadcast and it verified. */
     val signed: Boolean = false,
+    val roomId: Int = 0,
 ) {
     val isDirect: Boolean get() = toNodeNum != BROADCAST_NODE_NUM
 }

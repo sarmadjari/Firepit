@@ -126,17 +126,84 @@ class TrustRulesTest {
         assertFalse(TrustRules.sealedPlacementOk(slotRoom = null, sealedRoom = ROOM, privatelyToUs = false))
     }
 
+    private fun sync(
+        privatelyToUs: Boolean = true,
+        sender: Int = 7,
+        ourInviter: Int? = 7,
+        senderIsMember: Boolean = true,
+        sealedUnderCurrent: Boolean = true,
+    ) = TrustRules.rosterSyncAcceptable(privatelyToUs, sender, ourInviter, senderIsMember, sealedUnderCurrent)
+
     @Test
     fun `a roster sync is only the word of whoever let us in`() {
-        assertTrue(TrustRules.rosterSyncAcceptable(privatelyToUs = true, sender = 7, ourInviter = 7, senderIsMember = true))
-        assertFalse(TrustRules.rosterSyncAcceptable(privatelyToUs = false, sender = 7, ourInviter = 7, senderIsMember = true))
-        assertFalse(TrustRules.rosterSyncAcceptable(privatelyToUs = true, sender = 8, ourInviter = 7, senderIsMember = true))
-        assertFalse(TrustRules.rosterSyncAcceptable(privatelyToUs = true, sender = 7, ourInviter = null, senderIsMember = true))
+        assertTrue(sync())
+        assertFalse(sync(privatelyToUs = false))
+        assertFalse(sync(sender = 8))
+        assertFalse(sync(ourInviter = null))
     }
 
     @Test
     fun `an inviter since removed cannot put themselves back`() {
-        assertFalse(TrustRules.rosterSyncAcceptable(privatelyToUs = true, sender = 7, ourInviter = 7, senderIsMember = false))
+        assertFalse(sync(senderIsMember = false))
+    }
+
+    /** Unsealed, the membership list is readable by both radios it passes through. */
+    @Test
+    fun `a roster sync only counts sealed under the room's current key`() {
+        assertFalse(sync(sealedUnderCurrent = false))
+    }
+
+    // --- rotation notices ----------------------------------------------------
+
+    @Test
+    fun `a notice that the room moved on is believed from a member under the current key`() {
+        assertTrue(TrustRules.rotationNoticeAcceptable(true, senderIsMember = true, noticeGeneration = 3, currentGeneration = 2))
+    }
+
+    @Test
+    fun `a rotation notice under an old key, from a stranger, or not moving forward is ignored`() {
+        assertFalse(TrustRules.rotationNoticeAcceptable(false, senderIsMember = true, noticeGeneration = 3, currentGeneration = 2))
+        assertFalse(TrustRules.rotationNoticeAcceptable(true, senderIsMember = false, noticeGeneration = 3, currentGeneration = 2))
+        assertFalse(TrustRules.rotationNoticeAcceptable(true, senderIsMember = true, noticeGeneration = 2, currentGeneration = 2))
+        assertFalse(TrustRules.rotationNoticeAcceptable(true, senderIsMember = true, noticeGeneration = 1, currentGeneration = 2))
+    }
+
+    /**
+     * A removed member still holds the old key, so they can seal a notice. One
+     * naming a generation far ahead would leave members waiting for a key that
+     * never comes; only the very next generation is believed.
+     */
+    @Test
+    fun `a rotation notice that skips ahead is ignored`() {
+        assertFalse(TrustRules.rotationNoticeAcceptable(true, senderIsMember = true, noticeGeneration = 4, currentGeneration = 2))
+        assertFalse(
+            TrustRules.rotationNoticeAcceptable(true, senderIsMember = true, noticeGeneration = Int.MAX_VALUE, currentGeneration = 2),
+        )
+    }
+
+    // --- positions -----------------------------------------------------------
+
+    @Test
+    fun `a sealed position counts only under the current key on its own room`() {
+        assertTrue(TrustRules.sealedPositionAcceptable(sealedUnderCurrent = true, onItsRoomSlot = true))
+        assertFalse(TrustRules.sealedPositionAcceptable(sealedUnderCurrent = false, onItsRoomSlot = true))
+        assertFalse(TrustRules.sealedPositionAcceptable(sealedUnderCurrent = true, onItsRoomSlot = false))
+    }
+
+    /** A member's position only ever travels sealed; an unsealed one was written by a radio holder. */
+    @Test
+    fun `an unsealed position is never believed about a member`() {
+        assertFalse(TrustRules.unsealedPositionAcceptable(senderInOurRooms = true))
+        assertTrue(TrustRules.unsealedPositionAcceptable(senderInOurRooms = false))
+    }
+
+    @Test
+    fun `where we are is only said to a member of the room we share with`() {
+        assertTrue(TrustRules.positionQueryAnswerable(true, addressedToUs = true, queryRoom = ROOM, sharingWithRoom = ROOM))
+        assertFalse(TrustRules.positionQueryAnswerable(true, addressedToUs = true, queryRoom = ROOM, sharingWithRoom = null))
+        assertFalse(TrustRules.positionQueryAnswerable(true, addressedToUs = true, queryRoom = ROOM, sharingWithRoom = ROOM + 1))
+        assertFalse(TrustRules.positionQueryAnswerable(false, addressedToUs = true, queryRoom = ROOM, sharingWithRoom = ROOM))
+        assertFalse(TrustRules.positionQueryAnswerable(true, addressedToUs = false, queryRoom = ROOM, sharingWithRoom = ROOM))
     }
 
     // --- phone keys ----------------------------------------------------------
@@ -156,23 +223,23 @@ class TrustRulesTest {
     // --- pins ----------------------------------------------------------------
 
     private fun pin(
-        onFirepitRoom: Boolean = true,
+        sealedInRoom: Int? = ROOM,
         sender: Int = 7,
         claimedLock: Int = 7,
         existingLock: Int? = null,
-        existingChannel: Int? = null,
-        channel: Int = 2,
-    ) = TrustRules.pinUpdateAllowed(onFirepitRoom, sender, claimedLock, existingLock, existingChannel, channel)
+        existingRoom: Int? = null,
+    ) = TrustRules.pinUpdateAllowed(sealedInRoom, sender, claimedLock, existingLock, existingRoom)
 
     @Test
-    fun `a pin dropped in a room by its owner is taken`() {
+    fun `a pin sealed in a room by its owner is taken`() {
         assertTrue(pin())
         assertTrue(pin(claimedLock = 0))
     }
 
+    /** Unsealed, anyone holding a member's radio could have written it under any name. */
     @Test
-    fun `a pin outside a Firepit room is refused`() {
-        assertFalse(pin(onFirepitRoom = false))
+    fun `a pin that was not sealed in a room is refused`() {
+        assertFalse(pin(sealedInRoom = null))
     }
 
     @Test
@@ -182,10 +249,10 @@ class TrustRulesTest {
 
     @Test
     fun `a locked pin only changes at its owner's hand, and never changes room`() {
-        assertTrue(pin(sender = 7, existingLock = 7, existingChannel = 2))
-        assertFalse(pin(sender = 8, claimedLock = 0, existingLock = 7, existingChannel = 2))
-        assertTrue(pin(sender = 8, claimedLock = 0, existingLock = 0, existingChannel = 2))
-        assertFalse(pin(sender = 7, existingLock = 7, existingChannel = 3, channel = 2))
+        assertTrue(pin(sender = 7, existingLock = 7, existingRoom = ROOM))
+        assertFalse(pin(sender = 8, claimedLock = 0, existingLock = 7, existingRoom = ROOM))
+        assertTrue(pin(sender = 8, claimedLock = 0, existingLock = 0, existingRoom = ROOM))
+        assertFalse(pin(sender = 7, existingLock = 7, existingRoom = ROOM + 1))
     }
 
     // --- receipts ------------------------------------------------------------

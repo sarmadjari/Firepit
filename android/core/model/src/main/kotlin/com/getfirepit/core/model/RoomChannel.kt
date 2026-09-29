@@ -63,6 +63,32 @@ enum class RoomKind(
         summary = "This channel has no encryption key at all, so anything sent on it travels in " +
             "the clear. Firepit will not send messages here.",
     ),
+
+    /**
+     * A Firepit room whose key is not on this phone — after a reinstall, a new
+     * phone or a wiped Keystore. The radio still carries it, but nothing sent
+     * from here could be sealed, so nothing is sent at all.
+     */
+    FIREPIT_KEY_MISSING(
+        label = "Firepit · no key",
+        readableBy = "Not this phone: its key is missing",
+        summary = "A Firepit room whose key isn't on this phone, so nothing sent from here could " +
+            "be sealed and Firepit won't send in it. Anything typed here would be readable by " +
+            "whoever holds a member's radio. Leave the room, or ask a member to invite you again.",
+    ),
+
+    /**
+     * A Firepit room that moved to a new key which never reached this phone.
+     * The only other people still holding the old key are whoever was removed,
+     * so nothing more is sent under it.
+     */
+    FIREPIT_MOVED_ON(
+        label = "Firepit · new key",
+        readableBy = "Members who received the new key",
+        summary = "This room moved to a new key that didn't reach this phone. Anything sent under " +
+            "the old key would only reach people no longer in the room, so Firepit won't send " +
+            "here. Ask a member to invite you again.",
+    ),
     ;
 
     /** True when this room is unreadable to everyone outside it. */
@@ -70,6 +96,9 @@ enum class RoomKind(
 
     /** True when other Meshtastic clients can take part. */
     val isInteroperable: Boolean get() = this == MESHTASTIC_PRIVATE || this == MESHTASTIC_PUBLIC
+
+    /** A Firepit room this phone may not send in, although the radio still carries it. */
+    val isStalledRoom: Boolean get() = this == FIREPIT_KEY_MISSING || this == FIREPIT_MOVED_ON
 }
 
 /**
