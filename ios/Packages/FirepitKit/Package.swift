@@ -1,9 +1,9 @@
 // swift-tools-version: 6.0
 // Firepit's protocol stack for iOS: the iOS side of the working Android app's core modules
-// (android/core/{model,protocol,crypto} in the Firepit Android repo). Same protos, same rules, same tests,
+// (android/core/{model,protocol,crypto} in this repository). Same protos, same rules, same tests,
 // so an iPhone and an Android phone agree on every byte they exchange.
 //
-// Protos/ is a vendored copy of the Android repo's protos/ (scripts/sync-android-protos.sh);
+// Protos/ is a vendored copy of the repository's protos/ (scripts/sync-ios-protos.sh);
 // Sources/FirepitProtos is generated from it (scripts/gen-swift-protos.sh) and committed.
 import PackageDescription
 
