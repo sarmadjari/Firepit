@@ -8,23 +8,38 @@ import Testing
     /// The one fact both apps must agree on byte-for-byte. Android and iOS generate from the same `protos/` tree, so
     /// the key lives there and this asserts the embedded copy has not drifted from it.
     @Test func embeddedKeyMatchesTheSharedProtosFile() throws {
-        var directory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        var shared: URL?
-        while shared == nil {
-            let candidate = directory.appendingPathComponent("protos/meshchat-primary-key.txt")
-            if FileManager.default.fileExists(atPath: candidate.path) {
-                shared = candidate
-                break
-            }
-            let parent = directory.deletingLastPathComponent()
-            if parent.path == directory.path { break }
-            directory = parent
-        }
-        let file = try #require(shared, "protos/meshchat-primary-key.txt not found above the test working directory")
+        let file = try #require(
+            Self.sharedProtosFile("meshchat-primary-key.txt"),
+            "protos/meshchat-primary-key.txt not found above this source file or the test working directory")
 
         #expect(
             try String(contentsOf: file, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
                 == PrimaryChannel.keyBase64)
+    }
+
+    /// The repository's `protos/<name>`, found by walking up from this source file first: under `xcodebuild test`
+    /// the bundle runs in the simulator, whose working directory is not the repository. The working directory is the
+    /// fallback. Only a directory named exactly `protos` counts, so on a case-insensitive disk the package's vendored
+    /// `Protos/` copy is not mistaken for the shared tree.
+    private static func sharedProtosFile(_ name: String, sourceFile: String = #filePath) -> URL? {
+        let starts = [
+            URL(fileURLWithPath: sourceFile).deletingLastPathComponent(),
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
+        ]
+        for start in starts {
+            var directory = start
+            while true {
+                let entries = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+                let candidate = directory.appendingPathComponent("protos").appendingPathComponent(name)
+                if entries.contains("protos"), FileManager.default.fileExists(atPath: candidate.path) {
+                    return candidate
+                }
+                let parent = directory.deletingLastPathComponent()
+                if parent.path == directory.path { break }
+                directory = parent
+            }
+        }
+        return nil
     }
 
     @Test func keyIsAFull32BytesSoTheFirmwareTreatsItAsAES256() {
