@@ -1,0 +1,324 @@
+syntax = "proto3";
+
+package meshchat;
+
+import "meshtastic/mesh.proto";
+import "meshtastic/config.proto";
+
+option java_package = "com.getfirepit.protocol.meshchat";
+option java_outer_classname = "MeshChatProtos";
+
+/*
+ * Firepit's own definitions. Two disjoint groups:
+ *
+ *   Invite / LoRaProfile / Inviter  — encoded into QR codes and links only.
+ *                                      NEVER transmitted over LoRa.
+ *   MeshChatControl and friends     — PortNum.PRIVATE_APP, one packet per event.
+ *                                      The oneof says which. The one periodic
+ *                                      message is a sealed position, sent at the
+ *                                      beacon rate while somebody chooses to share.
+ *
+ * "MeshChat" is the internal protocol name and stays stable regardless of the
+ * product name (Firepit). Changing it changes the wire contract.
+ */
+
+// Which frequency slot the group's primary channel lands on. Every node in a
+// group must agree or they cannot hear each other. Carried in invites so a
+// joiner aligns automatically. See implementation guide D-1.
+enum MeshMode {
+  // Primary channel named "MeshChat" -> its own frequency slot. Quietest.
+  GROUP_ONLY = 0;
+  // Primary channel name left empty -> firmware derives the same slot as the
+  // public mesh, so public nodes relay our traffic. Content stays private.
+  PUBLIC_RELAY = 1;
+}
+
+// The inviter's radio settings, so the joiner can align before writing the room.
+// Applied with set_config(lora) only where values differ; region is a hint that
+// never silently overrides a region the joiner has already set.
+message LoRaProfile {
+  bool use_preset = 1;
+  meshtastic.Config.LoRaConfig.ModemPreset modem_preset = 2;
+  // 0 = derived from the primary channel name.
+  uint32 channel_num = 3;
+  float override_frequency = 4;
+  meshtastic.Config.LoRaConfig.RegionCode region = 5;
+  uint32 hop_limit = 6;
+  MeshMode mesh_mode = 7;
+}
+
+message Inviter {
+  uint32 node_num = 1;
+  // user.public_key must be 32 bytes; the joiner needs it to send the join
+  // hello as a PKI DM before any NodeInfo has propagated.
+  meshtastic.User user = 2;
+}
+
+// Everything needed to ask to join a room. Carries no key material at all: a
+// photographed code is a request to be let in, not a way in. The keys arrive
+// in a RoomGrant, encrypted to the joiner, once the inviter approves.
+message Invite {
+  // Held open on purpose. A key belongs in a RoomGrant, which goes to one node
+  // that asked for it; anything put here is in every photograph of the code.
+  // Precision is held open too: positions travel sealed by the phone, so no
+  // room ever turns on the radio's own position broadcast.
+  reserved 4, 5, 13;
+  reserved "room_psk", "firepit_key", "position_precision";
+
+  uint32 version = 1;
+  // Stable room identity across renames, re-indexing and key rotation.
+  fixed32 room_id = 2;
+  // <= 11 UTF-8 bytes (nanopb limit on ChannelSettings.name).
+  string room_name = 3;
+  // Increments on PSK rotation; lets a joiner overwrite a stale channel.
+  uint32 generation = 6;
+  LoRaProfile lora = 7;
+  Inviter inviter = 8;
+  fixed32 invite_id = 9;
+  uint32 issued_at = 10;
+
+  // What binds the code to one inviter and one moment. Without both, an
+  // invite would be an open door rather than one that closes on its own.
+  uint32 window = 11;
+  bytes token = 12;
+}
+
+// ---------------------------------------------------------------------------
+// PortNum.PRIVATE_APP (256) payloads
+// ---------------------------------------------------------------------------
+
+message MeshChatControl {
+  uint32 version = 1;
+  oneof payload {
+    JoinHello join_hello = 2;
+    RosterEvent roster_event = 3;
+    LiveLocationRequest live_location_request = 4;
+    RosterSync roster_sync = 5;
+    Receipt receipt = 6;
+    SealedMessage sealed_message = 7;
+    RoomText room_text = 8;
+    KeyRotation key_rotation = 9;
+    PersonCard person_card = 10;
+    RoomGrant room_grant = 11;
+    SealedDirect sealed_direct = 12;
+    // Only ever inside a SealedMessage. A member's own fix, sealed by their
+    // phone: the radio never broadcasts a position of its own, so nobody
+    // holding a radio or a channel key can read where anyone is.
+    meshtastic.Position position = 13;
+    // Only ever inside a SealedMessage. A pin, sealed like the words, so its
+    // place and its lock both answer to the room key rather than the channel.
+    meshtastic.Waypoint pin = 14;
+    // Only ever inside a SealedMessage: "where are you?". Answered by the
+    // phone with a sealed position, and only while it shares with that room.
+    PositionQuery position_query = 15;
+    // PKI direct message: a SealedDirect arrived that this phone could not
+    // open, most often because it has not learned the sender's phone key yet.
+    // Says so, rather than leaving the sender believing it was read.
+    SealedDirectRefused sealed_direct_refused = 16;
+  }
+}
+
+// One person's words, or receipts for them, sealed from this phone to theirs.
+//
+// Travels as a PKI direct message, so the radios also encrypt it, but it does
+// not rely on them: a radio hands its private key to any phone that connects,
+// so whoever holds either radio could read a message the firmware alone
+// protected. The key here is agreed between the two phones' own keys.
+message SealedDirect {
+  // DirectSeal: a version byte, a nonce, then an encrypted MeshChatControl
+  // (room_text or receipt), bound to sender and recipient.
+  bytes ciphertext = 1;
+}
+
+// Asks one member where they are. Nothing to carry: who asked and in which
+// room are already bound to the seal around it.
+message PositionQuery {
+}
+
+// The packet id of a SealedDirect that could not be opened. Carries nothing
+// secret; forging one can only make a sender see a message as not read.
+message SealedDirectRefused {
+  fixed32 request_id = 1;
+}
+
+// Who is carrying this radio, as they describe themselves.
+//
+// Only ever sent inside a SealedMessage, so it reaches the members of one room
+// and nobody else. On the open mesh a Firepit node still looks like every other
+// node: the radio broadcasts meshtastic.User and none of this.
+//
+// A claimed name is decoration, not proof. The node number is the only identity
+// the mesh can attest, so a card is shown beside it rather than instead of it.
+message PersonCard {
+  // <= 39 UTF-8 bytes, matching a node long name.
+  string name = 1;
+  // <= 4 UTF-8 bytes, matching a node short name.
+  string tag = 2;
+  // Chosen identity colour, plus one. 0 means no choice, so the colour is
+  // derived from the node number as before; proto3 cannot tell an unset 0 from
+  // a deliberately chosen slot 0.
+  uint32 colour_slot_plus_one = 3;
+  // 33 bytes, a compressed P-256 point: this phone's own key, so a member who
+  // later moves the room to a new key can seal it to this phone rather than
+  // only to the radio. Learned on first sight and kept, so a card cannot
+  // quietly replace somebody's key.
+  bytes phone_key = 4;
+}
+
+// A room message with its words already encrypted under the room key, which the
+// radio never holds. Travels on PRIVATE_APP like the rest of this protocol, so
+// clients that are not Firepit ignore it and the radio's own screen does not
+// display it.
+message SealedMessage {
+  fixed32 room_id = 1;
+  // Which key opens it. Old keys are kept for reading history, so a message
+  // has to say which generation sealed it rather than leave the receiver
+  // guessing between several.
+  uint32 generation = 3;
+  // SealedText: a version byte, a nonce, then an encrypted MeshChatControl.
+  // One envelope for everything, so words and receipts travel alike and a
+  // listener cannot tell them apart by shape.
+  bytes ciphertext = 2;
+}
+
+// What somebody typed. Only ever seen inside a SealedMessage.
+message RoomText {
+  string text = 1;
+  // Mirrors MeshPacket.reply_id, which cannot be read without the key.
+  fixed32 reply_id = 2;
+}
+
+// Who in a room has received a message and who has opened it, batched so one
+// packet answers for many. Sealed under the room key like the messages
+// themselves, or inside a SealedDirect for one person's messages, so an
+// outsider learns neither the conversation nor which messages.
+message Receipt {
+  fixed32 room_id = 1;
+  // Arrived, not yet opened.
+  repeated fixed32 delivered = 2;
+  // Opened. Reading implies arrival, so an id is never in both lists.
+  repeated fixed32 read = 3;
+}
+
+// Joiner -> inviter, as a PKI direct message. Proves which invite was used so
+// the roster can show who vouched for whom. Refused unless it arrives PKI
+// encrypted, addressed to the inviter.
+message JoinHello {
+  fixed32 invite_id = 1;
+  bytes token = 2;
+  uint32 generation = 3;
+  uint32 app_version = 4;
+  // Exactly 32 bytes: the joiner's radio key. Must equal the key the firmware
+  // decrypted this hello with, so a spoofed hello cannot name somebody else's.
+  bytes joiner_key = 5;
+  // 33 bytes, a compressed P-256 point: the joiner's phone key. The room's own
+  // key is sealed to it in the grant, so the radios in between cannot read it.
+  bytes phone_key = 6;
+}
+
+// Inviter -> joiner, as a PKI direct message, once the inviter has approved.
+// The only thing that carries a room's keys, and it goes to one node that
+// asked for them from arm's length.
+message RoomGrant {
+  enum Answer {
+    GRANTED = 0;
+    DECLINED = 1;
+  }
+  // Held open: the room's own key travelled here in the clear to the radio,
+  // which anyone holding that radio could then read. Precision too: positions
+  // travel sealed, so the radio's own broadcast stays off in every room.
+  reserved 6, 8;
+  reserved "firepit_key", "position_precision";
+
+  Answer answer = 1;
+  fixed32 invite_id = 2;
+  fixed32 room_id = 3;
+  string room_name = 4;
+  // Exactly 32 bytes. What the radio will encrypt the channel with.
+  bytes room_psk = 5;
+  // The generation of the key being handed over, which opens what the room
+  // seals from now on.
+  uint32 generation = 7;
+  // What the phone seals words with, sealed in turn to the joiner's phone key
+  // (KeyEnvelope, bound to room_id, generation and the joiner's node). The
+  // radio carries it but cannot open it.
+  bytes sealed_key = 9;
+}
+
+// Inviter -> room broadcast, so every member's roster shows the trust chain.
+// JOINED is only believed inside a SealedMessage on the room's own channel.
+//
+// KEY_ROTATED is sent sealed under the key being replaced, on the channel key
+// being replaced, before the sender's own radio moves on. A member who then
+// misses their own copy of the new key still hears that the room has gone,
+// and stops talking into a room only a removed member can still read.
+message RosterEvent {
+  enum Kind {
+    JOINED = 0;
+    KEY_ROTATED = 1;
+  }
+  Kind kind = 1;
+  uint32 node_num = 2;
+  uint32 invited_by = 3;
+  uint32 generation = 4;
+  // For JOINED: the newcomer's phone key, vouched for by whoever let them in,
+  // so any member can hand them a future room key.
+  bytes phone_key = 5;
+}
+
+// Member -> member, as a PKI direct message. Asking only; the recipient's app
+// shows a duration picker and starting to share is always their own decision.
+message LiveLocationRequest {
+  fixed32 room_id = 1;
+  uint32 suggested_secs = 2;
+}
+
+// Inviter -> joiner, as a PKI direct message, right after a join is proved.
+// Travels inside a SealedMessage under the room key the grant just handed
+// over, so the radios in between cannot read who is in the room.
+//
+// Sent directed rather than answering a broadcast "who is here?", because on
+// LoRa every member replying to such a question is a packet storm on each join.
+// The inviter is already in the exchange, so this costs one extra packet.
+//
+// Contents are hearsay: the sender is asserting who they believe is present.
+// Receivers must not present a synced entry as strongly as somebody they have
+// actually heard.
+message RosterSync {
+  fixed32 room_id = 1;
+  // Truncated to fit one packet, most recently heard first, so a large room
+  // sends its liveliest members rather than failing to send at all.
+  repeated RosterEntry entries = 2;
+  bool truncated = 3;
+}
+
+message RosterEntry {
+  uint32 node_num = 1;
+  uint32 invited_by = 2;
+}
+
+// New keys for a room, sent to one member at a time as a PKI direct message so
+// that whoever is being removed simply never receives one. There is no way to
+// take a key back from someone; the room moves to a new one instead.
+//
+// Always travels inside a SealedMessage under the key it replaces, so only
+// somebody holding the room's current key can move the room on.
+message KeyRotation {
+  // Held open: the new key travelled here in the clear to the radio.
+  reserved 4;
+  reserved "firepit_key";
+
+  fixed32 room_id = 1;
+  // Always one more than the generation being replaced.
+  uint32 generation = 2;
+  // Exactly 32 bytes. What the radio will encrypt the channel with.
+  bytes room_psk = 3;
+  string room_name = 5;
+  // Who is no longer in the room, so every member's roster agrees and the
+  // reason the key changed can be shown rather than left mysterious.
+  repeated fixed32 removed = 6;
+  // The new key the phone seals words with, sealed in turn to the recipient's
+  // phone key (KeyEnvelope, bound to room_id, generation and the recipient's
+  // node). The radio carries it but cannot open it.
+  bytes sealed_key = 7;
+}

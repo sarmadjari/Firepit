@@ -1,0 +1,351 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "%@ · precise location" : {
+
+    },
+    "%@, base node" : {
+
+    },
+    "%@, live" : {
+
+    },
+    "%@, not live" : {
+
+    },
+    "%lld bytes left" : {
+
+    },
+    "%lld left" : {
+
+    },
+    "%lld unread" : {
+
+    },
+    "1 h" : {
+
+    },
+    "15 min" : {
+
+    },
+    "7 people · 2 live · 1 pin" : {
+
+    },
+    "8 h" : {
+
+    },
+    "Alert" : {
+
+    },
+    "All" : {
+
+    },
+    "All rooms" : {
+
+    },
+    "Anyone with %@'s key can read messages and see shared locations. Location requests are answered automatically by each node." : {
+
+    },
+    "Ask Sam for the PIN if you didn't get it. A link alone can't open a room." : {
+
+    },
+    "Attach" : {
+
+    },
+    "Body · Callout 16 · messages" : {
+
+    },
+    "Caption · Caption 12 · time, status" : {
+
+    },
+    "Changing the update rate restarts your node for about 10 seconds. Starting or stopping later is instant." : {
+
+    },
+    "Chats" : {
+
+    },
+    "Connected to %@" : {
+
+    },
+    "Copied" : {
+
+    },
+    "Copy PIN" : {
+
+    },
+    "Create a room" : {
+
+    },
+    "Creates a new key and re-invites everyone else" : {
+
+    },
+    "Custom" : {
+
+    },
+    "Delivered to the peer's node — DMs only" : {
+
+    },
+    "Delivered to their node" : {
+
+    },
+    "Direct" : {
+
+    },
+    "Done" : {
+
+    },
+    "Download offline map" : {
+
+    },
+    "Drop a pin" : {
+
+    },
+    "Ember palette · SwiftUI mapping. Same tokens as Android; components follow the Human Interface Guidelines on iOS." : {
+
+    },
+    "Failed — tap to retry" : {
+
+    },
+    "Firepit" : {
+
+    },
+    "Firepit design tokens" : {
+
+    },
+    "For" : {
+
+    },
+    "Heard by at least one node" : {
+
+    },
+    "Heard by the mesh (implicit ACK) — final for rooms" : {
+
+    },
+    "Identity hues · avatar, sender name, map marker" : {
+
+    },
+    "Invite" : {
+
+    },
+    "Invite code for %@" : {
+
+    },
+    "Invite to %@" : {
+
+    },
+    "Invited by Sam · 6 members" : {
+
+    },
+    "Join %@?" : {
+
+    },
+    "Join a room" : {
+
+    },
+    "Join room" : {
+
+    },
+    "Large title · Title bold 28" : {
+
+    },
+    "Leave %@?" : {
+
+    },
+    "Leave room" : {
+
+    },
+    "Link" : {
+
+    },
+    "Link · created 12:31" : {
+
+    },
+    "Location sharing" : {
+
+    },
+    "Map" : {
+
+    },
+    "Members" : {
+
+    },
+    "Message" : {
+
+    },
+    "Message a member" : {
+
+    },
+    "Message status · honest ticks" : {
+
+    },
+    "Mono · PIN 4821 9306 · !a1b2c3d4" : {
+
+    },
+    "More" : {
+
+    },
+    "Mute" : {
+
+    },
+    "Muted" : {
+
+    },
+    "My location" : {
+
+    },
+    "New chat" : {
+
+    },
+    "New room" : {
+
+    },
+    "No locations yet" : {
+
+    },
+    "No rooms yet" : {
+
+    },
+    "Nodes, rooms, notifications, map, privacy, diagnostics." : {
+
+    },
+    "Notifications" : {
+
+    },
+    "One room at a time · this stops sharing in %@" : {
+
+    },
+    "Open map" : {
+
+    },
+    "PIN" : {
+
+    },
+    "PIN for this link" : {
+
+    },
+    "PIN from Sam" : {
+
+    },
+    "Pending invites" : {
+
+    },
+    "Pending · expires in 9 min" : {
+
+    },
+    "Pin: %@" : {
+
+    },
+    "Precise" : {
+
+    },
+    "Precision: Precise · room setting" : {
+
+    },
+    "Privacy" : {
+
+    },
+    "Quick replies" : {
+
+    },
+    "Refreshes in %lld s" : {
+
+    },
+    "Remove someone…" : {
+
+    },
+    "Rename for me" : {
+
+    },
+    "Request someone's location" : {
+
+    },
+    "Room" : {
+
+    },
+    "Room info" : {
+
+    },
+    "Rooms" : {
+
+    },
+    "Rooms are private groups. Invite friends with a QR code or a link." : {
+
+    },
+    "Row title · Headline 17" : {
+
+    },
+    "Scan a QR code instead" : {
+
+    },
+    "Secondary · Subheadline 15" : {
+
+    },
+    "See all 7 members" : {
+
+    },
+    "Semantic colours" : {
+
+    },
+    "Send" : {
+
+    },
+    "Send alert" : {
+
+    },
+    "Send the PIN separately — a link alone can't open the room. Expires in 15 minutes or once used." : {
+
+    },
+    "Sending" : {
+
+    },
+    "Sending (queued on phone)" : {
+
+    },
+    "Sent to your node" : {
+
+    },
+    "Settings" : {
+
+    },
+    "Share link" : {
+
+    },
+    "Share my location" : {
+
+    },
+    "Share yours or ask someone for theirs." : {
+
+    },
+    "Show this to people next to you. It refreshes every few seconds and only works while they are here." : {
+
+    },
+    "Shows room info" : {
+
+    },
+    "Start sharing" : {
+
+    },
+    "Title · Title 3 semibold 20" : {
+
+    },
+    "Type · SF Pro · Dynamic Type" : {
+
+    },
+    "Unmute" : {
+
+    },
+    "You'll need a new invite to come back." : {
+
+    },
+    "Your location" : {
+
+    },
+    "connected" : {
+
+    },
+    "or" : {
+
+    }
+  },
+  "version" : "1.0"
+}
