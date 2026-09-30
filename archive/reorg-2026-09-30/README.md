@@ -23,7 +23,7 @@ column -t -s $'\t' archive/reorg-2026-09-30/file-map.tsv | less -S
 Columns:
 - `original`: the old path.
 - `fate`: what happened to the file (see below).
-- `now_at`: the path in this repository, or where the file still sits outside it.
+- `now_at`: the path in this repository, or its place in the local backup.
 - `note`
 - `bytes`, `modified` and `md5`: taken **before** the change, so a copy can be proven identical.
 
@@ -32,22 +32,28 @@ Columns:
 | `kept` | same path in this repository; the note says if a path or comment in it was edited |
 | `moved` | new path in this repository |
 | `archived` | now under `archive/` |
-| `merged` / `rewritten` | its content went into the file in `now_at`; the original is in `_old-workspace/` |
+| `merged` / `rewritten` | its content went into the file in `now_at`; the original is in the local backup (below) |
 | `duplicate` | not carried, because an identical file (same md5) is at `now_at` |
 | `untracked` | still on disk, no longer in git |
-| `parked` | not carried, and kept in `~/Projects/Firepit/_old-workspace/` until the final cleanup (the note says why) |
-| `not-carried` | left where it was, outside the repository, until the final cleanup |
+| `backed-up` | not carried and deleted from disk; a copy is in the local backup at the path in `now_at` |
+| `deleted` | not carried and deleted from disk: caches, the stale `mywork` snapshot, the empty `.git`, upstream files fetchable from GitHub (the note says why) |
 
-## Outside the repository, until the final cleanup
+## Cleanup (done 2026-09-30, after the merge)
 
-- `~/Projects/Firepit/_old-workspace/` holds everything `parked`, at its original relative path: the old empty `.git`,
-  old docs and protos, `refs/` (including the stale `mywork` snapshot), `.venv-tools`, the 13 iOS build logs, and the
-  pre-change inventories in `_reorg-inventory/`. It is excluded from git through `.git/info/exclude`.
-- `~/Projects/Meshtastic/Firepit` and `~/Projects/Meshtastic/design` are **untouched originals**.
-
-Cleanup status: **pending**. Once the merge is verified, these folders are deleted. The one exception is
-`refs/swift-protobuf-1.38.1` (the protoc tool build), which moves to `refs/`. After that, `md5` and this map are
-the record of what was there.
+- The merge commit on `main` is `a5372a8`, and GitHub shows the PR as merged. The ten reorganisation commits kept their IDs.
+- `~/Projects/Firepit/_old-workspace/` (the parked files) and everything in `~/Projects/Meshtastic/` were deleted. That was about 2.5 GB, mostly build caches and the stale `refs/mywork` snapshot.
+- **Local backup of the small files that were not carried** (70 files, 0.5 MB):
+  `refs/reorg-backup-2026-09-30.tar.gz`, in the git-ignored `refs/`, so it lives on this Mac only.
+  It holds:
+  - the old workspace README, CLAUDE.md, .gitignore and .gitmodules
+  - the 9 Sep docs and the prototype's protos, including its old primary key
+  - `refs/ui-agent-rules.md`, the agent scratch files, `apptest.log` and the 13 iOS build logs
+  - the Figma plugin's TypeScript template and the Copilot leftovers
+  - the pre-change inventories
+  List it with `tar -tzf refs/reorg-backup-2026-09-30.tar.gz`. Extract one file with
+  `tar -xzf refs/reorg-backup-2026-09-30.tar.gz -O docs/meshchat-ux-design.md`.
+- `refs/swift-protobuf-1.38.1/`, the protoc tool build that `scripts/gen-swift-protos.sh` uses, was moved to `refs/`.
+- The agent checkpoint refs (`refs/agents/…`) in `.git` were left alone. They are local only and are never pushed.
 
 ## Commits on branch `reorg/monorepo`
 
@@ -64,7 +70,8 @@ the record of what was there.
 | `a1f429e` | docs(archive): record where every file went in the 2026-09-30 reorganisation |
 | `d63f123` | fix(scripts): run the Android build in verify-all on JDK 25 |
 | `d711670` | fix(ios): find the shared primary key from the test's own source path |
-| (this one) | docs(archive): record the verification run |
+| `71eb0d4` | docs(archive): record the verification run |
+| `a5372a8` | Merge branch 'reorg/monorepo': one repository for both apps |
 
 `git-state-before.txt` records the refs, remote and index of both repositories before the change.
 
