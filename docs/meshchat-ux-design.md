@@ -589,6 +589,7 @@ The QR card stays white with dark modules in both themes (scannability beats the
 Component colour rules that the first Figma pass got wrong (recorded so code does not repeat them):
 - **Callouts** (restart warning, mesh busy): fill = `warn` at 14 % (light) / 18 % (dark) over `surface-2`; text = `text`; icon = `warn`. Never a solid `warn` fill behind body text — contrast fails in both themes.
 - **Anything on a `primary` surface** (buttons, FAB, send, badges, selected chips): text **and icons** use `on-primary` — white in light, `#3B1400` in dark. Icons must follow the same token as the label, never a hard-coded white.
+- **Identity and infrastructure fills** (avatars, map markers): the tag and the Base/Router glyph use `on-primary` as well, as the dark Figma frames do — white on the light-theme hues, `#3B1400` on the lighter dark-theme hues (white there falls below 3:1).
 - Icons elsewhere inherit the colour of the adjacent text token (`text`, `text-2`, `primary`), so a theme switch recolours them automatically.
 
 Rules: colour is never the only signal (glyph + text everywhere); identity colours are tested for 3:1 against both surfaces; the map uses a desaturated basemap so markers dominate.

@@ -25,7 +25,7 @@ Verified present at this pin (the constants the app depends on):
 | `MeshPacket.xeddsa_signed = 22` | `mesh.proto` |
 | `NodeInfo.has_xeddsa_signed = 14` | `mesh.proto` |
 | `DeviceMetadata.has_xeddsa = 14` | `mesh.proto` |
-| `PRIVATE_APP = 256`, `MAX = 511` | `portnums.proto` — makes port 300 legal |
+| `PRIVATE_APP = 256`, `MAX = 511` | `portnums.proto` — `MeshChatControl` travels on `PRIVATE_APP` |
 
 `ProtocolConstantsTest` in `:core:protocol` asserts these and fails the build if
 the pin moves underneath us.
@@ -42,7 +42,7 @@ but they are the authority for the app's own input validation — channel name
 ## `meshchat/meshchat.proto` — ours
 
 App-level definitions only: invite payloads (QR + link, never transmitted) and
-`MeshChatControl` on private port 300 (event-driven, never periodic).
+`MeshChatControl` on `PRIVATE_APP` (256), one packet per event; the one periodic message is a sealed position, sent only while someone shares.
 See `docs/meshchat-implementation-guide.md` §6.8.2 and §6.8.5.
 
 ## `meshchat-primary-key.txt` — the app-wide primary channel key
