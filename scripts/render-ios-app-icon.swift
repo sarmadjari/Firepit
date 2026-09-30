@@ -1,9 +1,9 @@
 #!/usr/bin/env swift
 // Renders the iOS app icon (1024 px) from the Firepit Android launcher icon, so both platforms show the same mark.
-// Source of truth, in this repository: brand/firepit-icon.svg as drawn by
+// Source of truth, in this repository: design/brand/firepit-icon.svg as drawn by
 // android/app/src/main/res/drawable/ic_launcher_{background,foreground}.xml — ember gradient ground, cream flame with
 // an even-odd hollow, and the pit rim; the launcher shifts the artwork up 18 units so it sits visually centred.
-// The tinted variant is the one-colour mark (brand/firepit-mark.svg, the adaptive icon's monochrome layer).
+// The tinted variant is the one-colour mark (design/brand/firepit-mark.svg, the adaptive icon's monochrome layer).
 // Run from the repo root: swift scripts/render-ios-app-icon.swift
 import CoreGraphics
 import Foundation

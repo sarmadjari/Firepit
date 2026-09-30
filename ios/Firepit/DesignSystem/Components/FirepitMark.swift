@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The Firepit mark — flame, hollow and pit rim — drawn from the same path data as brand/firepit-mark.svg in the
-/// Android repo (a 512-unit canvas). One colour, so it takes whatever foreground style it is given.
+/// The Firepit mark — flame, hollow and pit rim — drawn from the same path data as
+/// design/brand/firepit-mark.svg (a 512-unit canvas). One colour, so it takes whatever foreground style it is given.
 nonisolated struct FirepitMark: Shape {
     func path(in rect: CGRect) -> Path {
         let side = min(rect.width, rect.height)

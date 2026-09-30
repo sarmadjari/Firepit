@@ -299,7 +299,7 @@ The cost is real and accepted: you cannot add someone who is not with you. That 
 | Room avatar | eight fixed icons (tent default), no emoji | UX U-5 |
 | Nearby non-members | hidden (Diagnostics count only) | UX U-3 |
 | Location cards | text card + "Open map", no map snippet | UX U-4 |
-| Platform idioms | one design language (tokens, copy, flows); iOS uses HIG components, Android uses Material 3 components — mapping table in UX doc §9.6; reference renders `design/Firepit iOS UI.pdf` and `design/Firepit Android UI.pdf` | UX §9.6 |
+| Platform idioms | one design language (tokens, copy, flows); iOS uses HIG components, Android uses Material 3 components — mapping table in UX doc §9.6; reference renders `design/ios/firepit-ios-ui.pdf` and `design/android/firepit-android-ui.pdf` | UX §9.6 |
 | Tech stack | protobufs v2.8.0 + Wire/SwiftProtobuf; libsodium; MapLibre + OpenFreeMap; Room/SwiftData; real-device testing; no analytics; iOS 17+/Android 10+ | scope doc §4 |
 | MVP cut | Personal node, QR rooms, room text, map + share location + pins, light theme | scope doc §2 |
 | Still open | platform order (recommended Android first); Arabic in v1 or later | scope doc §6 |
