@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Firepit</string>
+    <string name="tab_chats">Chats</string>
+    <string name="tab_map">Map</string>
+    <string name="tab_settings">Settings</string>
+    <string name="chats_empty_title">No rooms yet</string>
+    <string name="chats_empty_hint">Rooms are private groups. Invite friends with a QR code or a link.</string>
+    <string name="create_room">Create a room</string>
+    <string name="join_room">Join a room</string>
+    <string name="map_empty">No locations yet. Share yours or ask someone for theirs.</string>
+    <string name="settings_placeholder">Nodes, rooms, notifications, map, privacy, diagnostics.</string>
+</resources>
