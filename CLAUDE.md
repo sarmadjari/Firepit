@@ -1,7 +1,8 @@
 # Firepit — instructions for coding agents
 
-Firepit is a group chat and live map for small groups with no phone signal,
-running on Meshtastic LoRa radios. Android first, iOS second, one protocol.
+Firepit is a group chat and live map for small groups with no phone signal, running on Meshtastic LoRa radios.
+Two native apps, one protocol, one repository: Android (Kotlin + Jetpack Compose) and iOS (Swift 6 + SwiftUI).
+The protocol's internal name, on the radio and in the protos, is **MeshChat**.
 
 ## Source-of-truth hierarchy
 
@@ -13,6 +14,9 @@ When sources disagree, resolve in this order. Never invent an answer.
 4. **meshtastic.org docs** — concepts only; several pages are stale.
 5. **`docs/meshchat-implementation-guide.md`** — verified findings with citations.
 6. **`docs/meshchat-app-design.md`**, **`meshchat-ux-design.md`**, **`meshchat-v1-scope.md`** — product intent.
+
+Between the two apps, **Android is the reference implementation**. The iOS app is a one-to-one port of it, and where
+they differ, Android's code decides behaviour and wire format.
 
 ## Working rules
 
@@ -36,23 +40,37 @@ When sources disagree, resolve in this order. Never invent an answer.
 - **Never claim delivery you cannot prove.** Room messages get "heard by the mesh" (implicit ACK),
   never "delivered" by the radio. A direct message is delivered only on the recipient's own ACK.
   Receipts count only when they arrive sealed from the recipient's phone. No online status.
+- **No analytics, and no network calls except map tiles.**
+- **Colours only via theme tokens**, never literals: `android/core/designsystem` on Android,
+  `ios/Firepit/DesignSystem/Theme` (`FirepitColors`, `IdentityColors`) on iOS. Text and icons on primary surfaces
+  use `onPrimary`.
+- **One primary-channel key.** `protos/meshchat-primary-key.txt` is embedded byte-for-byte by both apps and checked
+  by tests on both sides. Rotating it is a breaking protocol change.
+- When firmware behaviour matters, cite the file in `refs/` (run `scripts/fetch-refs.sh`) rather than guessing.
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `android/` | Gradle root. Convention plugins in `build-logic/`. |
+| `android/` | Gradle root. Convention plugins in `build-logic/`. Package `com.getfirepit.app`. |
 | `android/core/protocol` | Pure Kotlin. Wire-generated protos, packet builders, ACK state machine, slot manager. |
 | `android/core/designsystem` | Ember tokens, typography, components. |
-| `ios/` | Empty until Android v0.1 ships. |
+| `ios/` | Xcode project `Firepit.xcodeproj`, bundle id `com.getfirepit.app`, iOS 17+, iPhone. |
+| `ios/Packages/FirepitKit` | Non-UI layers, one target per Android `core/` module: `FirepitProtos` (generated), `FirepitModel`, `FirepitProtocol`, `FirepitCrypto`, `FirepitTransport`, `FirepitData`. `Protos/` is a vendored copy of `protos/`. |
+| `ios/Firepit` | App target: `DesignSystem/` (port of `core/designsystem`) and `Features/` (port of `app/`). |
 | `protos/` | Vendored Meshtastic protos + `meshchat/meshchat.proto` + app-wide primary key. |
-| `docs/` | Design docs and `build-plan.md`. |
-| `design/` | Figma exports (outside the repo for now). |
+| `docs/` | Design docs, `build-plan.md`, `security.md`, `ios-ui-porting-rules.md`. |
+| `design/` | Brand (the icon both apps use), Figma exports, reference renders. See `design/README.md`. No build reads it. |
+| `scripts/` | Cross-platform checks and iOS tooling. `verify-all.sh` runs every check. |
+| `archive/` | Not maintained and not built: the Android design prototype, the MeshChat-era design, the 2026-09-30 reorganisation record. |
+| `refs/` | Git-ignored: reference clones (`scripts/fetch-refs.sh`) and tool builds. |
 
 Modules are created when their stage needs them, not pre-created empty.
 See `docs/build-plan.md` for the stage list and the planned module set.
 
-## Toolchain (verified 2026-09-28)
+## Android
+
+### Toolchain (verified 2026-09-28)
 
 - AGP **9.4.1**. AGP applies Kotlin itself: **do not** add `org.jetbrains.kotlin.android`.
 - Kotlin **2.4.20**, declared in the version catalog. AGP 9.4 *defaults* to Kotlin 2.2.10, but the
@@ -74,7 +92,7 @@ See `docs/build-plan.md` for the stage list and the planned module set.
   suppress it; the few suppressions that exist each say why.
 - minSdk **29**, so `java.time` is available natively; no core library desugaring.
 
-## Build
+### Build
 
 ```bash
 cd android
@@ -83,12 +101,40 @@ cd android
 ./gradlew :app:assembleDebug
 ```
 
-## Screen support
+### Screen support
 
 Phone portrait and landscape, foldable unfolded (list-detail, hinge-aware), foldable folded outer
 display (**320 dp width floor**), and tablet. No orientation locks, no `configChanges` shortcuts;
 state survives fold/unfold. Every screen is built adaptive from the start — see `docs/build-plan.md`
 Stage 3.
+
+## iOS
+
+- **A one-to-one port of the Android app.** Keep Kotlin names, members, parameters and SQL identical:
+  `scripts/check-port-parity.py` and `scripts/check-dao-parity.py` check it, and
+  `scripts/check-android-interop.sh` proves both apps open each other's seals, keys, tokens and invites.
+  Screens follow `docs/ios-ui-porting-rules.md`.
+- **Pinned exactly:** SwiftProtobuf **1.38.1** and GRDB.swift **7.11.1** in `ios/Packages/FirepitKit/Package.swift`
+  (the generated code must match SwiftProtobuf), MapLibre Native **6.31.0** in the Xcode project. Xcode 27 / Swift 6.4.
+- **Protos:** after any change under `protos/`, run `scripts/sync-ios-protos.sh` (copies into
+  `FirepitKit/Protos` and regenerates `FirepitProtos`). CI fails if the two trees differ.
+- The app target defaults to `@MainActor`; mark pure value types and `Shape`s `nonisolated`.
+- Keep builds warning-free. Check UI changes in light, dark, an accessibility text size and right-to-left, using the
+  debug-only `-demo` world and `-route <feature>.<screen>` launch arguments (README).
+
+```bash
+swift test --package-path ios/Packages/FirepitKit     # non-UI layers, on the Mac
+xcodebuild test -project ios/Firepit.xcodeproj -scheme Firepit \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro'   # app build + every test bundle
+```
+
+## Workflow
+
+- Small, verified steps: build and test after each change, then device test with two phones and two nodes
+  (scope doc §4.8). `scripts/verify-all.sh` runs every check for both apps before a push.
+- Keep docs in sync: a behaviour change updates the relevant doc section in the same commit.
+- Commits: Conventional Commits with a scope, subject in plain English — `feat(android): …`, `fix(ios): …`,
+  `docs: …`. Scopes: `android`, `ios`, `protos`, `design`, `docs`, `scripts`, `ci`, `repo`.
 
 ## Licensing
 

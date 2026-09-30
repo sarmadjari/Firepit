@@ -1,0 +1,9 @@
+{
+  "files.exclude": { "**/.gradle": true, "**/build": true, "**/.kotlin": true, "**/.build": true, "**/.swiftpm": true },
+  "search.exclude": { "**/build": true, "**/.gradle": true, "**/.build": true, "protos/meshtastic": true, "ios/Packages/FirepitKit/Sources/FirepitProtos": true, "archive": true },
+  "java.import.gradle.java.home": "/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home",
+  "kotlin.languageServer.enabled": true,
+  "editor.formatOnSave": true,
+  "[kotlin]": { "editor.tabSize": 4 },
+  "[proto3]": { "editor.tabSize": 2 }
+}

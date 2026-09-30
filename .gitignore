@@ -4,23 +4,41 @@
 # Gradle / Android — unanchored so every module (core/*, feature/*, build-logic) is covered
 build/
 .gradle/
+.kotlin/
 local.properties
 *.iml
 .cxx/
 .externalNativeBuild/
 captures/
+*.apk
+*.aab
 
-# IDE
-.idea/caches/
-.idea/libraries/
-.idea/modules.xml
-.idea/workspace.xml
-.idea/navEditor.xml
-.idea/assetWizardSettings.xml
-.idea/deploymentTargetSelector.xml
-.idea/shelf/
+# IDE (** so the rules reach android/.idea, not just a root .idea)
+**/.idea/caches/
+**/.idea/libraries/
+**/.idea/modules.xml
+**/.idea/workspace.xml
+**/.idea/navEditor.xml
+**/.idea/assetWizardSettings.xml
+**/.idea/deploymentTargetSelector.xml
+**/.idea/shelf/
+# Copilot "modernize" upgrade-tool leftovers
+android/.github/
 
-# Xcode (ios/, from Stage 10)
+# Xcode / SwiftPM (ios/)
 xcuserdata/
-*.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+**/*.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
 DerivedData/
+.build/
+.swiftpm/
+
+# VS Code — only the shared settings are committed
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# Local tooling and scratch
+refs/
+.venv-tools/
+*.log
+Claude outputs/

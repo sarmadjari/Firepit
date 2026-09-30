@@ -1,0 +1,88 @@
+// Firepit — app-level protobufs. Internal protocol name: MeshChat.
+// Two uses:
+//   1. Invite payloads carried in QR codes (firepit://join?v=1&d=<base64url(Invite)>) and encrypted links — never on the air.
+//   2. MeshChatControl — the ONLY MeshChat-specific packet on the mesh, sent on private application port 300
+//      (Meshtastic reserves ports >= 256 for third-party apps). One packet per event, never periodic.
+// Deliberately self-contained: no imports from meshtastic/*.proto, so the generated code has no coupling to the
+// Meshtastic model artifact. Enum values below mirror meshtastic/config.proto by number.
+syntax = "proto3";
+
+package meshchat;
+
+option java_package = "com.getfirepit.app.proto";
+option java_multiple_files = true;
+
+// ---- Invites (off-air) -------------------------------------------------------------------------
+
+enum MeshMode {
+  GROUP_ONLY = 0;      // slot-0 name "MeshChat" -> own frequency slot (default)
+  PUBLIC_RELAY = 1;    // slot-0 name "" -> public LongFast frequency slot, public nodes relay encrypted traffic
+}
+
+message LoRaProfile {
+  bool use_preset = 1;
+  uint32 modem_preset = 2;        // meshtastic.Config.LoRaConfig.ModemPreset value (LONG_FAST = 0)
+  uint32 channel_num = 3;         // 0 = derived from primary channel name (always 0 for Firepit)
+  float override_frequency = 4;
+  uint32 region = 5;              // meshtastic.Config.LoRaConfig.RegionCode value; hint only, never overrides a set region
+  uint32 hop_limit = 6;           // 3
+  MeshMode mesh_mode = 7;
+}
+
+message Inviter {
+  uint32 node_num = 1;
+  string long_name = 2;           // <= 23 UTF-8 bytes
+  string short_name = 3;          // the 2-character tag
+  bytes public_key = 4;           // 32 bytes, X25519
+  uint32 hw_model = 5;            // meshtastic.HardwareModel value
+}
+
+message Invite {
+  uint32 version = 1;             // 1
+  fixed32 room_id = 2;            // == ChannelSettings.id on every member's node
+  string room_name = 3;           // <= 11 UTF-8 bytes (channel name limit)
+  bytes room_psk = 4;             // 32 bytes AES-256 key
+  uint32 position_precision = 5;  // always 32 in v1
+  uint32 generation = 6;          // increments on key rotation
+  LoRaProfile lora = 7;
+  Inviter inviter = 8;
+  fixed32 invite_id = 9;          // random, non-zero
+  uint32 issued_at = 10;          // unix seconds, inviter clock
+  uint32 window = 11;             // QR only: rotation window index (8 s windows)
+  bytes token = 12;               // QR only: HMAC-SHA256(invite_key, node_num || window)[0:8]
+  uint32 room_icon = 13;          // 0..7 index into the fixed icon set (tent, trail, car, music, flag, house, star, heart)
+}
+
+// ---- Control messages (on air, port 300) --------------------------------------------------------
+
+message JoinHello {
+  fixed32 invite_id = 1;
+  bytes token = 2;                // QR token or empty for link invites
+  uint32 generation = 3;
+  uint32 app_version = 4;         // Firepit protocol version, 1
+}
+
+message RosterEvent {
+  enum Kind {
+    JOINED = 0;
+    KEY_ROTATED = 1;
+  }
+  Kind kind = 1;
+  uint32 node_num = 2;            // who joined
+  uint32 invited_by = 3;          // who invited them
+  uint32 generation = 4;          // for KEY_ROTATED
+}
+
+message LiveLocationRequest {
+  fixed32 room_id = 1;
+  uint32 suggested_secs = 2;
+}
+
+message MeshChatControl {
+  uint32 version = 1;             // 1
+  oneof payload {
+    JoinHello join_hello = 2;                        // joiner -> inviter, PKI DM
+    RosterEvent roster_event = 3;                    // inviter -> room broadcast
+    LiveLocationRequest live_location_request = 4;   // member -> member, PKI DM
+  }
+}

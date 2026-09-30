@@ -30,10 +30,12 @@ Firepit/
 │  │  │                         JDK primitives only; invites are QR-only
 │  │  ├─ database/              [Stage 2] Room entities/DAOs/migrations
 │  │  └─ data/                  [Stage 2] repositories, single source of truth
-├─ ios/                         [Stage 10]
+├─ ios/                         [Stage 10] Xcode app + Packages/FirepitKit (one target per core/ module)
 ├─ protos/                      vendored Meshtastic @ v2.8.0 + meshchat.proto + primary key
 ├─ docs/                        design docs + this plan
-└─ design/                      Figma exports
+├─ design/                      brand, Figma exports, reference renders (design/README.md)
+├─ scripts/                     cross-platform checks and iOS tooling (verify-all.sh runs them all)
+└─ archive/                     not maintained: design prototype, MeshChat-era design, reorg record
 ```
 
 Modules are created when their stage needs them. Empty modules cost configuration time and
