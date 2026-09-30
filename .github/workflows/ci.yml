@@ -31,3 +31,13 @@ jobs:
       # which fails if the vendored protobuf pin drifts.
       - name: Build and test
         run: ./gradlew build --stacktrace
+
+  protos-in-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # SwiftPM only compiles files inside a package, so the iOS app keeps a copy of protos/.
+      # After changing protos/, run scripts/sync-ios-protos.sh.
+      - name: protos/ and ios/Packages/FirepitKit/Protos are identical
+        run: diff -r protos ios/Packages/FirepitKit/Protos
