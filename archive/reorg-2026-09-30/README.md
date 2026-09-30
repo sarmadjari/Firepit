@@ -61,5 +61,23 @@ the record of what was there.
 | `9b133d5` | docs: one README and one CLAUDE.md for both apps |
 | `c094b8b` | ci: check that the iOS copy of the protos matches protos/ |
 | `8c130d3` | chore(repo): shared VS Code settings and extensions |
+| `a1f429e` | docs(archive): record where every file went in the 2026-09-30 reorganisation |
+| `d63f123` | fix(scripts): run the Android build in verify-all on JDK 25 |
+| `d711670` | fix(ios): find the shared primary key from the test's own source path |
+| (this one) | docs(archive): record the verification run |
 
 `git-state-before.txt` records the refs, remote and index of both repositories before the change.
+
+## Verified
+
+`scripts/verify-all.sh` passed on the Mac on 2026-09-30, with every check green:
+- protos in sync
+- Android build, JVM tests and lint
+- FirepitKit (350 + 264 + 94 Swift tests)
+- the Xcode app build with every test bundle
+- crypto interop in both directions
+- DAO parity
+
+The first run turned up two problems:
+- A stale `org.gradle.java.home` in `~/.gradle/gradle.properties`. verify-all now pins JDK 25.
+- A test that looked for `protos/` from its working directory, which fails in the Simulator. It now looks from its own source path.
