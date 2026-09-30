@@ -1,0 +1,28 @@
+# git state before reorganisation (2026-09-30T19:19:20Z)
+## Meshtastic/Firepit
+88f8139996d27c1123cbe5e92d3497c60dce43be
+* main                88f8139 [origin/main] Close the gaps a data-flow review found
+  remotes/origin/HEAD -> origin/main
+  remotes/origin/main 88f8139 Close the gaps a data-flow review found
+origin	https://github.com/sarmadjari/Firepit.git (fetch)
+origin	https://github.com/sarmadjari/Firepit.git (push)
+refs/agents/2abad183-b36c-4afc-8c0a-570a1b4b72d4/checkpoints/turn/0 0e2114d
+refs/agents/2abad183-b36c-4afc-8c0a-570a1b4b72d4/checkpoints/turn/1 a2b169f
+refs/agents/2abad183-b36c-4afc-8c0a-570a1b4b72d4/checkpoints/turn/2 9af776a
+refs/agents/2abad183-b36c-4afc-8c0a-570a1b4b72d4/checkpoints/turn/3 87dd129
+refs/agents/2abad183-b36c-4afc-8c0a-570a1b4b72d4/checkpoints/turn/4 7b3907c
+refs/agents/2abad183-b36c-4afc-8c0a-570a1b4b72d4/checkpoints/turn/5 ba01bb7
+refs/heads/main 88f8139
+refs/remotes/origin/HEAD 88f8139
+refs/remotes/origin/main 88f8139
+## Firepit (empty repo)
+refs/agents/b95451e4-9b21-40f9-8470-f5265d92c654/checkpoints/turn/0 e9759c9
+refs/agents/b95451e4-9b21-40f9-8470-f5265d92c654/checkpoints/turn/1 090aaa8
+refs/agents/b95451e4-9b21-40f9-8470-f5265d92c654/checkpoints/turn/2 b63529d
+refs/agents/b95451e4-9b21-40f9-8470-f5265d92c654/checkpoints/turn/3 8dc5ae0
+refs/agents/b95451e4-9b21-40f9-8470-f5265d92c654/checkpoints/turn/4 20a413c
+100644 b4430c7f63a4f02cc9d80cbc3f6ba9870f12ff62 0	.gitmodules
+160000 ca2cb1a80fb7ef0e181a67877f71e37885f914cd 0	protos/meshtastic
+[submodule "protos/meshtastic"]
+	path = protos/meshtastic
+	url = https://github.com/meshtastic/protobufs.git
