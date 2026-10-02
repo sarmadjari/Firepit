@@ -1,25 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Firepit">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-61.2 -61.2 734.4 734.4" width="512" height="512" role="img" aria-label="Firepit">
   <title>Firepit</title>
-  <!-- One colour, transparent ground, inherits currentColor. Android
-       notification icons are flattened to a white silhouette, so the mark has
-       to survive with no fill variation at all. -->
-  <g fill="currentColor">
-    <path fill-rule="evenodd" d="
-      M 262 122
-      C 306 174 336 216 336 268
-      C 336 320 300 356 256 356
-      C 212 356 176 320 176 270
-      C 176 236 192 206 216 182
-      C 214 214 222 238 240 252
-      C 258 224 266 172 262 122
-      Z
-      M 256 248
-      C 276 274 291 289 291 311
-      C 291 332 276 344 256 344
-      C 236 344 221 332 221 311
-      C 221 289 236 274 256 248
-      Z"/>
-    <path d="M 170 384 Q 256 416 342 384" fill="none" stroke="currentColor"
-          stroke-width="22" stroke-linecap="round"/>
-  </g>
+  <!-- The flame of ../artwork/icon-app.svg on its own, without the icon's ground or pit rim: the mark for small
+       places, where the rim would be too thin to read. Path data as drawn there, in its own units (a box 382.5 wide
+       and 612 tall), centred so it is 20 of every 24 units tall, like a status bar icon's live area. One colour,
+       inherits currentColor: Android flattens notification icons to a silhouette anyway. -->
+  <path fill="currentColor" d="M216.02,611.195C221.998,614.373 228.304,607.491 224.644,601.795C204.778,570.876 185.966,518.848 215.938,451.843C265.92,340.106 296.334,282.234 296.334,282.234C296.334,282.234 312.511,349.77 356.363,409.819C398.568,467.612 421.669,540.297 384.427,600.848C380.932,606.531 387.095,613.236 393.034,610.197C439.134,586.615 490.84,539.312 496.674,445.18C498.825,416.416 495.599,376.146 479.468,325.329C458.727,260.923 433.229,230.87 418.476,217.964C414.063,214.103 407.2,217.525 407.562,223.377C411.861,292.871 385.717,310.506 370.836,270.763C364.893,254.889 361.427,227.433 361.427,193.997C361.427,138.332 345.277,81.03 309.672,34.466C300.413,22.357 289.579,11.042 277.149,1.393C272.649,-2.101 266.126,1.411 266.538,7.093C269.272,44.829 266.795,152.978 171.914,282.182C85.885,402.033 119.221,494.078 131.05,519.008C153.666,566.767 185.212,594.814 216.02,611.195Z"/>
 </svg>

@@ -1,21 +1,54 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- The ground of design/artwork/icon-app.svg: the ember gradient, and a faint warm glow at the top left.
+     The artwork's 2048-unit square is the 72dp an adaptive mask shows, so this 108dp layer is 3072 units with the
+     square 512 in from each edge. The gradient carries on into those margins, which launchers show while animating. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
-    android:viewportWidth="512"
-    android:viewportHeight="512">
-    <path android:pathData="M0,0h512v512h-512z">
-        <aapt:attr name="android:fillColor">
-            <gradient
-                android:type="linear"
-                android:startX="0"
-                android:startY="0"
-                android:endX="0"
-                android:endY="512">
-                <item android:offset="0" android:color="#E2611A" />
-                <item android:offset="1" android:color="#A8350A" />
-            </gradient>
-        </aapt:attr>
-    </path>
+    android:viewportWidth="3072"
+    android:viewportHeight="3072">
+    <group
+        android:translateX="512"
+        android:translateY="512">
+        <path android:pathData="M-512,-512h3072v3072h-3072z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="280"
+                    android:startY="180"
+                    android:endX="1768"
+                    android:endY="1868">
+                    <item
+                        android:offset="0"
+                        android:color="#F46A10" />
+                    <item
+                        android:offset="0.56"
+                        android:color="#E34B0B" />
+                    <item
+                        android:offset="1"
+                        android:color="#C7380B" />
+                </gradient>
+            </aapt:attr>
+        </path>
+        <path android:pathData="M-512,-512h3072v3072h-3072z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="radial"
+                    android:centerX="760"
+                    android:centerY="520"
+                    android:gradientRadius="1380">
+                    <item
+                        android:offset="0"
+                        android:color="#33FFB05A" />
+                    <item
+                        android:offset="0.7"
+                        android:color="#0AFF8B2E" />
+                    <item
+                        android:offset="1"
+                        android:color="#00FF8B2E" />
+                </gradient>
+            </aapt:attr>
+        </path>
+    </group>
 </vector>

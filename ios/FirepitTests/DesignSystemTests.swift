@@ -149,6 +149,44 @@ struct DesignSystemTests {
         }
     }
 
+    @Test("The mark is the app icon's flame, point for point")
+    func markIsTheArtworksFlame() throws {
+        let artwork = try #require(Self.repositoryFile("design/artwork/icon-app.svg"), "design/artwork/icon-app.svg")
+        let svg = try String(contentsOf: artwork, encoding: .utf8)
+        // Every point of every path the artwork draws, in the order the path data lists them.
+        let drawn = svg.matches(of: /<path d="([^"]+)"/).map { match in
+            let numbers = String(match.1).matches(of: /-?\d*\.?\d+/).compactMap { Double($0.0) }
+            return stride(from: 0, to: numbers.count - 1, by: 2).map { CGPoint(x: numbers[$0], y: numbers[$0 + 1]) }
+        }
+        var mark: [CGPoint] = []
+        FirepitMark.flame.forEach { element in
+            switch element {
+            case .move(let point): mark.append(point)
+            case .curve(let point, let control1, let control2): mark += [control1, control2, point]
+            case .closeSubpath: break
+            case .line, .quadCurve: Issue.record("the artwork's flame is made of curves only")
+            }
+        }
+        // SwiftUI keeps path coordinates as 32-bit floats, so they come back within a ten-thousandth, not exactly.
+        func same(_ drawn: [CGPoint]) -> Bool {
+            drawn.count == mark.count
+                && zip(drawn, mark).allSatisfy { abs($0.x - $1.x) < 0.001 && abs($0.y - $1.y) < 0.001 }
+        }
+        #expect(drawn.contains(where: same), "FirepitMark.flame no longer matches the flame in icon-app.svg")
+    }
+
+    /// A file in the repository, found from this test's own source path: the bundle runs in the simulator, whose
+    /// working directory is not the repository.
+    private static func repositoryFile(_ path: String, sourceFile: String = #filePath) -> URL? {
+        var directory = URL(fileURLWithPath: sourceFile).deletingLastPathComponent()
+        while directory.path != "/" {
+            let candidate = directory.appending(path: path)
+            if FileManager.default.fileExists(atPath: candidate.path) { return candidate }
+            directory = directory.deletingLastPathComponent()
+        }
+        return nil
+    }
+
     private func resolved(_ color: Color, _ style: UIUserInterfaceStyle) -> UInt32 {
         var red: CGFloat = 0
         var green: CGFloat = 0

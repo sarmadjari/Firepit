@@ -1,13 +1,13 @@
 # design/
 
 Everything visual for Firepit. No build reads this folder: the apps carry their own theme tokens and icons, and
-this is the reference they were drawn from.
+this is the reference they were drawn from. `scripts/render-ios-app-icon.swift` reads `artwork/icon-app.svg` when the
+iOS icon is regenerated, and the iOS tests check the in-app mark against it.
 
 | Path | What it is | Status |
 |---|---|---|
-| `brand/firepit-icon.svg` | App icon: ember gradient, cream flame with a hollow, pit rim. 512-unit canvas | **In use.** Android draws it as `android/app/src/main/res/drawable/ic_launcher_{background,foreground}.xml`; iOS renders `AppIcon*.png` from the same paths with `scripts/render-ios-app-icon.swift` |
-| `brand/firepit-mark.svg` | One-colour mark | **In use.** Android monochrome/notification layer; iOS `DesignSystem/Components/FirepitMark.swift` |
-| `artwork/icon-app.afdesign`, `icon-app.svg` | New icon drawing (Affinity Designer, 2026-09-29): larger three-tongue flame, brighter gradient | Draft, **not in use** |
+| `artwork/icon-app.afdesign`, `icon-app.svg` | App icon (Affinity Designer, 2026-09-29): three-tongue flame and pit rim in white on an ember gradient with a warm glow. 2048-unit canvas | **In use** since 2026-10-02. Android draws it as `android/app/src/main/res/drawable/ic_launcher_{background,foreground}.xml`, the canvas being the 72dp an adaptive mask shows; the foreground is also the monochrome layer for themed icons. iOS renders `AppIcon*.png` from the file itself with `scripts/render-ios-app-icon.swift`. After editing the artwork, update the Android vectors and rerun the script |
+| `brand/firepit-mark.svg` | The icon's flame alone, one colour, no rim | **In use** wherever the icon is small: Android status bar and notification icon (`ic_radio_notification.xml`); iOS `DesignSystem/Components/FirepitMark.swift` (privacy cover, storage error) |
 | `ios/firepit-ios-ui.pdf` | Figma export of the iOS mockups (2026-09-10), 16 pages: light 00–07, then dark 00–07 | Reference renders (UX doc §9.6, §12) |
 | `ios/frames/*.png` | Those 16 pages at 144 dpi, one PNG per frame (`00-tokens-light.png` … `07-share-location-dark.png`) | Reference renders |
 | `android/firepit-android-ui.pdf` | The Android design gallery as a PDF (2026-09-10) | Reference renders |
@@ -26,4 +26,5 @@ still named `MeshChat/Colors` and `MeshChat/Colors · Dark`).
 3. File → Save local copy… for a `.fig` backup, saved as `design/ios/firepit-ios-ui.fig`. The only `.fig` backup so far is the
    pre-rename one in `archive/meshchat-design-2026-09-09/`.
 
-Older MeshChat-era files (the design before the app was called Firepit) are in `archive/meshchat-design-2026-09-09/`.
+Older MeshChat-era files (the design before the app was called Firepit) are in `archive/meshchat-design-2026-09-09/`;
+the first Firepit icon and mark, used until 2026-10-02, are in `archive/icon-2026-09-11/`.

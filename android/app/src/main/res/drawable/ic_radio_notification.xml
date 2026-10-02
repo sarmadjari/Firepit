@@ -1,21 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The status bar flattens this to a silhouette and tints it, so it carries no
-     colour of its own and needs to read at 24dp. -->
+<!-- The status bar flattens this to a silhouette and tints it, so it carries no colour of its own and needs to read
+     at 24dp. The flame of design/artwork/icon-app.svg alone, without the rim, 20dp tall and centred. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
-    android:viewportWidth="512"
-    android:viewportHeight="512"
+    android:viewportWidth="734.4"
+    android:viewportHeight="734.4"
     android:tint="?attr/colorControlNormal">
-    <group android:translateY="-18">
+    <group
+        android:translateX="61.2"
+        android:translateY="61.2">
         <path
             android:fillColor="#FFFFFF"
-            android:fillType="evenOdd"
-            android:pathData="M262,122 C306,174 336,216 336,268 C336,320 300,356 256,356 C212,356 176,320 176,270 C176,236 192,206 216,182 C214,214 222,238 240,252 C258,224 266,172 262,122 Z M256,248 C276,274 291,289 291,311 C291,332 276,344 256,344 C236,344 221,332 221,311 C221,289 236,274 256,248 Z" />
-        <path
-            android:pathData="M170,384 Q256,416 342,384"
-            android:strokeColor="#FFFFFF"
-            android:strokeWidth="22"
-            android:strokeLineCap="round" />
+            android:pathData="M216.02,611.195C221.998,614.373 228.304,607.491 224.644,601.795C204.778,570.876 185.966,518.848 215.938,451.843C265.92,340.106 296.334,282.234 296.334,282.234C296.334,282.234 312.511,349.77 356.363,409.819C398.568,467.612 421.669,540.297 384.427,600.848C380.932,606.531 387.095,613.236 393.034,610.197C439.134,586.615 490.84,539.312 496.674,445.18C498.825,416.416 495.599,376.146 479.468,325.329C458.727,260.923 433.229,230.87 418.476,217.964C414.063,214.103 407.2,217.525 407.562,223.377C411.861,292.871 385.717,310.506 370.836,270.763C364.893,254.889 361.427,227.433 361.427,193.997C361.427,138.332 345.277,81.03 309.672,34.466C300.413,22.357 289.579,11.042 277.149,1.393C272.649,-2.101 266.126,1.411 266.538,7.093C269.272,44.829 266.795,152.978 171.914,282.182C85.885,402.033 119.221,494.078 131.05,519.008C153.666,566.767 185.212,594.814 216.02,611.195Z" />
     </group>
 </vector>

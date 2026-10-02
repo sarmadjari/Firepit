@@ -97,6 +97,6 @@ xcrun devicectl device process launch --device <identifier> --terminate-existing
   Run it after any change under `protos/`; CI fails if the two differ.
 - `scripts/gen-swift-protos.sh`: regenerate the committed Swift code from the vendored protos with SwiftProtobuf tools
   built from the pinned version (the tool build lives in `refs/`).
-- `scripts/render-ios-app-icon.swift`: render the iOS app icon from the Android launcher icon
-  (`design/brand/firepit-icon.svg`). Light and dark use the same artwork, plus the one-colour mark iOS uses for tinted icons.
+- `scripts/render-ios-app-icon.swift`: render the iOS app icon from `design/artwork/icon-app.svg`, the artwork Android's
+  launcher icon draws as vectors. Light and dark are the artwork itself; tinted is its white flame and rim alone.
 - `scripts/fetch-refs.sh`: reference clones (firmware, Meshtastic apps) into `refs/` (git-ignored) for citations.
