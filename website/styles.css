@@ -567,19 +567,19 @@ h2 {
   content: ""; position: absolute; bottom: -6px; width: 10px; height: 10px; rotate: 45deg;
   background: inherit; border: inherit; border-top-color: transparent; border-left-color: transparent;
 }
-.bubble-you { left: 0; transform-origin: 64px 100%; }
-.bubble-you::after { left: 58px; }
+.bubble-ryan { left: 0; transform-origin: 64px 100%; }
+.bubble-ryan::after { left: 58px; }
 .bubble-maya { right: 0; transform-origin: calc(100% - 64px) 100%; }
 .bubble-maya::after { right: 58px; }
 
-.flow[data-dir="out"] .bubble-you,
+.flow[data-dir="out"] .bubble-ryan,
 .flow[data-dir="in"] .bubble-maya { background: var(--bubble-out); border-color: transparent; }
 
-.flow[data-dir="out"][data-stage="plain"] .bubble-you,
+.flow[data-dir="out"][data-stage="plain"] .bubble-ryan,
 .flow[data-dir="in"][data-stage="plain"] .bubble-maya,
 .flow[data-dir="out"][data-stage="open"] .bubble-maya,
-.flow[data-dir="in"][data-stage="open"] .bubble-you { opacity: 1; scale: 1; }
-.flow[data-dir="out"][data-stage="seal"] .bubble-you,
+.flow[data-dir="in"][data-stage="open"] .bubble-ryan { opacity: 1; scale: 1; }
+.flow[data-dir="out"][data-stage="seal"] .bubble-ryan,
 .flow[data-dir="in"][data-stage="seal"] .bubble-maya { opacity: 0; scale: 0.25; translate: 0 -40%; }
 
 /* Under the path: what the packet holds right now, what is happening, and the two keys. */

@@ -123,7 +123,7 @@ document.addEventListener('DOMContentLoaded', () => {
   playInviteDemo();
 });
 
-// "How it works": a short chat between you and Maya, showing where each layer of encryption is added and removed.
+// "How it works": a short chat between Ryan and Maya, showing where each layer of encryption is added and removed.
 // Every message makes the whole trip: sealed on the sender's phone with the room key, wrapped by the sender's radio in
 // the channel key, passed on by a radio that cannot open it, unwrapped by the other radio, opened on the other phone.
 // Maya's replies run the same path the other way. Each step sets attributes on the diagram and marks the stop or link
@@ -140,12 +140,13 @@ function playPacketStory(reduceMotion) {
   const wrappedBytes = flow.querySelector('.v-wrapped code');
 
   const chat = [
-    ['out', 'Meet at the trailhead at 9?'],
-    ['in', 'On my way, 10 min out 🥾'],
-    ['out', 'Grabbing water at the spring'],
-    ['in', 'Fire’s going. Bring snacks 🔥'],
-    ['out', 'Upper trail closes at 4'],
-    ['in', 'OK, lower loop it is'],
+    // Plain words anyone can follow, whatever their first language. 'out' is Ryan writing, 'in' is Maya.
+    ['out', 'Hi Maya! Where are you?'],
+    ['in', 'I am at the camp. And you?'],
+    ['out', 'I am 10 minutes away.'],
+    ['in', 'OK. The fire is ready 🔥'],
+    ['out', 'Great! I am bringing water.'],
+    ['in', 'Thank you! See you soon 👋'],
   ];
   // stop: which stop is in focus, counted from the sender (1 = sender's phone ... 5 = the other phone).
   // act: what that stop does now. hop: which link the packet is on, counted from the sender.

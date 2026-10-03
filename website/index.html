@@ -190,11 +190,11 @@
         </div>
 
         <div class="flow reveal" role="img"
-             aria-label="A short chat between you and Maya. Each message is sealed on the sender's phone with the room key, which only phones in the room hold. The sender's radio adds a second layer with the channel key. Radios in between pass it on without being able to open it. The other radio removes the channel layer, and the other phone opens the seal with the room key.">
+             aria-label="A short chat between Ryan and Maya. Each message is sealed on the sender's phone with the room key, which only phones in the room hold. The sender's radio adds a second layer with the channel key. Radios in between pass it on without being able to open it. The other radio removes the channel layer, and the other phone opens the seal with the room key.">
           <div class="node nd-1">
-            <span class="bubble bubble-you" aria-hidden="true">Meet at the trailhead at 9?</span>
+            <span class="bubble bubble-ryan" aria-hidden="true">Hi Maya! Where are you?</span>
             <span class="node-ico"><svg viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.6"/><path d="M10.5 18.5h3"/></svg></span>
-            <span class="node-txt"><strong>Your phone</strong><small><span class="when-out">Seals it with the room key</span><span class="when-in">Opens it with the room key</span></small></span>
+            <span class="node-txt"><strong>Ryan&#39;s phone</strong><small><span class="when-out">Seals it with the room key</span><span class="when-in">Opens it with the room key</span></small></span>
           </div>
           <div class="link link-bt lk-1">
             <span class="link-label"><i class="lock lock-room"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>Bluetooth</span>
@@ -202,7 +202,7 @@
           </div>
           <div class="node nd-2">
             <span class="node-ico"><svg viewBox="0 0 24 24"><rect x="5" y="9" width="14" height="12" rx="2.6"/><path d="M15.5 9V3"/><circle cx="9.5" cy="15" r="1.7"/><path d="M13.5 13.5h2.5M13.5 16.5h2.5"/></svg></span>
-            <span class="node-txt"><strong>Your radio</strong><small><span class="when-out">Adds the channel layer</span><span class="when-in">Removes the channel layer</span></small></span>
+            <span class="node-txt"><strong>Ryan&#39;s radio</strong><small><span class="when-out">Adds the channel layer</span><span class="when-in">Removes the channel layer</span></small></span>
           </div>
           <div class="link link-lora lk-2">
             <span class="link-label"><i class="lock lock-room"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i><i class="lock lock-chan"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>LoRa</span>
@@ -225,22 +225,22 @@
             <i class="pk"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>
           </div>
           <div class="node nd-5">
-            <span class="bubble bubble-maya" aria-hidden="true">On my way, 10 min out 🥾</span>
+            <span class="bubble bubble-maya" aria-hidden="true">I am at the camp. And you?</span>
             <span class="node-ico"><svg viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.6"/><path d="M10.5 18.5h3"/></svg></span>
             <span class="node-txt"><strong>Maya's phone</strong><small><span class="when-out">Opens it with the room key</span><span class="when-in">Seals it with the room key</span></small></span>
           </div>
           <div class="readout">
             <div class="wire">
-              <span class="wire-val v-plain"><span class="wire-tag">Words</span><span class="wire-text">“Meet at the trailhead at 9?”</span></span>
+              <span class="wire-val v-plain"><span class="wire-tag">Words</span><span class="wire-text">“Hi Maya! Where are you?”</span></span>
               <span class="wire-val v-sealed"><span class="wire-tag"><i class="lock lock-room"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>Sealed</span><code>9F 2C A1 07 E4 5B 3D 88 C2 1E 6B F0 …</code></span>
               <span class="wire-val v-wrapped"><span class="wire-tag"><i class="lock lock-room"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i><i class="lock lock-chan"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>Sealed + channel</span><code>4C 09 D1 EE 7A 31 B6 05 F0 6A 2D 93 …</code></span>
             </div>
             <p class="caps">
-              <span class="cap cap-a"><span class="when-out">Your phone seals the message with the room key. Only phones in the room hold it.</span><span class="when-in">Maya&#39;s phone seals her reply with the room key. Only phones in the room hold it.</span></span>
-              <span class="cap cap-b"><span class="when-out">Your radio wraps it again with the channel key, as every Meshtastic radio does.</span><span class="when-in">Maya&#39;s radio wraps it again with the channel key, as every Meshtastic radio does.</span></span>
+              <span class="cap cap-a"><span class="when-out">Ryan&#39;s phone seals his message with the room key. Only phones in the room hold it.</span><span class="when-in">Maya&#39;s phone seals her reply with the room key. Only phones in the room hold it.</span></span>
+              <span class="cap cap-b"><span class="when-out">Ryan&#39;s radio wraps it again with the channel key, as every Meshtastic radio does.</span><span class="when-in">Maya&#39;s radio wraps it again with the channel key, as every Meshtastic radio does.</span></span>
               <span class="cap cap-c">Radios in between pass it on. None of them can open the seal.</span>
-              <span class="cap cap-d"><span class="when-out">Maya&#39;s radio removes the channel layer. Inside, the message is still sealed.</span><span class="when-in">Your radio removes the channel layer. Inside, the reply is still sealed.</span></span>
-              <span class="cap cap-e"><span class="when-out">Maya&#39;s phone opens it with the room key. Only here is it words again.</span><span class="when-in">Your phone opens it with the room key. Only here is it words again.</span></span>
+              <span class="cap cap-d"><span class="when-out">Maya&#39;s radio removes the channel layer. Inside, the message is still sealed.</span><span class="when-in">Ryan&#39;s radio removes the channel layer. Inside, the reply is still sealed.</span></span>
+              <span class="cap cap-e"><span class="when-out">Maya&#39;s phone opens it with the room key, and she can read it.</span><span class="when-in">Ryan&#39;s phone opens it with the room key, and he can read it.</span></span>
               <span class="cap cap-static">Each message is sealed on the sender's phone with the room key, wrapped by the radios in the channel key, and opened only on the other phone.</span>
             </p>
             <p class="keys">
