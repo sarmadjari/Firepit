@@ -25,6 +25,7 @@
   --mesh-line: rgba(194, 65, 12, 0.17);
   --mesh-node: rgba(194, 65, 12, 0.42);
   --grain-opacity: 0.05;
+  --grain-filter: none;
 
   --shadow-sm: 0 1px 2px rgba(60, 30, 10, 0.05), 0 6px 18px -8px rgba(60, 30, 10, 0.14);
   --shadow-md: 0 2px 6px rgba(60, 30, 10, 0.05), 0 26px 50px -26px rgba(60, 30, 10, 0.32);
@@ -42,8 +43,9 @@
   color-scheme: light dark;
 }
 
+/* Dark, when the system asks for it, unless someone picked Light (html[data-theme="light"], set by main.js). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --surface: #141210;
     --surface-2: #1E1B18;
     --surface-alt: #181513;
@@ -72,8 +74,45 @@
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 18px -8px rgba(0, 0, 0, 0.5);
     --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.25), 0 26px 50px -26px rgba(0, 0, 0, 0.7);
     --device-shadow: 0 60px 120px -40px rgba(0, 0, 0, 0.85), 0 26px 50px -26px rgba(0, 0, 0, 0.6), 0 0 90px -30px rgba(240, 135, 90, 0.25);
+    --grain-filter: invert(1);
   }
 }
+
+/* Dark, picked by hand whatever the system says. The same values as the block above: keep the two in step. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface: #141210;
+  --surface-2: #1E1B18;
+  --surface-alt: #181513;
+  --text: #F1ECE7;
+  --text-2: #A39C95;
+  --line: #2E2926;
+  --line-strong: #3D3631;
+  --primary: #F0875A;
+  --on-primary: #3B1400;
+  --primary-soft: #3A2418;
+  --primary-ink: #F0875A;
+  --infra: #93A6DF;
+  --infra-soft: rgba(147, 166, 223, 0.12);
+  --bubble-out: #3A2418;
+  --bubble-in: #24211E;
+  --live: #4ED69A;
+  --stale: #6F6963;
+  --warn: #F2C94C;
+
+  --glow-1: rgba(240, 135, 90, 0.16);
+  --glow-2: rgba(244, 106, 16, 0.10);
+  --mesh-line: rgba(240, 135, 90, 0.15);
+  --mesh-node: rgba(240, 135, 90, 0.5);
+  --grain-opacity: 0.07;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 18px -8px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.25), 0 26px 50px -26px rgba(0, 0, 0, 0.7);
+  --device-shadow: 0 60px 120px -40px rgba(0, 0, 0, 0.85), 0 26px 50px -26px rgba(0, 0, 0, 0.6), 0 0 90px -30px rgba(240, 135, 90, 0.25);
+  --grain-filter: invert(1);
+}
+
+:root[data-theme="light"] { color-scheme: light; }
 
 /* Base */
 
@@ -158,6 +197,44 @@ svg.icon, .fact-ico svg, .f-ico svg, .node-ico svg {
 .nav-links a:hover, .nav-links a[aria-current] { color: var(--text); }
 .nav-links a:hover::after, .nav-links a[aria-current]::after { transform: scaleX(1); }
 
+/* Theme: System (the default), Light or Dark. Needs the script, so it only appears when the script runs. */
+
+.nav-end { display: flex; align-items: center; gap: clamp(16px, 3vw, 34px); }
+.theme { position: relative; display: none; }
+.js .theme { display: block; }
+.theme-button {
+  display: grid; place-items: center; width: 36px; height: 36px; padding: 0;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: transparent; color: var(--text-2); cursor: pointer;
+  transition: color 0.2s, border-color 0.2s;
+}
+.theme-button:hover, .theme.is-open .theme-button { color: var(--text); border-color: var(--line-strong); }
+.theme svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.ti { display: none; }
+:root:not([data-theme]) .ti-system, :root[data-theme="light"] .ti-light, :root[data-theme="dark"] .ti-dark { display: grid; }
+.theme-menu {
+  position: absolute; top: calc(100% + 10px); right: 0; z-index: 60;
+  display: grid; gap: 2px; min-width: 168px; padding: 6px;
+  border: 1px solid var(--line); border-radius: 16px;
+  background: var(--surface-2); box-shadow: var(--shadow-md);
+  opacity: 0; visibility: hidden; translate: 0 -4px;
+  transition: opacity 0.18s var(--ease), translate 0.18s var(--ease), visibility 0s linear 0.18s;
+}
+.theme.is-open .theme-menu {
+  opacity: 1; visibility: visible; translate: none;
+  transition: opacity 0.18s var(--ease), translate 0.18s var(--ease);
+}
+.theme-menu button {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 9px 12px; border: 0; border-radius: 10px; background: transparent;
+  font: inherit; font-size: 14.5px; color: var(--text); text-align: left; cursor: pointer;
+}
+.theme-menu button:hover { background: var(--surface-alt); }
+.theme-menu button[aria-pressed="true"] { color: var(--primary); font-weight: 600; }
+.theme-menu button[aria-pressed="true"]::after {
+  content: ""; margin-left: auto; width: 7px; height: 7px; border-radius: 50%; background: currentColor;
+}
+
 /* Buttons */
 
 .btn {
@@ -202,8 +279,8 @@ svg.icon, .fact-ico svg, .f-ico svg, .node-ico svg {
   content: ""; position: absolute; inset: 0;
   background: url("assets/grain.svg");
   opacity: var(--grain-opacity);
+  filter: var(--grain-filter);
 }
-@media (prefers-color-scheme: dark) { .hero-bg::after { filter: invert(1); } }
 
 .mesh {
   position: absolute; inset: 0; width: 100%; height: 100%;
@@ -731,6 +808,7 @@ h2 {
   .fact + .fact { border-top: 1px solid var(--line); margin-top: 26px; }
   .features { grid-template-columns: 1fr; }
   .nav-links { gap: 16px; font-size: 14.5px; }
+  .nav-end { gap: 14px; }
   .actions .btn { flex: 1 1 auto; }
 }
 

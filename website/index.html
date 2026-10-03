@@ -7,8 +7,8 @@
   <title>Firepit — Off the grid. Still together.</title>
   <meta name="description" content="Firepit is private group chat and a live map for Meshtastic LoRa radios. Talk and find each other with no phone signal, no internet and no accounts. For Android and iPhone.">
   <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#FAF7F3" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#141210" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#FAF7F3" media="(prefers-color-scheme: light)" data-scheme="light">
+  <meta name="theme-color" content="#141210" media="(prefers-color-scheme: dark)" data-scheme="dark">
   <link rel="canonical" href="https://firepit.sarmad.no/">
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
@@ -34,12 +34,25 @@
         <img src="assets/icon.svg" alt="" width="30" height="30">
         <span>Firepit</span>
       </a>
-      <ul class="nav-links">
-        <li><a href="#what">What</a></li>
-        <li><a href="#why">Why</a></li>
-        <li><a href="#how">How</a></li>
-        <li><a href="#features">Features</a></li>
-      </ul>
+      <div class="nav-end">
+        <ul class="nav-links">
+          <li><a href="#what">What</a></li>
+          <li><a href="#why">Why</a></li>
+          <li><a href="#how">How</a></li>
+          <li><a href="#features">Features</a></li>
+        </ul>
+        <div class="theme">
+          <button class="theme-button" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="theme-menu"
+                  aria-label="Theme: System">
+            <span class="ti ti-system"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12.5" rx="2.2"/><path d="M8.5 20.5h7M12 16.5v4"/></svg></span><span class="ti ti-light"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.8v2.2M12 19v2.2M2.8 12h2.2M19 12h2.2M5.5 5.5l1.6 1.6M16.9 16.9l1.6 1.6M5.5 18.5l1.6-1.6M16.9 7.1l1.6-1.6"/></svg></span><span class="ti ti-dark"><svg viewBox="0 0 24 24"><path d="M20 14.6A8.2 8.2 0 0 1 9.4 4a8.2 8.2 0 1 0 10.6 10.6z"/></svg></span>
+          </button>
+          <div class="theme-menu" id="theme-menu" role="group" aria-label="Theme">
+            <button type="button" data-theme-choice="system" aria-pressed="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12.5" rx="2.2"/><path d="M8.5 20.5h7M12 16.5v4"/></svg>System</button>
+            <button type="button" data-theme-choice="light" aria-pressed="false"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.8v2.2M12 19v2.2M2.8 12h2.2M19 12h2.2M5.5 5.5l1.6 1.6M16.9 16.9l1.6 1.6M5.5 18.5l1.6-1.6M16.9 7.1l1.6-1.6"/></svg>Light</button>
+            <button type="button" data-theme-choice="dark" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M20 14.6A8.2 8.2 0 0 1 9.4 4a8.2 8.2 0 1 0 10.6 10.6z"/></svg>Dark</button>
+          </div>
+        </div>
+      </div>
     </nav>
   </header>
 
@@ -95,7 +108,7 @@
           <figure class="device device-back">
             <div class="screen">
               <picture>
-                <source srcset="assets/screens/map-everyone-dark.webp" media="(prefers-color-scheme: dark)">
+                <source srcset="assets/screens/map-everyone-dark.webp" media="(prefers-color-scheme: dark)" data-scheme="dark">
                 <img src="assets/screens/map-everyone-light.webp" width="660" height="1435" decoding="async"
                      alt="The Firepit map: friends and pins around a campsite, with your location shared with the Camp room for 3 hours 34 more minutes.">
               </picture>
@@ -104,7 +117,7 @@
           <figure class="device device-front">
             <div class="screen">
               <picture>
-                <source srcset="assets/screens/chat-room-dark.webp" media="(prefers-color-scheme: dark)">
+                <source srcset="assets/screens/chat-room-dark.webp" media="(prefers-color-scheme: dark)" data-scheme="dark">
                 <img src="assets/screens/chat-room-light.webp" width="660" height="1435" decoding="async"
                      alt="Firepit on iPhone with no phone signal: the Camp room, with messages from friends, how many radios each one crossed, and delivery ticks.">
               </picture>
@@ -405,7 +418,7 @@
         <span>Firepit</span>
       </div>
       <p>Private group chat and a live map for Meshtastic radios.</p>
-      <p class="fine">This site sets no cookies and makes no third-party requests.</p>
+      <p class="fine">This site sets no cookies and makes no third-party requests. A theme you pick is remembered in this browser only.</p>
       <p class="fine">Meshtastic® is a registered trademark of Meshtastic LLC. Firepit is an independent project and is not affiliated with or endorsed by Meshtastic LLC.</p>
       <p class="fine">© 2026 Sarmad Jari</p>
     </div>
