@@ -160,7 +160,8 @@ pull request. The iOS steps need a Mac, so they run locally through `verify-all.
 
 [firepit.sarmad.no](https://firepit.sarmad.no) is a single static page in `website/`: HTML, CSS and a few lines of
 JavaScript, with no build step, no web fonts, no cookies and no third-party requests (its Content-Security-Policy
-allows only its own files). Light and dark follow the visitor's setting, using the apps' own colour tokens.
+allows only its own files). It uses the apps' own colour tokens: light and dark follow the visitor's device unless
+they pick one with the theme button (remembered in the browser, never in a cookie).
 
 ```bash
 python3 -m http.server 8000 --directory website   # preview at http://localhost:8000

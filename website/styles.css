@@ -26,6 +26,9 @@
   --mesh-node: rgba(194, 65, 12, 0.42);
   --grain-opacity: 0.05;
   --grain-filter: none;
+  --closing-bg: #FAF7F3;
+  --closing-glow: rgba(244, 106, 16, 0.20);
+  --closing-glow-soft: rgba(244, 106, 16, 0.06);
 
   --shadow-sm: 0 1px 2px rgba(60, 30, 10, 0.05), 0 6px 18px -8px rgba(60, 30, 10, 0.14);
   --shadow-md: 0 2px 6px rgba(60, 30, 10, 0.05), 0 26px 50px -26px rgba(60, 30, 10, 0.32);
@@ -75,6 +78,9 @@
     --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.25), 0 26px 50px -26px rgba(0, 0, 0, 0.7);
     --device-shadow: 0 60px 120px -40px rgba(0, 0, 0, 0.85), 0 26px 50px -26px rgba(0, 0, 0, 0.6), 0 0 90px -30px rgba(240, 135, 90, 0.25);
     --grain-filter: invert(1);
+    --closing-bg: #100E0C;
+    --closing-glow: rgba(244, 106, 16, 0.32);
+    --closing-glow-soft: rgba(244, 106, 16, 0.08);
   }
 }
 
@@ -110,6 +116,9 @@
   --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.25), 0 26px 50px -26px rgba(0, 0, 0, 0.7);
   --device-shadow: 0 60px 120px -40px rgba(0, 0, 0, 0.85), 0 26px 50px -26px rgba(0, 0, 0, 0.6), 0 0 90px -30px rgba(240, 135, 90, 0.25);
   --grain-filter: invert(1);
+  --closing-bg: #100E0C;
+  --closing-glow: rgba(244, 106, 16, 0.32);
+  --closing-glow-soft: rgba(244, 106, 16, 0.08);
 }
 
 :root[data-theme="light"] { color-scheme: light; }
@@ -253,8 +262,9 @@ svg.icon, .fact-ico svg, .f-ico svg, .node-ico svg {
   background: color-mix(in srgb, var(--surface-2) 55%, transparent);
 }
 .btn-ghost:hover { transform: translateY(-2px); border-color: var(--text-2); }
-.btn-light { background: #F1ECE7; color: #1A1614; }
-.btn-light:hover { transform: translateY(-2px); background: #FFFFFF; }
+/* The strongest contrast the theme has: dark on light, light on dark. */
+.btn-light { background: var(--text); color: var(--surface); }
+.btn-light:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
 
 /* Hero */
 
@@ -723,17 +733,17 @@ h2 {
 }
 .extras li::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--primary); }
 
-/* Closing: always night, around the fire */
+/* Closing: around the fire, by night in the dark theme and by day in the light one */
 
 .closing {
   position: relative; overflow: clip; isolation: isolate;
   padding-block: clamp(110px, 14vw, 190px);
-  background: #100E0C; color: #F1ECE7; text-align: center;
+  background: var(--closing-bg); color: var(--text); text-align: center;
 }
 .closing-glow {
   position: absolute; left: 50%; top: 50%; z-index: -1;
   width: min(960px, 130vw); aspect-ratio: 1; translate: -50% -50%;
-  background: radial-gradient(circle, rgba(244, 106, 16, 0.32), rgba(244, 106, 16, 0.08) 36%, transparent 64%);
+  background: radial-gradient(circle, var(--closing-glow), var(--closing-glow-soft) 36%, transparent 64%);
   animation: flicker 5s ease-in-out infinite;
 }
 @keyframes flicker {
@@ -744,21 +754,20 @@ h2 {
 }
 .closing-inner { display: grid; justify-items: center; gap: 26px; }
 .closing-icon { width: 96px; height: 96px; filter: drop-shadow(0 26px 46px rgba(244, 106, 16, 0.5)); }
-.closing h2, .closing h1 { color: #F1ECE7; font-size: clamp(2.8rem, 1.4rem + 5vw, 5.4rem); }
+.closing h2, .closing h1 { color: var(--text); font-size: clamp(2.8rem, 1.4rem + 5vw, 5.4rem); }
 .closing h1 { font-weight: 500; }
 .lost { min-height: 100vh; min-height: 100dvh; display: grid; align-items: center; }
-.closing p { max-width: 34rem; font-size: 18px; line-height: 1.6; color: #A39C95; text-wrap: balance; }
+.closing p { max-width: 34rem; font-size: 18px; line-height: 1.6; color: var(--text-2); text-wrap: balance; }
 .closing .btn { margin-top: 6px; }
-.closing :focus-visible { outline-color: #F0875A; }
 
-.site-footer { padding-block: 52px 64px; background: #100E0C; border-top: 1px solid rgba(255, 255, 255, 0.07); color: #A39C95; }
+.site-footer { padding-block: 52px 64px; background: var(--closing-bg); border-top: 1px solid var(--line); color: var(--text-2); }
 .footer-inner { display: grid; justify-items: start; gap: 10px; }
 .footer-brand {
   display: flex; align-items: center; gap: 10px; margin-bottom: 6px;
-  font-family: var(--font-display); font-size: 19px; font-weight: 600; color: #F1ECE7;
+  font-family: var(--font-display); font-size: 19px; font-weight: 600; color: var(--text);
 }
 .site-footer p { font-size: 15px; }
-.site-footer .fine { max-width: 72ch; font-size: 13px; color: #8A827B; }
+.site-footer .fine { max-width: 72ch; font-size: 13px; color: var(--text-2); }
 
 /* Reveal on scroll (only when the script runs, so nothing is hidden without it) */
 
@@ -823,4 +832,4 @@ h2 {
   .sparks, .mesh-packets, .pk, .bubble { display: none; }
 }
 
-.night { background: #100E0C; }
+.night { background: var(--closing-bg); }
