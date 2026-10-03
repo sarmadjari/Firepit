@@ -41,7 +41,7 @@ function setUpThemeMenu() {
   const open = (yes) => {
     theme.classList.toggle('is-open', yes);
     button.setAttribute('aria-expanded', String(yes));
-    if (yes) options.find((option) => option.getAttribute('aria-pressed') === 'true')?.focus();
+    if (yes) options.find((option) => option.getAttribute('aria-pressed') === 'true')?.focus({ preventScroll: true });
   };
 
   button.addEventListener('click', () => open(!theme.classList.contains('is-open')));
@@ -56,7 +56,7 @@ function setUpThemeMenu() {
     applyTheme(choice);
     sync();
     open(false);
-    button.focus();
+    button.focus({ preventScroll: true });
   }));
   document.addEventListener('click', (event) => {
     if (!theme.contains(event.target)) open(false);
@@ -64,7 +64,7 @@ function setUpThemeMenu() {
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && theme.classList.contains('is-open')) {
       open(false);
-      button.focus();
+      button.focus({ preventScroll: true });
     }
   });
   sync();

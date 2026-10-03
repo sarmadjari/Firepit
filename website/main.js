@@ -5,6 +5,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Again now the body exists: the screenshots' light and dark sources are in it.
   applyTheme(savedTheme());
   setUpThemeMenu();
+  setUpSectionMenu();
 
   const header = document.querySelector('.site-header');
   const onScroll = () => header.classList.toggle('is-scrolled', window.scrollY > 8);
@@ -198,5 +199,35 @@ function playInviteDemo() {
   }
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) stop(); else if (inView) restart();
+  });
+}
+
+// On phones the section links fold behind a menu button (the stylesheet decides when). The same list serves both, so
+// the underline that follows the reader marks the current section in the menu too.
+function setUpSectionMenu() {
+  const end = document.querySelector('.nav-end');
+  const button = end?.querySelector('.menu-button');
+  const list = end?.querySelector('.nav-links');
+  if (!end || !button || !list) return;
+  const links = [...list.querySelectorAll('a')];
+
+  const open = (yes) => {
+    end.classList.toggle('is-open', yes);
+    button.setAttribute('aria-expanded', String(yes));
+    if (yes) (links.find((link) => link.hasAttribute('aria-current')) ?? links[0]).focus({ preventScroll: true });
+  };
+
+  button.addEventListener('click', () => open(!end.classList.contains('is-open')));
+  links.forEach((link) => link.addEventListener('click', () => {
+    if (end.classList.contains('is-open')) open(false);
+  }));
+  document.addEventListener('click', (event) => {
+    if (!button.contains(event.target) && !list.contains(event.target)) open(false);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && end.classList.contains('is-open')) {
+      open(false);
+      button.focus({ preventScroll: true });
+    }
   });
 }
