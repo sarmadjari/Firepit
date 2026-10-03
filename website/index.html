@@ -176,30 +176,64 @@
           <p class="lede reveal">Your phone talks to your radio over Bluetooth. Radios talk to each other over LoRa and pass messages along. Firepit seals everything before it leaves your phone, so every radio on the way, your own included, carries only ciphertext.</p>
         </div>
 
-        <div class="flow reveal" role="img" aria-label="A message is sealed on your phone, goes over Bluetooth to your radio, across LoRa through any radios in between to their radio, and over Bluetooth to their phone, the only place it is opened.">
-          <div class="node">
+        <div class="flow reveal" role="img"
+             aria-label="How a message is protected on its way. Your phone seals it with the room key, which only phones in the room hold. Your radio adds a second layer with the channel key. Radios in between pass it on without being able to open it. Their radio removes the channel layer, and their phone opens the seal with the room key.">
+          <div class="node nd-1">
+            <span class="bubble bubble-out" aria-hidden="true">Meet at the trailhead</span>
             <span class="node-ico"><svg viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.6"/><path d="M10.5 18.5h3"/></svg></span>
-            <span class="node-txt"><strong>Your phone</strong><small>Seals the message</small></span>
+            <span class="node-txt"><strong>Your phone</strong><small>Seals it with the room key</small></span>
           </div>
-          <div class="link link-bt"><span>Bluetooth</span></div>
-          <div class="node">
+          <div class="link link-bt lk-1">
+            <span class="link-label"><i class="lock lock-room"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>Bluetooth</span>
+            <i class="pk"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>
+          </div>
+          <div class="node nd-2">
             <span class="node-ico"><svg viewBox="0 0 24 24"><rect x="5" y="9" width="14" height="12" rx="2.6"/><path d="M15.5 9V3"/><circle cx="9.5" cy="15" r="1.7"/><path d="M13.5 13.5h2.5M13.5 16.5h2.5"/></svg></span>
-            <span class="node-txt"><strong>Your radio</strong><small>Sends it out</small></span>
+            <span class="node-txt"><strong>Your radio</strong><small>Adds the channel layer</small></span>
           </div>
-          <div class="link link-lora"><span>LoRa</span></div>
-          <div class="node">
+          <div class="link link-lora lk-2">
+            <span class="link-label"><i class="lock lock-room"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i><i class="lock lock-chan"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>LoRa</span>
+            <i class="pk"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>
+          </div>
+          <div class="node nd-3">
             <span class="node-ico"><svg viewBox="0 0 24 24"><rect x="5" y="9" width="14" height="12" rx="2.6"/><path d="M15.5 9V3"/><circle cx="9.5" cy="15" r="1.7"/><path d="M13.5 13.5h2.5M13.5 16.5h2.5"/><path d="M18.5 3.5a4 4 0 0 1 1.8 3.2M12.5 3.5a4 4 0 0 0-1.8 3.2"/></svg></span>
-            <span class="node-txt"><strong>Any radio</strong><small>Relays what it can't read</small></span>
+            <span class="node-txt"><strong>Any radio</strong><small>Passes it on, can't open it</small></span>
           </div>
-          <div class="link link-lora"><span>LoRa</span></div>
-          <div class="node">
+          <div class="link link-lora lk-3">
+            <span class="link-label"><i class="lock lock-room"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i><i class="lock lock-chan"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>LoRa</span>
+            <i class="pk"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>
+          </div>
+          <div class="node nd-4">
             <span class="node-ico"><svg viewBox="0 0 24 24"><rect x="5" y="9" width="14" height="12" rx="2.6"/><path d="M15.5 9V3"/><circle cx="9.5" cy="15" r="1.7"/><path d="M13.5 13.5h2.5M13.5 16.5h2.5"/></svg></span>
-            <span class="node-txt"><strong>Their radio</strong><small>Hands it over</small></span>
+            <span class="node-txt"><strong>Their radio</strong><small>Removes the channel layer</small></span>
           </div>
-          <div class="link link-bt"><span>Bluetooth</span></div>
-          <div class="node node-end">
+          <div class="link link-bt lk-4">
+            <span class="link-label"><i class="lock lock-room"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>Bluetooth</span>
+            <i class="pk"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>
+          </div>
+          <div class="node nd-5">
+            <span class="bubble bubble-in" aria-hidden="true">Meet at the trailhead</span>
             <span class="node-ico"><svg viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.6"/><path d="M10.5 18.5h3"/></svg></span>
-            <span class="node-txt"><strong>Their phone</strong><small>Opens it</small></span>
+            <span class="node-txt"><strong>Their phone</strong><small>Opens it with the room key</small></span>
+          </div>
+          <div class="readout">
+            <div class="wire">
+              <span class="wire-val v-plain"><span class="wire-tag">Words</span><span class="wire-text">“Meet at the trailhead”</span></span>
+              <span class="wire-val v-sealed"><span class="wire-tag"><i class="lock lock-room"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>Sealed</span><code>9F 2C A1 07 E4 5B 3D 88 C2 1E 6B F0 …</code></span>
+              <span class="wire-val v-wrapped"><span class="wire-tag"><i class="lock lock-room"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i><i class="lock lock-chan"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>Sealed + channel</span><code>4C 09 D1 EE 7A 31 B6 05 F0 6A 2D 93 …</code></span>
+            </div>
+            <p class="caps">
+              <span class="cap cap-a">Your phone seals the message with the room key. Only phones in the room hold it.</span>
+              <span class="cap cap-b">Your radio wraps it again with the channel key, as every Meshtastic radio does.</span>
+              <span class="cap cap-c">Radios in between pass it on. None of them can open the seal.</span>
+              <span class="cap cap-d">Their radio removes the channel layer. Inside, the message is still sealed.</span>
+              <span class="cap cap-e">Their phone opens it with the room key. Only here is it words again.</span>
+              <span class="cap cap-static">Sealed on your phone with the room key, wrapped by the radios in the channel key, and opened only on their phone.</span>
+            </p>
+            <p class="keys">
+              <span class="key"><i class="lock lock-room"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>Room key · only on members' phones</span>
+              <span class="key"><i class="lock lock-chan"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>Channel key · on the radios</span>
+            </p>
           </div>
         </div>
 
