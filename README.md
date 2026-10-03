@@ -64,8 +64,9 @@ editing the project. For a phone, pick your team under Signing & Capabilities.
 Demo mode (debug builds): launch with `-demo` to run the app against a pretend radio and an in-memory world. It has
 two private rooms, a few people with positions, a day and a half of messages, pins and a live share, so every screen
 can be seen populated without hardware. Nothing is read from or written to real storage. Add
-`-route <feature>.<screen>` to open one screen directly, for example `chat.room`, `map.main`, `radio.nodes` or
-`settings.main`. Each feature lists its routes in `Features/<Feature>/<Feature>DebugRoutes.swift`.
+`-route <feature>.<screen>` to open one screen directly, for example `chat.room`, `map.everyone` (the map framed on
+the demo people), `radio.nodes`, `settings.main` or `settings.notifications` (the Settings page scrolled to that
+section). Each feature lists its routes in `Features/<Feature>/<Feature>DebugRoutes.swift`.
 ```bash
 xcrun simctl launch <simulator id> com.getfirepit.app -demo -route chat.room
 ```
@@ -97,6 +98,8 @@ xcrun devicectl device process launch --device <identifier> --terminate-existing
   Run it after any change under `protos/`; CI fails if the two differ.
 - `scripts/gen-swift-protos.sh`: regenerate the committed Swift code from the vendored protos with SwiftProtobuf tools
   built from the pinned version (the tool build lives in `refs/`).
+- `scripts/sync-ios-glyphs.py`: copy the glyphs both apps must draw identically — the room icons, the role glyphs and
+  the pin — from Android's vector drawables into `ios/Firepit/Assets.xcassets/Glyphs`. `--check` reports drift.
 - `scripts/render-ios-app-icon.swift`: render the iOS app icon from `design/artwork/icon-app.svg`, the artwork Android's
   launcher icon draws as vectors. Light and dark are the artwork itself; tinted is its white flame and rim alone.
 - `scripts/fetch-refs.sh`: reference clones (firmware, Meshtastic apps) into `refs/` (git-ignored) for citations.

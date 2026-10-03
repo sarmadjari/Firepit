@@ -27,6 +27,16 @@ struct MapScreen: View {
         _sharingModel = State(initialValue: SharingViewModel(location: app.location, mesh: app.mesh))
     }
 
+    #if DEBUG
+        /// `-route map.everyone`: opens already framed on the demo world's people, as "Show everyone" would.
+        private var debugFramesEveryone = false
+
+        init(app: AppContainer, debugFramesEveryone: Bool) {
+            self.init(app: app)
+            self.debugFramesEveryone = debugFramesEveryone
+        }
+    #endif
+
     var body: some View {
         NavigationStack {
             ZStack(alignment: .top) {
@@ -132,14 +142,16 @@ struct MapScreen: View {
                 Spacer(minLength: FirepitSpacing.s)
                 mapOptionsButton
             }
+            // Top centre, where Android has it: online, the map waits to be asked before going to where people are.
+            .overlay(alignment: .top) {
+                if !hasFramedMarkers && !model.offlineOnly && !model.uiState.markers.isEmpty {
+                    Button("Show everyone") { frameAll(force: true) }
+                        .buttonStyle(.pill)
+                }
+            }
             .padding(.top, FirepitSpacing.screenMargin)
             .padding(.horizontal, FirepitSpacing.m)
             Spacer()
-            if !hasFramedMarkers && !model.offlineOnly && !model.uiState.markers.isEmpty {
-                Button("Show everyone") { frameAll(force: true) }
-                    .buttonStyle(.pill)
-                    .padding(.bottom, FirepitSpacing.s)
-            }
             SharingBanner(
                 state: sharingModel.state,
                 onChange: { pickingRoom = true },
@@ -220,6 +232,12 @@ struct MapScreen: View {
     }
 
     private func frameMarkersIfNeeded(force: Bool = false) {
+        #if DEBUG
+            if debugFramesEveryone && !hasFramedMarkers && !model.uiState.markers.isEmpty {
+                frameAll(force: true)
+                return
+            }
+        #endif
         guard (force || !hasFramedMarkers) && model.offlineOnly && !model.uiState.markers.isEmpty else { return }
         frameAll(force: force)
     }

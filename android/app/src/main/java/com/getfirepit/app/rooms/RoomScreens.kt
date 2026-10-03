@@ -1,5 +1,6 @@
 package com.getfirepit.app.rooms
 
+import android.content.ClipboardManager
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -36,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -286,10 +288,25 @@ fun JoinRoomScreen(
     // Leaving the screen abandons a code nobody confirmed.
     DisposableEffect(Unit) { onDispose { viewModel.cancelScan() } }
 
+    val clipboard = LocalContext.current.getSystemService(ClipboardManager::class.java)
     Scaffold(
         modifier = modifier,
         topBar = {
-            FirepitDetailBar(title = "Scan a code", onBack = onBack)
+            FirepitDetailBar(
+                title = "Scan a code",
+                onBack = onBack,
+                actions = {
+                    // A link that came as text: one tap, as on iPhone.
+                    TextButton(
+                        onClick = {
+                            clipboard?.primaryClip?.takeIf { it.itemCount > 0 }
+                                ?.getItemAt(0)?.text?.toString()?.trim()
+                                ?.takeIf { it.isNotEmpty() }
+                                ?.let(viewModel::joinFromScan)
+                        },
+                    ) { Text("Paste") }
+                },
+            )
         },
     ) { padding ->
         Box(
@@ -304,10 +321,16 @@ fun JoinRoomScreen(
                 enabled = !state.busy && scanned == null,
             )
 
+            // On a solid card rather than straight on the camera: a live picture behind small text makes it
+            // unreadable, whatever its colour.
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(FirepitSpacing.screenMargin),
+                    .padding(FirepitSpacing.screenMargin)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(FirepitSpacing.cardCorner))
+                    .background(FirepitTheme.colors.surface2)
+                    .padding(FirepitSpacing.m),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
             ) {
@@ -323,7 +346,7 @@ fun JoinRoomScreen(
                 Text(
                     text = "A Firepit invite joins a private room. A Meshtastic code adds a " +
                         "channel other Meshtastic apps can read — the room will say which.",
-                    color = FirepitTheme.colors.textSecondary,
+                    color = FirepitTheme.colors.textPrimary,
                     textAlign = TextAlign.Center,
                     style = MaterialTheme.typography.bodySmall,
                 )

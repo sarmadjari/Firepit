@@ -186,7 +186,7 @@ flowchart TD
 
 ### 5.5 Direct chat
 
-- Start from a member (room info / member sheet / Chats ＋ → Message a member). One thread per person regardless of rooms.
+- Start from a person: tap them in a room's info (Members), or open them in Settings → Nodes and choose **Message**. A tapped notification for a direct message opens that conversation. One thread per person regardless of rooms. The empty Direct list says where to start: "No direct messages yet. To start one, tap someone in a room's info, or open them in Settings → Nodes." (Shipped 2026-10-03 on both apps; until then neither offered a way to start one.)
 - Prerequisite handled silently: the peer's public key must be known to our node (IG §6.2.2). If not yet: "Waiting for Sam's node to say hello…" with the Message button disabled and an automatic NodeInfo request (once). Usually resolved within seconds after a join.
 - Delivery: ✓✓ appears only when the peer's node ACKs (real delivery to the device, not to the person — the tooltip says "Delivered to Sam's node").
 - Header subtitle: "T-Echo · 78 % · good signal · heard 3 min ago" (no "online").
@@ -394,6 +394,8 @@ Room name is immutable per key generation (the channel name is part of the encry
 
 People sheet rows: avatar, name, distance and bearing from me, age of last position, live/stale word. Tap → centre + member sheet. Pins listed below people.
 
+Marker sizes, identical on both apps (dp on Android, points on iOS, so a marker is the same physical size on every phone): disc 34 across; ring 3 (4 on your own marker, in `#1B73E8`), drawn inside the disc's edge, `live` when live and `stale` otherwise; tag 14 bold, shrinking to fit 78 % of the disc; Base/Router glyph 62 % of the disc; approximate fix at 60 % opacity; heading arrow 10 × 8 just above the disc; name pill 3 below the disc, 12 semibold, padding 6 × 2, corner 6, `surface-2` with an `outline` hairline. Pins: an amber (`#F59E0B`) teardrop 28 high with a white hole, anchored at its tip, with the pin's name under it. Android draws these into bitmaps scaled by screen density (`MarkerSize` in `MapScreen.kt`); iOS draws the same numbers (`MarkerSize` in `MapAnnotations.swift`).
+
 Marker language: personal = the person's tag (`short_name`) in identity colour with white ring, full name in the label chip below; live = solid + subtle pulse (off with reduce motion); stale = 50 % opacity, grey ring, age label; reduced precision = translucent accuracy circle; Base = house glyph, Router = antenna glyph, both in the reserved infrastructure colour; multiple bases share the glyph and differ by label. Own marker = blue dot like every map app.
 
 ### 6.7 Share location sheet
@@ -411,6 +413,8 @@ Marker language: personal = the person's tag (`short_name`) in identity colour w
 ```
 
 ### 6.8 Settings
+
+As built (2026-10-03), Settings is one page on both apps, with the same sections in the same order — You, Radio, Notifications, Messages, Privacy, Map, Appearance, About — and the same wording. Each question is answered where it is asked: Android with fields, switches and chip rows; iOS with fields, switches and menus showing the current answer. Only Devices, Nodes, Offline areas and Dropped pins open screens of their own. The wireframe below is the original plan.
 
 ```
 ┌──────────────────────────────────────────┐
@@ -611,7 +615,7 @@ System fonts (SF Pro / Roboto), Dynamic Type and font scaling honoured.
 
 - Spacing scale 4/8/12/16/24/32; screen margins 16; list rows 64–72 dp; bubbles padding 10×14; radius 16 (bubbles), 12 (cards), 24 (sheets), full (pills, FAB).
 - Platform-native controls: iOS tab bar, navigation stack, sheets with grabber; Android Material 3 navigation bar, top app bar, bottom sheets, FAB. Shared visual tokens; no cross-platform lookalikes.
-- Icons: SF Symbols / Material Symbols (outlined), 24 dp; custom glyphs only for status ticks and Base/Router markers.
+- Icons: interface chrome uses each platform's symbols (SF Symbols on iOS; Firepit's outlined 24 dp set on Android), with the same metaphor on both — Settings is a gear, Chats a single bubble. Glyphs that people compare between phones are the same drawing on both: the eight room icons, the Personal/Base/Router role glyphs, and the map pin. Android's vector drawables are the source; `scripts/sync-ios-glyphs.py` writes them into the iOS asset catalogue. The delivery ticks are drawn the same way on both, by hand.
 
 ### 9.4 Motion and haptics
 
@@ -648,7 +652,7 @@ The tokens (§9.1), type ramp (§9.2), icon set, copy (§10) and every flow are 
 | Status bar / home indicator | System | System (edge-to-edge, gesture nav) |
 | Fonts | SF Pro (Dynamic Type) | Roboto / system (sp scaling) |
 | Haptics | UIFeedbackGenerator light on send | `HapticFeedbackType` light on send |
-| Icons | Same Firepit stroke set (24 pt grid) | Same set as `ImageVector`s |
+| Icons | SF Symbols for chrome; room, role and pin glyphs are Android's drawings (`Glyphs` asset set) | Firepit's 24 dp outlined set (vector drawables) |
 | Ripple / highlight | Highlight on press | Material ripple (do not disable) |
 | Map controls | Pill + round buttons over the map | Assist chip + small FABs; extended FAB for sharing; sheet peek with drag handle |
 | Large screens / foldables | iPad split view later | Window size classes + hinge posture: list-detail panes for Chats, map + sheet side-by-side (build-plan "adaptive" thread) |

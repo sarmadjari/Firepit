@@ -1,5 +1,6 @@
 package com.getfirepit.app
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -21,6 +22,8 @@ import com.getfirepit.app.radio.SavedRadioStore
 import com.getfirepit.app.rooms.RoomJoinPrompts
 import com.getfirepit.app.settings.ThemeChoice
 import com.getfirepit.app.settings.ThemePreferences
+import com.getfirepit.app.notifications.MessageNotifier
+import com.getfirepit.app.ui.ChatTarget
 import com.getfirepit.app.ui.FirepitApp
 import com.getfirepit.core.data.MeshRepository
 import com.getfirepit.core.data.NodeClock
@@ -33,6 +36,7 @@ import com.getfirepit.core.designsystem.theme.LocalIdentitySlots
 import com.getfirepit.core.protocol.NodeRole
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
@@ -52,8 +56,13 @@ class MainActivity : ComponentActivity() {
 
     @Inject lateinit var screenPrivacy: ScreenPrivacyPreferences
 
+    /** The conversation a tapped notification asked for, until Chats has opened it. */
+    private val openRequest = MutableStateFlow<ChatTarget?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Only on a fresh start: after a rotation the request was already handled.
+        if (savedInstanceState == null) openRequest.value = intent.chatTarget()
         keepOutOfScreenshots()
         enableEdgeToEdge()
         setContent {
@@ -108,13 +117,31 @@ class MainActivity : ComponentActivity() {
                     },
                 ) {
                     NoPersonalizedLearning {
-                        FirepitApp(Modifier.fillMaxSize())
+                        val request by openRequest.collectAsStateWithLifecycle()
+                        FirepitApp(
+                            modifier = Modifier.fillMaxSize(),
+                            openRequest = request,
+                            onOpenRequestTaken = { openRequest.value = null },
+                        )
                         ClockOfferDialog(nodeClock)
                         RoomJoinPrompts()
                     }
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.chatTarget()?.let { openRequest.value = it }
+    }
+
+    /** What a message notification asked to open: the person for a direct message, otherwise the room. */
+    private fun Intent.chatTarget(): ChatTarget? = when {
+        hasExtra(MessageNotifier.EXTRA_PEER) -> ChatTarget.Direct(getIntExtra(MessageNotifier.EXTRA_PEER, 0))
+        hasExtra(MessageNotifier.EXTRA_CHANNEL) -> ChatTarget.Channel(getIntExtra(MessageNotifier.EXTRA_CHANNEL, 0))
+        else -> null
     }
 
     /**

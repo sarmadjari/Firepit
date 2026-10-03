@@ -369,8 +369,10 @@ private struct BeaconFields: View {
         VStack(alignment: .leading, spacing: FirepitSpacing.xs) {
             SectionLabel("Beacon")
             Text(
-                "How often your location goes to the room you share it with, while you share it. Your phone seals "
-                    + "and sends it, so it pauses if your phone is away from this radio."
+                """
+                How often your location goes to the room you share it with, while you share it. Your phone seals and \
+                sends it, so it pauses if your phone is away from this radio.
+                """
             )
             .font(FirepitFont.bodySmall)
             .foregroundStyle(FirepitColors.textSecondary)

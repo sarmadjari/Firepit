@@ -35,12 +35,20 @@ final class AppRouter {
     /// A conversation to open, by channel, set by a tapped notification. The chats screen clears it once shown.
     var pendingChannel: Int?
 
+    /// A conversation with one person to open: a tapped direct-message notification, or Message on someone.
+    var pendingDirect: Int32?
+
     /// An invite link opened from outside the app, handled like a scanned code.
     var pendingInvite: String?
 
     func open(channel: Int) {
         selectedTab = .chats
         pendingChannel = channel
+    }
+
+    func openDirect(_ peer: Int32) {
+        selectedTab = .chats
+        pendingDirect = peer
     }
 
     func openInvite(_ link: String) {

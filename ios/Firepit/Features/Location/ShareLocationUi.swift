@@ -123,6 +123,10 @@ struct SharingRoomRow: View {
                     )
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                Image(icon: .chevron)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(FirepitColors.textSecondary)
+                    .accessibilityHidden(true)
             }
             .contentShape(.rect)
         }

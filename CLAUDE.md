@@ -119,6 +119,9 @@ Stage 3.
 - **Protos:** after any change under `protos/`, run `scripts/sync-ios-protos.sh` (copies into
   `FirepitKit/Protos` and regenerates `FirepitProtos`). CI fails if the two trees differ.
 - The app target defaults to `@MainActor`; mark pure value types and `Shape`s `nonisolated`.
+- **Shared glyphs:** room icons, the Personal/Base/Router glyphs and the map pin are Android's drawings on both apps,
+  because people compare them across phones. After changing one of those drawables run `scripts/sync-ios-glyphs.py`;
+  never swap in an SF Symbol. Interface chrome (search, close, share…) stays SF Symbols.
 - Keep builds warning-free. Check UI changes in light, dark, an accessibility text size and right-to-left, using the
   debug-only `-demo` world and `-route <feature>.<screen>` launch arguments (README).
 

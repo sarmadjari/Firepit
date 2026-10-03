@@ -22,6 +22,7 @@ import androidx.compose.material3.ShortNavigationBar
 import androidx.compose.material3.ShortNavigationBarItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,13 +49,29 @@ import com.getfirepit.core.designsystem.theme.FirepitTheme
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun FirepitApp(modifier: Modifier = Modifier) {
+fun FirepitApp(
+    modifier: Modifier = Modifier,
+    openRequest: ChatTarget? = null,
+    onOpenRequestTaken: () -> Unit = {},
+) {
     // rememberSaveable so the selected tab survives a fold, rotation or process
     // death — all of which recreate the activity.
     var selected by rememberSaveable { mutableStateOf(TopLevelDestination.CHATS) }
     var chatOpen by remember { mutableStateOf(false) }
     var settingsDetailOpen by remember { mutableStateOf(false) }
     var settingsSection by remember { mutableStateOf<SettingsSection?>(null) }
+    // A conversation asked for from outside Chats: a notification, or a person in Settings. Chats opens it and
+    // clears it, so asking twice works.
+    var chatTarget by remember { mutableStateOf<ChatTarget?>(null) }
+    LaunchedEffect(openRequest) {
+        openRequest?.let {
+            chatTarget = it
+            onOpenRequestTaken()
+        }
+    }
+    LaunchedEffect(chatTarget) {
+        if (chatTarget != null) selected = TopLevelDestination.CHATS
+    }
 
     val keyboardOpen = WindowInsets.isImeVisible
 
@@ -80,7 +97,11 @@ fun FirepitApp(modifier: Modifier = Modifier) {
 
     val screen: @Composable () -> Unit = {
         when (selected) {
-            TopLevelDestination.CHATS -> ChatsPane(onChatOpenChange = { chatOpen = it })
+            TopLevelDestination.CHATS -> ChatsPane(
+                onChatOpenChange = { chatOpen = it },
+                openTarget = chatTarget,
+                onTargetOpened = { chatTarget = null },
+            )
             TopLevelDestination.MAP -> MapScreen(
                 onBack = { selected = TopLevelDestination.CHATS },
                 onOpenOfflineAreas = {
@@ -93,6 +114,7 @@ fun FirepitApp(modifier: Modifier = Modifier) {
                     openSection = settingsSection,
                     onSectionOpened = { settingsSection = null },
                     onImmersiveChange = { settingsDetailOpen = it },
+                    onMessage = { peer -> chatTarget = ChatTarget.Direct(peer) },
                 )
         }
     }

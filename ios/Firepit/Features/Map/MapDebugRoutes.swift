@@ -8,6 +8,8 @@
             switch route {
             case "map.main":
                 AnyView(MapScreen(app: app))
+            case "map.everyone":
+                AnyView(MapScreen(app: app, debugFramesEveryone: true))
             case "map.pins":
                 AnyView(NavigationStack { PinsScreen(app: app) })
             default:

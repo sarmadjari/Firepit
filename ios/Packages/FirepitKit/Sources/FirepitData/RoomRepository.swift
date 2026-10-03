@@ -18,6 +18,8 @@ public enum RoomError: Error, Sendable, Equatable, LocalizedError {
     /// The code claims a radio this one already knows, under a key that is not that radio's.
     case keyMismatch
     case alreadyInRoom
+    /// Asked to invite to a room that is no longer on the radio: left, or moved off it by another app.
+    case roomGone
     /// A channel read timed out; writing on regardless would rewrite a room with no key.
     case radioUnreadable
 
@@ -41,6 +43,8 @@ public enum RoomError: Error, Sendable, Equatable, LocalizedError {
                 + "show a fresh code, and check the key their screen shows."
         case .alreadyInRoom:
             return "You're already in this room"
+        case .roomGone:
+            return "This room isn't on your radio any more"
         case .radioUnreadable:
             return "Couldn't read the radio's channels, so nothing was changed. Try again."
         }
@@ -552,7 +556,7 @@ public final class RoomRepository: Sendable {
             throw RoomError.notConnected
         }
         guard let room = ChannelSlotManager.findByRoomId(channels: mesh.channels.value, roomId: roomId) else {
-            throw RoomError.inviteInvalid
+            throw RoomError.roomGone
         }
         guard let settings = await admin.getChannel(index: room.index)?.settings else {
             throw RoomError.notConnected

@@ -99,6 +99,12 @@ struct ChatsPane: View {
             path.removeAll()
             open(channel: channel)
         }
+        .onChange(of: router.pendingDirect, initial: true) { _, peer in
+            guard let peer else { return }
+            router.pendingDirect = nil
+            path.removeAll()
+            open(direct: peer)
+        }
         .onChange(of: router.pendingInvite, initial: true) { _, link in
             // The join screen takes the link from the router itself.
             guard link != nil, path.last != .join else { return }
@@ -173,6 +179,10 @@ struct ChatsPane: View {
                 onToggleMute: { viewModel.toggleMute(channelIndex) },
                 // Leaving the room leaves its conversation too: there is nothing left to go back to.
                 onLeft: { path.removeAll() },
+                onMessage: { peer in
+                    path.removeAll()
+                    open(direct: peer)
+                },
                 viewModel: rooms,
                 sharingViewModel: SharingViewModel(location: app.location, mesh: app.mesh)
             )
@@ -628,6 +638,10 @@ private struct ChannelChat: View {
                 }
             }
             .background(FirepitColors.surface)
+            // A hairline, so messages scroll under the line rather than into it.
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(FirepitColors.outline).frame(height: 1)
+            }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ConversationFooter(viewModel: viewModel)

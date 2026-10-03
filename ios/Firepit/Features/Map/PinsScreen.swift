@@ -6,7 +6,6 @@ struct PinsScreen: View {
     @State private var model: PinsViewModel
     @State private var renaming: MapPin?
     @State private var removing: MapPin?
-    @Environment(\.dismiss) private var dismiss
 
     init(app: AppContainer) {
         _model = State(initialValue: PinsViewModel(app: app))
@@ -41,7 +40,7 @@ struct PinsScreen: View {
                 Section {
                     ContentUnavailableView(
                         "No pins yet",
-                        systemImage: FirepitIcon.pin.systemName,
+                        image: FirepitIcon.pin.glyph ?? "pin",
                         description: Text("Use the pin button on the map, or long-press it.")
                     )
                 }
@@ -62,11 +61,6 @@ struct PinsScreen: View {
         }
         .navigationTitle("Dropped pins")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button("Back") { dismiss() }
-            }
-        }
         .scrollContentBackground(.hidden)
         .background(FirepitColors.surface)
         .task { await model.observe() }

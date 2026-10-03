@@ -57,10 +57,9 @@ struct RoomAvatar: View {
             .fill(FirepitColors.bubbleOut)
             .frame(width: size, height: size)
             .overlay {
-                Image(systemName: icon.systemName)
+                Image(icon.glyph)
                     .resizable()
                     .scaledToFit()
-                    .fontWeight(.medium)
                     .foregroundStyle(FirepitColors.primary)
                     .frame(width: size * 0.5, height: size * 0.5)
             }
@@ -78,10 +77,9 @@ struct InfraAvatar: View {
             .fill(FirepitColors.infra)
             .frame(width: size, height: size)
             .overlay {
-                Image(systemName: (isRouter ? RoomIcon.flag : RoomIcon.house).systemName)
+                Image((isRouter ? RoomIcon.flag : RoomIcon.house).glyph)
                     .resizable()
                     .scaledToFit()
-                    .fontWeight(.medium)
                     .foregroundStyle(Color(hex: 0xFFFFFF))
                     .frame(width: size * 0.5, height: size * 0.5)
             }

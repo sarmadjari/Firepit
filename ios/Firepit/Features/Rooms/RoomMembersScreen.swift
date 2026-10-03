@@ -13,6 +13,8 @@ struct RoomMembersScreen: View {
     var onInvite: () -> Void = {}
     var onToggleMute: () -> Void = {}
     var onLeft: () -> Void = {}
+    /// Opens a conversation with one member: tapping a person is how one starts.
+    var onMessage: (Int32) -> Void = { _ in }
 
     @State private var viewModel: RoomsViewModel
     @State private var sharingViewModel: SharingViewModel
@@ -31,6 +33,7 @@ struct RoomMembersScreen: View {
         onInvite: @escaping () -> Void = {},
         onToggleMute: @escaping () -> Void = {},
         onLeft: @escaping () -> Void = {},
+        onMessage: @escaping (Int32) -> Void = { _ in },
         viewModel: RoomsViewModel,
         sharingViewModel: SharingViewModel
     ) {
@@ -43,6 +46,7 @@ struct RoomMembersScreen: View {
         self.onInvite = onInvite
         self.onToggleMute = onToggleMute
         self.onLeft = onLeft
+        self.onMessage = onMessage
         _viewModel = State(initialValue: viewModel)
         _sharingViewModel = State(initialValue: sharingViewModel)
     }
@@ -57,7 +61,8 @@ struct RoomMembersScreen: View {
         kind: RoomKind = .firepit,
         onInvite: @escaping () -> Void = {},
         onToggleMute: @escaping () -> Void = {},
-        onLeft: @escaping () -> Void = {}
+        onLeft: @escaping () -> Void = {},
+        onMessage: @escaping (Int32) -> Void = { _ in }
     ) {
         self.init(
             roomId: roomId,
@@ -69,6 +74,7 @@ struct RoomMembersScreen: View {
             onInvite: onInvite,
             onToggleMute: onToggleMute,
             onLeft: onLeft,
+            onMessage: onMessage,
             viewModel: RoomsViewModel(app: app),
             sharingViewModel: SharingViewModel(location: app.location, mesh: app.mesh)
         )
@@ -76,41 +82,51 @@ struct RoomMembersScreen: View {
 
     var body: some View {
         List {
-            hero
-            actions
+            Section {
+                hero
+                actions
+            }
+            // Membership is a Firepit idea: on a Meshtastic channel there is no roster, and anyone with the key can be
+            // on it unannounced.
             if kind.isPrivate {
-                SharingRoomRow(state: sharingViewModel.state, roomId: roomId) { pickingRoom = true }
-                    .listRowBackground(FirepitColors.surface2)
-                SectionLabel("Members")
-                    .listRowBackground(FirepitColors.surface)
-            }
-            if members.isEmpty && kind.isPrivate {
-                Text("Nobody heard yet.")
-                    .foregroundStyle(FirepitColors.textSecondary)
-                    .listRowBackground(FirepitColors.surface)
-            }
-            ForEach(kind.isPrivate ? members : []) { row in
-                MemberRowView(row: row, trace: viewModel.trace) {
-                    viewModel.checkPath(nodeNum: row.member.nodeNum, name: row.displayName)
-                } onRemove: {
-                    removing = row
+                Section {
+                    SharingRoomRow(state: sharingViewModel.state, roomId: roomId) { pickingRoom = true }
+                        .listRowBackground(FirepitColors.surface2)
                 }
-                .listRowBackground(FirepitColors.surface2)
+                Section {
+                    if members.isEmpty {
+                        Text("Nobody heard yet.")
+                            .foregroundStyle(FirepitColors.textSecondary)
+                            .listRowBackground(FirepitColors.surface2)
+                    }
+                    ForEach(members) { row in
+                        MemberRowView(row: row, trace: viewModel.trace) {
+                            onMessage(row.member.nodeNum)
+                        } onPath: {
+                            viewModel.checkPath(nodeNum: row.member.nodeNum, name: row.displayName)
+                        } onRemove: {
+                            removing = row
+                        }
+                        .listRowBackground(FirepitColors.surface2)
+                    }
+                } header: {
+                    Text("Members")
+                } footer: {
+                    Text(
+                        """
+                        Tap someone to message them on their own. Anyone with the room's key can read and post. \
+                        Members appear as Firepit hears them, or when another member reports them, so this list may \
+                        be incomplete.
+                        """
+                    )
+                }
             }
-            Text(
-                "Anyone with the room's key can read and post. Members appear as Firepit hears them, or when "
-                    + "another member reports them, so this list may be incomplete."
-            )
-            .font(FirepitFont.bodySmall)
-            .foregroundStyle(FirepitColors.textSecondary)
-            .listRowBackground(FirepitColors.surface)
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(FirepitColors.surface)
         .navigationTitle("Room info")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { ToolbarItem(placement: .topBarLeading) { Button("Back", action: onBack) } }
         .task {
             await withTaskGroup(of: Void.self) { group in
                 group.addTask { await viewModel.observe() }
@@ -145,8 +161,10 @@ struct RoomMembersScreen: View {
             Button("Stay", role: .cancel) {}
         } message: {
             Text(
-                "The key goes with it, so you will need a new invitation to come back, and this room's messages "
-                    + "are deleted from this phone."
+                """
+                The key goes with it, so you will need a new invitation to come back, and this room's messages are \
+                deleted from this phone.
+                """
             )
         }
         .confirmationDialog(removeTitle, isPresented: removeBinding, titleVisibility: .visible) {
@@ -242,15 +260,40 @@ struct RoomMembersScreen: View {
 private struct MemberRowView: View {
     let row: MemberRow
     let trace: TraceState
+    let onMessage: () -> Void
     let onPath: () -> Void
     let onRemove: () -> Void
 
     var body: some View {
+        HStack(spacing: FirepitSpacing.s) {
+            if row.isSelf {
+                person
+                Text("You")
+                    .font(FirepitFont.bodySmall)
+                    .foregroundStyle(FirepitColors.textSecondary)
+            } else {
+                // The person is the button: tapping them opens a conversation with them, as on Android.
+                Button(action: onMessage) { person.contentShape(.rect) }
+                    .buttonStyle(.plain)
+                    .accessibilityHint(Text("Opens a conversation with them"))
+                Button(action: onPath) { Text(verbatim: pathLabel) }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(FirepitColors.primary)
+                    .disabled(isRunning)
+                Button("Remove", role: .destructive, action: onRemove)
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(FirepitColors.danger)
+            }
+        }
+    }
+
+    private var person: some View {
         HStack(spacing: FirepitSpacing.m) {
             IdentityAvatar(nodeNum: row.member.nodeNum, tag: row.shortName)
             VStack(alignment: .leading, spacing: 2) {
                 Text(verbatim: headline)
                     .font(FirepitFont.titleMedium)
+                    .foregroundStyle(FirepitColors.textPrimary)
                     .lineLimit(1)
                 Text(verbatim: memberDetail(row))
                     .font(FirepitFont.bodySmall)
@@ -261,24 +304,8 @@ private struct MemberRowView: View {
                         .foregroundStyle(FirepitColors.stale)
                 }
             }
-            Spacer()
-            if row.isSelf {
-                Text("You")
-                    .font(FirepitFont.bodySmall)
-                    .foregroundStyle(FirepitColors.textSecondary)
-            } else {
-                Menu {
-                    Button(pathLabel, action: onPath)
-                        .disabled(isRunning)
-                    Button("Remove", role: .destructive, action: onRemove)
-                } label: {
-                    Image(icon: .more)
-                        .frame(minWidth: FirepitSpacing.minTouchTarget, minHeight: FirepitSpacing.minTouchTarget)
-                }
-                .accessibilityLabel(Text("Member actions"))
-            }
+            Spacer(minLength: 0)
         }
-        .accessibilityElement(children: .combine)
     }
 
     private var headline: String {
@@ -297,7 +324,7 @@ private struct MemberRowView: View {
         if case .running(let nodeNum) = trace, nodeNum == row.member.nodeNum {
             return "…"
         }
-        return "Path"
+        return String(localized: "Path")
     }
 }
 

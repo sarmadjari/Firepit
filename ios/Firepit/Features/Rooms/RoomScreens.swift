@@ -78,8 +78,10 @@ struct CreateRoomDialog: View {
                         .foregroundStyle(FirepitColors.textSecondary)
                     if kind == .firepit {
                         Text(
-                            "Everyone you invite gets the room's key. There is no way to remove one person later "
-                                + "without making a new key for everybody."
+                            """
+                            Everyone you invite gets the room's key. There is no way to remove one person later \
+                            without making a new key for everybody.
+                            """
                         )
                         .font(FirepitFont.bodySmall)
                         .foregroundStyle(FirepitColors.textSecondary)
@@ -167,9 +169,11 @@ struct InviteScreen: View {
                 .foregroundStyle(FirepitColors.textSecondary)
 
                 Text(
-                    "Show this to people next to you. It refreshes every few seconds and only works while they are "
-                        + "here. It carries no key: a photograph of it only lets someone ask, and you still decide "
-                        + "who comes in."
+                    """
+                    Show this to people next to you. It refreshes every few seconds and only works while they are \
+                    here. It carries no key: a photograph of it only lets someone ask, and you still decide who comes \
+                    in.
+                    """
                 )
                 .font(FirepitFont.bodyMedium)
                 .foregroundStyle(FirepitColors.textSecondary)
@@ -194,7 +198,6 @@ struct InviteScreen: View {
         .background(FirepitColors.surface)
         .navigationTitle("Invite to \(roomName)")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { ToolbarItem(placement: .topBarLeading) { Button("Back", action: onBack) } }
         .task {
             fingerprint = viewModel.ownFingerprint()
             viewModel.startInviteRotation(roomId: roomId)
@@ -210,8 +213,6 @@ struct JoinRoomScreen: View {
     let onBack: () -> Void
 
     @State private var viewModel: RoomsViewModel
-    @State private var pasted = ""
-    @State private var showingPaste = false
     private let router: AppRouter?
 
     init(onBack: @escaping () -> Void, viewModel: RoomsViewModel, router: AppRouter? = nil) {
@@ -233,33 +234,50 @@ struct JoinRoomScreen: View {
             ScannerFrame()
             VStack(spacing: FirepitSpacing.s) {
                 Spacer()
-                if viewModel.uiState.busy {
-                    ProgressView()
+                // On a solid card rather than straight on the camera: a live picture behind small text makes it
+                // unreadable, whatever its colour.
+                VStack(spacing: FirepitSpacing.s) {
+                    if viewModel.uiState.busy {
+                        ProgressView()
+                    }
+                    if let error = viewModel.uiState.error {
+                        Text(verbatim: error)
+                            .font(FirepitFont.bodyMedium)
+                            .foregroundStyle(FirepitColors.danger)
+                    }
+                    Text(
+                        """
+                        A Firepit invite joins a private room. A Meshtastic code adds a channel other Meshtastic apps \
+                        can read — the room will say which.
+                        """
+                    )
+                    .font(FirepitFont.bodySmall)
+                    .foregroundStyle(FirepitColors.textPrimary)
                 }
-                if let error = viewModel.uiState.error {
-                    Text(verbatim: error)
-                        .font(FirepitFont.bodyMedium)
-                        .foregroundStyle(FirepitColors.danger)
-                        .multilineTextAlignment(.center)
-                }
-                Text(
-                    "A Firepit invite joins a private room. A Meshtastic code adds a channel other Meshtastic apps "
-                        + "can read — the room will say which."
-                )
-                .font(FirepitFont.bodySmall)
-                .foregroundStyle(FirepitColors.textSecondary)
                 .multilineTextAlignment(.center)
                 .padding(FirepitSpacing.m)
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: FirepitSpacing.cardCorner))
+                .frame(maxWidth: .infinity)
+                .background(FirepitColors.surface2, in: .rect(cornerRadius: FirepitSpacing.cardCorner))
             }
             .padding(FirepitSpacing.screenMargin)
         }
         .background(Color.black)
         .navigationTitle("Scan a code")
         .navigationBarTitleDisplayMode(.inline)
+        // The title sits on the bar, not on the camera picture, as Android's does.
+        .toolbarBackground(FirepitColors.surface, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) { Button("Back", action: onBack) }
-            ToolbarItem(placement: .topBarTrailing) { Button("Paste") { showingPaste = true } }
+            // A link that came as text: one tap, and iOS asks nothing because the person chose to paste.
+            ToolbarItem(placement: .topBarTrailing) {
+                PasteButton(payloadType: String.self) { strings in
+                    guard let link = strings.first?.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
+                    viewModel.joinFromScan(scanned: link)
+                }
+                .labelStyle(.titleOnly)
+                .buttonBorderShape(.capsule)
+                .tint(FirepitColors.primary)
+            }
         }
         .task {
             if let pending = router?.pendingInvite {
@@ -279,15 +297,6 @@ struct JoinRoomScreen: View {
             Button("Cancel", role: .cancel, action: viewModel.cancelScan)
         } message: {
             Text(scannedMessage)
-        }
-        .alert("Paste invite", isPresented: $showingPaste) {
-            TextField("firepit://… or https://meshtastic.org/…", text: $pasted)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-            Button("Join") { viewModel.joinFromScan(scanned: pasted) }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Paste a Firepit invite link or a Meshtastic channel link.")
         }
     }
 
@@ -309,8 +318,9 @@ struct JoinRoomScreen: View {
 
 private struct ScannerFrame: View {
     var body: some View {
+        // White in both themes: it is drawn on the camera's picture, which has no theme.
         RoundedRectangle(cornerRadius: 28, style: .continuous)
-            .strokeBorder(FirepitColors.onPrimary, lineWidth: 3)
+            .strokeBorder(Color.white, lineWidth: 3)
             .frame(width: 250, height: 250)
             .shadow(radius: 8)
             .accessibilityHidden(true)

@@ -66,11 +66,15 @@ class MessageNotifier @Inject constructor(
             ?: "Unknown node"
         val room = mesh.channels.value.firstOrNull { it.index == message.channel }?.displayName
 
+        // A direct message opens the person; anything else opens its room.
+        val direct = message.isDirect
         val open = PendingIntent.getActivity(
             context,
-            message.channel,
+            if (direct) message.fromNodeNum else message.channel,
             Intent(context, MainActivity::class.java)
-                .putExtra(EXTRA_CHANNEL, message.channel)
+                .apply {
+                    if (direct) putExtra(EXTRA_PEER, message.fromNodeNum) else putExtra(EXTRA_CHANNEL, message.channel)
+                }
                 .setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
@@ -137,6 +141,7 @@ class MessageNotifier @Inject constructor(
         private const val TAG = "FirepitNotify"
 
         const val EXTRA_CHANNEL = "com.getfirepit.app.CHANNEL"
+        const val EXTRA_PEER = "com.getfirepit.app.PEER"
         private const val CHANNEL_ID = "messages"
         private const val GROUP = "com.getfirepit.app.MESSAGES"
     }

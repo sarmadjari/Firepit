@@ -1,10 +1,12 @@
 import SwiftUI
 
-/// The app's icon set, mapped from android/core/designsystem/…/component/FirepitIcons.kt onto SF Symbols.
+/// The app's icon set, mapped from android/core/designsystem/…/component/FirepitIcons.kt.
 ///
-/// Android draws its own 24 dp stroke glyphs; iOS uses the matching SF Symbols, which share one weight, follow Dynamic
-/// Type and bold text, and take the theme colour. The delivery ticks keep their own paths (see `StatusTick`) because
-/// SF Symbols has no double tick and both platforms must draw the same ticks.
+/// Interface chrome (search, close, share…) uses the matching SF Symbols, which share one weight, follow Dynamic Type
+/// and bold text, and take the theme colour. Glyphs that people compare between phones — a radio's role and a dropped
+/// pin — are Android's own drawings instead (`glyph`, from `Assets.xcassets/Glyphs`, written by
+/// scripts/sync-ios-glyphs.py), so an iPhone and an Android phone show the same thing. The delivery ticks keep their
+/// own paths (see `StatusTick`) because SF Symbols has no double tick and both platforms must draw the same ticks.
 nonisolated enum FirepitIcon: String, CaseIterable, Sendable {
     case chats, map, settings, search, more, add, mute, bell, locate, download, share, qr, back, send, pin, copy
     case clock, info, close, tick, tickDouble, pending, warning, chevron
@@ -12,7 +14,8 @@ nonisolated enum FirepitIcon: String, CaseIterable, Sendable {
 
     var systemName: String {
         switch self {
-        case .chats: "bubble.left.and.bubble.right"
+        // One bubble, as Android draws it.
+        case .chats: "bubble.left"
         case .map: "map"
         case .settings: "gearshape"
         case .search: "magnifyingglass"
@@ -41,11 +44,28 @@ nonisolated enum FirepitIcon: String, CaseIterable, Sendable {
         case .roleRouter: "antenna.radiowaves.left.and.right"
         }
     }
+
+    /// Android's drawing of this icon, for the ones that must look the same on both platforms.
+    var glyph: String? {
+        switch self {
+        case .rolePersonal: "role-personal"
+        case .roleBase: "role-base"
+        case .roleRouter: "role-router"
+        case .pin: "pin"
+        default: nil
+        }
+    }
 }
 
 extension Image {
+    /// The icon as SwiftUI draws it. A shared glyph is a template image at its 24 pt drawing size, so where a symbol
+    /// would be sized with `.font`, give it `.resizable()` and a frame instead.
     init(icon: FirepitIcon) {
-        self.init(systemName: icon.systemName)
+        if let glyph = icon.glyph {
+            self.init(glyph)
+        } else {
+            self.init(systemName: icon.systemName)
+        }
     }
 }
 
@@ -78,17 +98,17 @@ nonisolated enum RoomIcon: Int, CaseIterable, Sendable {
         }
     }
 
-    var systemName: String {
+    /// Android's own drawing of the icon (`Assets.xcassets/Glyphs`), so a room looks the same to every member.
+    var glyph: String {
         switch self {
-        case .tent: "tent"
-        // Android's trail glyph is a map marker with a hollow centre.
-        case .trail: "mappin.and.ellipse"
-        case .car: "car"
-        case .music: "music.note"
-        case .flag: "flag"
-        case .house: "house"
-        case .star: "star"
-        case .heart: "heart"
+        case .tent: "room-tent"
+        case .trail: "room-trail"
+        case .car: "room-car"
+        case .music: "room-music"
+        case .flag: "room-flag"
+        case .house: "room-house"
+        case .star: "room-star"
+        case .heart: "room-heart"
         }
     }
 }

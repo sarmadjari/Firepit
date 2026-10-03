@@ -402,7 +402,8 @@ struct RoomRepositoryFocusedTests {
 
     @Test func buildInviteNeedsRoom() async throws {
         let h = try RoomRepositoryHarness()
-        await #expect(throws: RoomError.inviteInvalid) {
+        // Says the room is gone, not that a scanned code was bad: this is the inviting phone.
+        await #expect(throws: RoomError.roomGone) {
             _ = try await h.repository.buildInvite(roomId: 42)
         }
     }

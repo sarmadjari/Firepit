@@ -116,12 +116,12 @@ struct MapLibreView: UIViewRepresentable {
                 view.configure(marker: annotation.marker)
                 return view
             }
-            if annotation is MapPinAnnotation {
+            if let annotation = annotation as? MapPinAnnotation {
                 let identifier = "firepit-pin"
                 let view =
                     mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? MapPinAnnotationView
                     ?? MapPinAnnotationView(reuseIdentifier: identifier)
-                view.configure()
+                view.configure(pin: annotation.pin)
                 return view
             }
             return nil

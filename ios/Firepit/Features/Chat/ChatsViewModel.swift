@@ -237,7 +237,12 @@ enum ChatsCopy {
 
     static func emptyList(filter: ChannelFilter, channels: [RoomChannel]) -> String {
         if filter == .direct {
-            return String(localized: "No direct messages yet. Open a node from Settings → Radio to start one.")
+            return String(
+                localized: """
+                    No direct messages yet. To start one, tap someone in a room's info, or open them in \
+                    Settings → Nodes.
+                    """
+            )
         }
         if !channels.contains(where: { $0.role != .disabled }) {
             return String(localized: "No channels yet. Connect your node in Settings.")

@@ -79,6 +79,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.getfirepit.app.ui.ChatTarget
 import com.getfirepit.app.rooms.CreateRoomDialog
 import com.getfirepit.app.rooms.MakeRadioPrivateDialog
 import com.getfirepit.app.rooms.InviteScreen
@@ -126,6 +127,9 @@ import kotlinx.coroutines.launch
 fun ChatsPane(
     modifier: Modifier = Modifier,
     onChatOpenChange: (Boolean) -> Unit = {},
+    /** A conversation asked for from outside Chats; opened once, then handed back through [onTargetOpened]. */
+    openTarget: ChatTarget? = null,
+    onTargetOpened: () -> Unit = {},
     viewModel: ChatsViewModel = hiltViewModel(),
     roomsViewModel: RoomsViewModel = hiltViewModel(),
 ) {
@@ -138,6 +142,22 @@ fun ChatsPane(
 
     var overlay by remember { mutableStateOf<RoomsOverlay?>(null) }
     var showCreateDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(openTarget) {
+        val target = openTarget ?: return@LaunchedEffect
+        overlay = null
+        when (target) {
+            is ChatTarget.Channel -> {
+                viewModel.select(target.index)
+                navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, target.index)
+            }
+            is ChatTarget.Direct -> {
+                viewModel.openDirect(target.peer)
+                navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, target.peer)
+            }
+        }
+        onTargetOpened()
+    }
 
     // True only when the detail covers the list, i.e. single-pane. Side by side
     // the list is still reachable, so navigation should stay.
@@ -178,6 +198,11 @@ fun ChatsPane(
                 onInvite = { overlay = RoomsOverlay.Invite(current.roomId, current.roomName) },
                 onToggleMute = { viewModel.toggleMute(current.channelIndex) },
                 onLeft = dismiss,
+                onMessage = { peer ->
+                    dismiss()
+                    viewModel.openDirect(peer)
+                    scope.launch { navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, peer) }
+                },
                 viewModel = roomsViewModel,
             )
         }
@@ -446,7 +471,8 @@ private fun ChannelList(
                 EmptyState(
                     when {
                         filter == ChannelFilter.DIRECT ->
-                            "No direct messages yet. Open a node from Settings → Radio to start one."
+                            "No direct messages yet. To start one, tap someone in a room's info, or open " +
+                                "them in Settings → Nodes."
                         channels.none { it.role != ChannelRole.DISABLED } ->
                             "No channels yet. Connect your node in Settings."
                         else -> "No rooms yet. Create one with the + button."

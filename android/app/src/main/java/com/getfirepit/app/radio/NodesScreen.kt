@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -40,6 +41,7 @@ import com.getfirepit.core.protocol.MeshConstants
 fun NodesScreen(
     modifier: Modifier = Modifier,
     onBack: () -> Unit = {},
+    onMessage: (Int) -> Unit = {},
     viewModel: RadioViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -79,6 +81,7 @@ fun NodesScreen(
                             expanded = if (expanded == node.nodeNum) null else node.nodeNum
                         },
                         onCheckPath = { viewModel.checkPath(node) },
+                        onMessage = { onMessage(node.nodeNum) },
                     )
                     HorizontalDivider()
                 }
@@ -115,6 +118,7 @@ private fun NodeRow(
     expanded: Boolean,
     onToggle: () -> Unit,
     onCheckPath: () -> Unit,
+    onMessage: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().clickable(onClick = onToggle)) {
         Row(
@@ -156,6 +160,13 @@ private fun NodeRow(
             ) {
                 nodeFacts(node).forEach { (label, value) ->
                     Field(label, value, monospace = label in MONOSPACE)
+                }
+                // Where a conversation with one person starts, besides a room's members.
+                if (!isSelf && !node.isUnmessagable) {
+                    FilledTonalButton(
+                        onClick = onMessage,
+                        modifier = Modifier.padding(top = FirepitSpacing.s),
+                    ) { Text("Message") }
                 }
             }
         }

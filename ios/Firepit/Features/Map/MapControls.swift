@@ -105,10 +105,16 @@ private struct SheetAction: View {
     let label: LocalizedStringKey
     let action: () -> Void
 
+    /// One size for symbols and shared glyphs alike, growing with the text beside it.
+    @ScaledMetric(relativeTo: .body) private var iconSide: CGFloat = 22
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: FirepitSpacing.m) {
                 Image(icon: icon)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: iconSide, height: iconSide)
                     .foregroundStyle(FirepitColors.textSecondary)
                     .accessibilityHidden(true)
                 Text(label)

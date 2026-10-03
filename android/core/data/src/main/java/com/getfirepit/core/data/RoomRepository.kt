@@ -120,6 +120,9 @@ sealed class RoomError(message: String) : Exception(message) {
 
     data object AlreadyInRoom : RoomError("You're already in this room")
 
+    /** Asked to invite to a room that is no longer on the radio: left, or moved off it by another app. */
+    data object RoomGone : RoomError("This room isn't on your radio any more")
+
     /** A channel read timed out; writing on regardless would rewrite a room with no key. */
     data object RadioUnreadable : RoomError(
         "Couldn't read the radio's channels, so nothing was changed. Try again.",
@@ -552,7 +555,7 @@ class RoomRepository @Inject constructor(
      */
     suspend fun buildInvite(roomId: Int, nowMillis: Long = System.currentTimeMillis()): Invite {
         val myNodeNum = mesh.myNodeNum.value ?: throw RoomError.NotConnected
-        val room = ChannelSlotManager.findByRoomId(mesh.channels.value, roomId) ?: throw RoomError.InviteInvalid
+        val room = ChannelSlotManager.findByRoomId(mesh.channels.value, roomId) ?: throw RoomError.RoomGone
         val settings = admin.getChannel(room.index)?.settings ?: throw RoomError.NotConnected
         val psk = settings.psk.toByteArray()
 

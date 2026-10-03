@@ -267,7 +267,8 @@ struct ChatsWordingTests {
     @Test func emptyListExplainsWhatToDoNext() {
         #expect(
             ChatsCopy.emptyList(filter: .direct, channels: [])
-                == "No direct messages yet. Open a node from Settings → Radio to start one.")
+                == "No direct messages yet. To start one, tap someone in a room's info, or open them in "
+                + "Settings → Nodes.")
         #expect(
             ChatsCopy.emptyList(filter: .all, channels: [room(1, kind: .firepit, role: .disabled)])
                 == "No channels yet. Connect your node in Settings.")

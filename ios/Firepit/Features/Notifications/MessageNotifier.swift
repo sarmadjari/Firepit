@@ -13,6 +13,7 @@ private nonisolated let notifyLog = Logger(subsystem: "com.getfirepit.app", cate
 final class MessageNotifier: NSObject, UNUserNotificationCenterDelegate {
     private nonisolated static let categoryId = "com.getfirepit.app.message"
     private nonisolated static let channelKey = "channel"
+    private nonisolated static let peerKey = "peer"
 
     private let mesh: MeshRepository
     private let channelState: ChannelStateDao
@@ -91,9 +92,12 @@ final class MessageNotifier: NSObject, UNUserNotificationCenterDelegate {
         }
         content.sound = .default
         content.categoryIdentifier = Self.categoryId
-        // One notification per conversation, replaced as it moves on.
-        content.threadIdentifier = "channel-\(message.channel)"
-        content.userInfo = [Self.channelKey: message.channel]
+        // One notification per conversation, replaced as it moves on. A direct message opens the person, anything
+        // else its room.
+        let conversation = message.isDirect ? "direct-\(message.fromNodeNum)" : "channel-\(message.channel)"
+        content.threadIdentifier = conversation
+        content.userInfo =
+            message.isDirect ? [Self.peerKey: Int(message.fromNodeNum)] : [Self.channelKey: message.channel]
 
         // Checked rather than assumed: a denied permission is a standing state, not an error, and pretending
         // otherwise would leave someone believing they were being alerted to messages they never saw.
@@ -102,7 +106,7 @@ final class MessageNotifier: NSObject, UNUserNotificationCenterDelegate {
             notifyLog.info("notification suppressed: not authorised")
             return
         }
-        let request = UNNotificationRequest(identifier: "channel-\(message.channel)", content: content, trigger: nil)
+        let request = UNNotificationRequest(identifier: conversation, content: content, trigger: nil)
         do {
             try await UNUserNotificationCenter.current().add(request)
         } catch {
@@ -124,9 +128,11 @@ final class MessageNotifier: NSObject, UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
-        guard let channel = response.notification.request.content.userInfo[Self.channelKey] as? Int else { return }
-        await MainActor.run {
-            router.open(channel: channel)
+        let info = response.notification.request.content.userInfo
+        if let peer = info[Self.peerKey] as? Int {
+            await MainActor.run { router.openDirect(Int32(truncatingIfNeeded: peer)) }
+        } else if let channel = info[Self.channelKey] as? Int {
+            await MainActor.run { router.open(channel: channel) }
         }
     }
 }

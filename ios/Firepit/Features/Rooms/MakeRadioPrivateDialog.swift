@@ -13,16 +13,20 @@ struct MakeRadioPrivateDialog: View {
                 )
                 .font(FirepitFont.bodyMedium)
                 Text(
-                    "What is still public is the radio itself. Right now it broadcasts its name and battery level "
-                        + "in the open, and any Meshtastic device nearby can see them. Making it private hides them "
-                        + "from ordinary Meshtastic radios — but not from anyone running Firepit, because that key "
-                        + "comes with the app."
+                    """
+                    What is still public is the radio itself. Right now it broadcasts its name and battery level in \
+                    the open, and any Meshtastic device nearby can see them. Making it private hides them from \
+                    ordinary Meshtastic radios — but not from anyone running Firepit, because that key comes with the \
+                    app.
+                    """
                 )
                 .font(FirepitFont.bodyMedium)
                 .foregroundStyle(FirepitColors.textSecondary)
                 Text(
-                    "Say no if you also use this radio on another Meshtastic mesh — making it private would take "
-                        + "it off that mesh."
+                    """
+                    Say no if you also use this radio on another Meshtastic mesh — making it private would take it off \
+                    that mesh.
+                    """
                 )
                 .font(FirepitFont.bodyMedium)
                 .foregroundStyle(FirepitColors.textSecondary)
@@ -30,10 +34,11 @@ struct MakeRadioPrivateDialog: View {
                     .font(FirepitFont.bodySmall)
                     .foregroundStyle(FirepitColors.textSecondary)
                 Spacer(minLength: FirepitSpacing.m)
+                // Full width, the answer first, as iOS lays out a choice that closes the sheet.
                 Button("Yes, make it private", action: onMakePrivate)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(FirepitButtonStyle(kind: .prominent))
                 Button("No, leave it", action: onKeepPublic)
-                    .buttonStyle(.bordered)
+                    .buttonStyle(FirepitButtonStyle(kind: .outlined))
             }
             .padding(FirepitSpacing.screenMargin)
             .background(FirepitColors.surface)

@@ -36,6 +36,12 @@ nonisolated enum FirepitColors {
     static let mapRoad = Color(light: 0xFFFFFF, dark: 0x2C2925)
     static let mapWater = Color(light: 0xD5E5F0, dark: 0x1E2C38)
     static let mapPark = Color(light: 0xD6E3CF, dark: 0x22301F)
+    /// Your own marker's ring: blue, the colour every map uses for you. Map only, as Android's SELF_RING.
+    static let mapSelf = Color(hex: 0x1B73E8)
+    /// Dropped pins, distinct from the round node discs. Map only, as Android's PIN_COLOR.
+    static let mapPin = Color(hex: 0xF59E0B)
+    /// Names under pins. The basemap stays light in both themes, so the text does too, on a white halo.
+    static let mapLabel = Color(hex: 0x1A1614)
 
     /// Soft elevation under floating map controls on systems without Liquid Glass.
     static let shadow = Color(light: 0x1A1614, dark: 0x000000, opacity: 0.16)

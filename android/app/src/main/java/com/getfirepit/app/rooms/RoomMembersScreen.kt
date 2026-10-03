@@ -2,6 +2,7 @@ package com.getfirepit.app.rooms
 
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -72,6 +73,7 @@ fun RoomMembersScreen(
     onInvite: () -> Unit = {},
     onToggleMute: () -> Unit = {},
     onLeft: () -> Unit = {},
+    onMessage: (Int) -> Unit = {},
     viewModel: RoomsViewModel = hiltViewModel(),
     sharingViewModel: SharingViewModel = hiltViewModel(),
 ) {
@@ -218,6 +220,14 @@ fun RoomMembersScreen(
 
             items(members.takeIf { kind.isPrivate }.orEmpty(), key = { it.member.nodeNum }) { row ->
                 ListItem(
+                    // Tapping a person is how a conversation with them starts.
+                    modifier = if (row.isSelf) {
+                        Modifier
+                    } else {
+                        Modifier.clickable(onClickLabel = "Message ${row.displayName}") {
+                            onMessage(row.member.nodeNum)
+                        }
+                    },
                     colors = ListItemDefaults.colors(containerColor = FirepitTheme.colors.surface2),
                     headlineContent = {
                         Text(
@@ -288,11 +298,12 @@ fun RoomMembersScreen(
                 HorizontalDivider(color = FirepitTheme.colors.outline)
             }
 
-            item {
+            // Only where there is a roster to tap and to be incomplete.
+            if (kind.isPrivate) item {
                 Text(
-                    text = "Anyone with the room's key can read and post. Members appear as Firepit " +
-                        "hears them, or when another member reports them, so this list may be " +
-                        "incomplete.",
+                    text = "Tap someone to message them on their own. Anyone with the room's key can read and " +
+                        "post. Members appear as Firepit hears them, or when another member reports them, so " +
+                        "this list may be incomplete.",
                     style = MaterialTheme.typography.bodySmall,
                     color = FirepitTheme.colors.textSecondary,
                     modifier = Modifier.padding(FirepitSpacing.screenMargin),

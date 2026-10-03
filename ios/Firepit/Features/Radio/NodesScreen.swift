@@ -6,14 +6,16 @@ import SwiftUI
 struct NodesScreen: View {
     @State private var viewModel: RadioViewModel
     @State private var expanded: Int32?
-    @State private var actions: MeshNode?
+    /// Opens a conversation with someone, in Chats.
+    private let onMessage: (Int32) -> Void
 
     init(app: AppContainer) {
-        _viewModel = State(initialValue: RadioViewModel(app: app))
+        self.init(viewModel: RadioViewModel(app: app)) { app.router.openDirect($0) }
     }
 
-    init(viewModel: RadioViewModel) {
+    init(viewModel: RadioViewModel, onMessage: @escaping (Int32) -> Void = { _ in }) {
         _viewModel = State(initialValue: viewModel)
+        self.onMessage = onMessage
     }
 
     var body: some View {
@@ -35,8 +37,8 @@ struct NodesScreen: View {
                     enabled: state.tracing == nil,
                     expanded: expanded == node.nodeNum,
                     onToggle: { expanded = expanded == node.nodeNum ? nil : node.nodeNum },
-                    onActions: { actions = node },
-                    onCheckPath: { viewModel.checkPath(node) }
+                    onCheckPath: { viewModel.checkPath(node) },
+                    onMessage: { onMessage(node.nodeNum) }
                 )
             }
         }
@@ -54,29 +56,6 @@ struct NodesScreen: View {
         } message: {
             Text(traceMessage(state.traceResult))
         }
-        .confirmationDialog(
-            actions?.displayName ?? "Node",
-            isPresented: Binding(get: { actions != nil }, set: { if !$0 { actions = nil } }),
-            titleVisibility: .visible,
-            presenting: actions
-        ) { node in
-            Button("Message") {}
-            Button("Locate") {}
-            Button("Path") { viewModel.checkPath(node) }
-            Button("Request position") {}
-            Button("Buzz") { buzzNode(node, state: state) }
-            Button("Cancel", role: .cancel) {}
-        } message: { _ in
-            Text("Some actions need the chat and map screens that own those routes. Path check works here.")
-        }
-    }
-
-    private func buzzNode(_ node: MeshNode, state: RadioUiState) {
-        guard let saved = state.saved.first(where: { $0.nodeNum == node.nodeNum }) else {
-            viewModel.say("Connect \(node.displayName) once so Firepit learns which radio it is.")
-            return
-        }
-        viewModel.buzz(saved)
     }
 
     private func traceMessage(_ result: String?) -> String {
@@ -95,8 +74,8 @@ private struct NodeRow: View {
     let enabled: Bool
     let expanded: Bool
     let onToggle: () -> Void
-    let onActions: () -> Void
     let onCheckPath: () -> Void
+    let onMessage: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: FirepitSpacing.s) {
@@ -115,15 +94,11 @@ private struct NodeRow: View {
                     }
                     Spacer(minLength: FirepitSpacing.s)
                     if !isSelf {
-                        Button(tracing ? "…" : "Path", action: onCheckPath)
-                            .buttonStyle(.bordered)
+                        Button(action: onCheckPath) { Text(verbatim: tracing ? "…" : String(localized: "Path")) }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(FirepitColors.primary)
                             .disabled(!enabled)
                     }
-                    Button(action: onActions) {
-                        Image(icon: .more)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(Text("Actions for \(node.displayName)"))
                 }
                 .contentShape(.rect)
             }
@@ -133,23 +108,23 @@ private struct NodeRow: View {
                     ForEach(nodeFacts(node), id: \.0) { label, value in
                         Field(label, value, monospace: Self.monospace.contains(label))
                     }
+                    // Where a conversation with one person starts, besides a room's members.
+                    if !isSelf && !node.isUnmessagable {
+                        Button("Message", action: onMessage)
+                            .buttonStyle(FirepitButtonStyle(kind: .outlined))
+                            .padding(.top, FirepitSpacing.s)
+                    }
                 }
                 .padding(.bottom, FirepitSpacing.s)
             }
         }
         .padding(.vertical, FirepitSpacing.s)
         .listRowBackground(FirepitColors.surface2)
-        .accessibilityElement(children: .combine)
     }
 
-    @ViewBuilder private var avatar: some View {
-        if node.role?.uppercased().contains("ROUTER") == true {
-            InfraAvatar(isRouter: true, size: 36)
-        } else if node.role?.uppercased().contains("BASE") == true {
-            InfraAvatar(isRouter: false, size: 36)
-        } else {
-            IdentityAvatar(nodeNum: node.nodeNum, tag: node.shortName, size: 36)
-        }
+    /// As Android draws it: the person's colour and initials, or a role glyph on a radio you set as Base or Router.
+    private var avatar: some View {
+        IdentityAvatar(nodeNum: node.nodeNum, tag: node.shortName, size: 36)
     }
 
     private static let monospace = Set(["Node ID", "Key fingerprint"])

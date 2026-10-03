@@ -8,6 +8,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RectF
 import android.graphics.Typeface
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -72,6 +73,7 @@ import com.getfirepit.core.designsystem.component.BackButton
 import com.getfirepit.core.designsystem.component.FirepitChip
 import com.getfirepit.core.designsystem.component.FirepitIcons
 import com.getfirepit.core.designsystem.component.SectionLabel
+import com.getfirepit.core.designsystem.theme.FirepitColors
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 import com.getfirepit.core.designsystem.theme.SheetShape
@@ -90,6 +92,7 @@ import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.plugins.annotation.SymbolManager
 import org.maplibre.android.plugins.annotation.SymbolOptions
+import org.maplibre.android.style.layers.Property
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -104,7 +107,7 @@ fun MapScreen(
     val sharing by sharingViewModel.state.collectAsStateWithLifecycle()
     var pickingRoom by remember { mutableStateOf(false) }
     var pendingShare by remember { mutableStateOf<PendingShare?>(null) }
-    val dark = FirepitTheme.colors.isDark
+    val palette = MarkerPalette.from(FirepitTheme.colors)
     val context = LocalContext.current
 
     val locationPermission = rememberLauncherForActivityResult(
@@ -164,8 +167,8 @@ fun MapScreen(
         }
     }
 
-    LaunchedEffect(state.markers, state.pins, dark, offlineOnly) {
-        markerLayer.draw(state.markers, state.pins, dark)
+    LaunchedEffect(state.markers, state.pins, palette, offlineOnly) {
+        markerLayer.draw(state.markers, state.pins, palette)
         // Framed on its own only when the tiles come from this phone. Online,
         // moving the camera to everyone fetches the tiles around them, which
         // tells the tile server where the group is; that waits for a tap.
@@ -644,7 +647,7 @@ private class MarkerLayer {
     // rather than waiting for the next change that may never come.
     private var markers: List<MapMarker> = emptyList()
     private var pins: List<MapPin> = emptyList()
-    private var dark: Boolean = false
+    private var palette: MarkerPalette? = null
 
     /** Symbol id to pin, so a tap on the map can be answered with the right one. */
     private val pinsBySymbol = mutableMapOf<Long, MapPin>()
@@ -688,10 +691,10 @@ private class MarkerLayer {
         redraw()
     }
 
-    fun draw(markers: List<MapMarker>, pins: List<MapPin>, dark: Boolean) {
+    fun draw(markers: List<MapMarker>, pins: List<MapPin>, palette: MarkerPalette) {
         this.markers = markers
         this.pins = pins
-        this.dark = dark
+        this.palette = palette
         redraw()
     }
 
@@ -699,6 +702,7 @@ private class MarkerLayer {
         val manager = symbols ?: return
         val style = map?.style ?: return
         val context = context ?: return
+        val palette = palette ?: return
         manager.deleteAll()
         pinsBySymbol.clear()
         markersBySymbol.clear()
@@ -706,10 +710,10 @@ private class MarkerLayer {
         markers.forEach { marker ->
             val latitude = marker.node.latitude ?: return@forEach
             val longitude = marker.node.longitude ?: return@forEach
-            // The age is drawn into the bitmap, so it belongs in the key.
+            // The age and the theme are drawn into the bitmap, so they belong in the key.
             val imageId = "node-${marker.node.nodeNum}-${marker.isLive}-" +
-                "${marker.isApproximate}-${marker.isSelf}-${marker.fixAgeMinutes}"
-            style.addImage(imageId, markerBitmap(context, marker, dark))
+                "${marker.isApproximate}-${marker.isSelf}-${marker.fixAgeMinutes}-${palette.dark}"
+            style.addImage(imageId, markerBitmap(context, marker, palette))
             val symbol = manager.create(
                 SymbolOptions()
                     .withLatLng(LatLng(latitude, longitude))
@@ -718,12 +722,14 @@ private class MarkerLayer {
             markersBySymbol[symbol.id] = marker
         }
 
+        if (pins.isNotEmpty()) style.addImage(PIN_IMAGE, pinBitmap(context))
         pins.forEach { pin ->
-            style.addImage(PIN_IMAGE, pinBitmap())
             val symbol = manager.create(
                 SymbolOptions()
                     .withLatLng(LatLng(pin.latitude, pin.longitude))
                     .withIconImage(PIN_IMAGE)
+                    // The tip marks the spot, not the middle of the drawing.
+                    .withIconAnchor(Property.ICON_ANCHOR_BOTTOM)
                     .withTextField(pin.name)
                     .withTextOffset(arrayOf(0f, 1.4f))
                     .withTextSize(11f)
@@ -801,90 +807,130 @@ private val CONTROL_SIZE = 48.dp
 /** Long enough to read a line, short enough not to become furniture. */
 private val NOTICE_LINGER = 6.seconds
 
-/** Leaves the disc's colour reading as a ring around the symbol rather than a sliver. */
-private const val ICON_SHARE_OF_DISC = 0.62f
+/**
+ * Marker sizes in dp, the same numbers iOS draws in points (UX spec §6.6).
+ *
+ * MapLibre shows a bitmap at the screen's density, so every size is multiplied by it: a marker is the same physical
+ * size on every phone, and the same as on an iPhone.
+ */
+private object MarkerSize {
+    const val DISC = 34f
+    const val RING = 3f
+    const val SELF_RING = 4f
+    const val TAG = 14f
+    /** A tag shrinks rather than leaves the disc: Meshtastic allows four characters. */
+    const val TAG_WIDTH_SHARE = 0.78f
+    /** Leaves the disc's colour reading as a ring around a role symbol rather than a sliver. */
+    const val ICON_SHARE = 0.62f
+    const val LABEL = 12f
+    const val PILL_PAD_X = 6f
+    const val PILL_PAD_Y = 2f
+    const val PILL_CORNER = 6f
+    const val PILL_GAP = 3f
+    const val ARROW_WIDTH = 10f
+    const val ARROW_HEIGHT = 8f
+    const val ARROW_GAP = 2f
+    const val PIN = 28f
+    /** A truncated fix describes an area, so the disc is softened to say so. */
+    const val APPROXIMATE_ALPHA = 0.6f
+}
+
+/** The theme's colours as ARGB, for the Canvas that paints marker bitmaps outside composition. */
+private data class MarkerPalette(
+    val dark: Boolean,
+    val live: Int,
+    val stale: Int,
+    val pill: Int,
+    val text: Int,
+    val textMuted: Int,
+    val outline: Int,
+) {
+    companion object {
+        fun from(colors: FirepitColors) = MarkerPalette(
+            dark = colors.isDark,
+            live = colors.live.toArgb(),
+            stale = colors.stale.toArgb(),
+            pill = colors.surface2.toArgb(),
+            text = colors.textPrimary.toArgb(),
+            textMuted = colors.textSecondary.toArgb(),
+            outline = colors.outline.toArgb(),
+        )
+    }
+}
 
 /**
- * A tag disc in the identity colour, ringed green while it is live, with the
- * name on a pill beneath it.
+ * A tag disc in the identity colour, ringed while it is live, with the name on a pill beneath it.
  *
- * The label is drawn into the same bitmap rather than left to the style's text
- * layer so it keeps its pill on any basemap; the disc stays at the bitmap's
- * centre so the icon still lands on the coordinate.
+ * The label is drawn into the same bitmap rather than left to the style's text layer so it keeps its pill on any
+ * basemap; the disc stays at the bitmap's centre so the icon still lands on the coordinate.
  *
- * Your own disc carries your name and initials rather than the radio's: the
- * radio is what the mesh addresses, not who is holding it.
+ * Your own disc carries your name and initials rather than the radio's: the radio is what the mesh addresses, not who
+ * is holding it.
  */
-private fun markerBitmap(context: Context, marker: MapMarker, dark: Boolean): Bitmap {
-    val disc = 96
+private fun markerBitmap(context: Context, marker: MapMarker, palette: MarkerPalette): Bitmap {
+    val density = context.resources.displayMetrics.density
+    fun dp(value: Float) = value * density
+
     val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = if (marker.isLive) {
-            if (dark) LABEL_TEXT_DARK else LABEL_TEXT_LIGHT
-        } else {
-            if (dark) LABEL_MUTED_DARK else LABEL_MUTED_LIGHT
-        }
+        color = if (marker.isLive) palette.text else palette.textMuted
         textAlign = Paint.Align.CENTER
-        textSize = 30f
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        textSize = dp(MarkerSize.LABEL)
+        typeface = Typeface.create(Typeface.DEFAULT, SEMIBOLD, false)
     }
-
     val text = markerLabel(marker)
-    val textWidth = label.measureText(text)
-    val pillHeight = 46f
-    val pillWidth = textWidth + 32f
-    val gap = 8f
+    val pillWidth = label.measureText(text) + dp(MarkerSize.PILL_PAD_X) * 2
+    val pillHeight = label.descent() - label.ascent() + dp(MarkerSize.PILL_PAD_Y) * 2
+    val disc = dp(MarkerSize.DISC)
     // Padded equally above so the disc, not the whole bitmap, sits on the fix.
-    val extra = (gap + pillHeight) * 2
-    val width = maxOf(disc.toFloat(), pillWidth).toInt()
+    val extra = (dp(MarkerSize.PILL_GAP) + pillHeight) * 2
+    val width = maxOf(disc, pillWidth).toInt() + 2
     val height = (disc + extra).toInt()
-
     val bitmap = createBitmap(width, height)
     val canvas = Canvas(bitmap)
     val centreX = width / 2f
     val centreY = height / 2f
+    val radius = disc / 2f
 
     val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = identityColorFor(marker.node.nodeNum, dark, marker.colourSlot).toArgb()
-        // A truncated fix describes an area, so the disc is softened to say so.
-        alpha = if (marker.isApproximate) 150 else 255
+        color = identityColorFor(marker.node.nodeNum, palette.dark, marker.colourSlot).toArgb()
+        alpha = if (marker.isApproximate) (255 * MarkerSize.APPROXIMATE_ALPHA).toInt() else 255
     }
+    val ringWidth = dp(if (marker.isSelf) MarkerSize.SELF_RING else MarkerSize.RING)
     val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         // Your own disc is ringed blue, the colour every map uses for you, so it
         // stays findable among a dozen discs that all look like this one.
         color = when {
             marker.isSelf -> SELF_RING
-            marker.isLive -> LIVE_RING
-            else -> STALE_RING
+            marker.isLive -> palette.live
+            else -> palette.stale
         }
         style = Paint.Style.STROKE
-        strokeWidth = if (marker.isSelf) 10f else 7f
+        strokeWidth = ringWidth
     }
     val tag = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        // The disc inverts between themes, so flat white would sit on a light
-        // fill in dark mode.
-        color = onIdentityColorFor(marker.node.nodeNum, dark, marker.colourSlot).toArgb()
+        // The disc inverts between themes, so flat white would sit on a light fill in dark mode.
+        color = onIdentityColorFor(marker.node.nodeNum, palette.dark, marker.colourSlot).toArgb()
         textAlign = Paint.Align.CENTER
-        textSize = 34f
+        textSize = dp(MarkerSize.TAG)
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     }
-
-    val radius = disc / 2f - 8f
     canvas.drawCircle(centreX, centreY, radius, fill)
-    canvas.drawCircle(centreX, centreY, radius, ring)
-
+    // Inside the disc's edge, so the ring never makes one disc larger than another.
+    canvas.drawCircle(centreX, centreY, radius - ringWidth / 2f, ring)
     // Which way they are going, when they are actually going somewhere. A
     // parked node's last course is a memory, not a direction.
     marker.course?.let { course ->
         val arrow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = if (marker.isLive) LIVE_RING else STALE_RING
+            color = if (marker.isLive) palette.live else palette.stale
             style = Paint.Style.FILL
         }
         canvas.withRotation(course, centreX, centreY) {
-            val tip = centreY - radius - 14f
+            val base = centreY - radius - dp(MarkerSize.ARROW_GAP)
+            val half = dp(MarkerSize.ARROW_WIDTH) / 2f
             val path = Path().apply {
-                moveTo(centreX, tip)
-                lineTo(centreX - 13f, tip + 20f)
-                lineTo(centreX + 13f, tip + 20f)
+                moveTo(centreX, base - dp(MarkerSize.ARROW_HEIGHT))
+                lineTo(centreX - half, base)
+                lineTo(centreX + half, base)
                 close()
             }
             drawPath(path, arrow)
@@ -896,50 +942,39 @@ private fun markerBitmap(context: Context, marker: MapMarker, dark: Boolean): Bi
         else -> null
     }
     if (roleIcon != null) {
-        drawRoleIcon(context, canvas, roleIcon, centreX, centreY, radius, tag.color)
+        drawRoleIcon(context, canvas, roleIcon, centreX, centreY, disc, tag.color)
     } else {
         // Meshtastic allows four characters, and a tag cut to two makes SJ2 and
         // SJ1 the same node. Shrink to fit the disc rather than drop what it says.
         val tagText = marker.tag.uppercase()
-        val widest = radius * 1.55f
+        val widest = disc * MarkerSize.TAG_WIDTH_SHARE
         val measured = tag.measureText(tagText)
         if (measured > widest) tag.textSize *= widest / measured
-        canvas.drawText(
-            tagText,
-            centreX,
-            centreY - (tag.descent() + tag.ascent()) / 2f,
-            tag,
-        )
+        canvas.drawText(tagText, centreX, centreY - (tag.descent() + tag.ascent()) / 2f, tag)
     }
 
-    val pillTop = centreY + radius + gap
-    val pill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = if (dark) LABEL_PILL_DARK else LABEL_PILL_LIGHT
-    }
+    val pillTop = centreY + radius + dp(MarkerSize.PILL_GAP)
+    val pillRect = RectF(centreX - pillWidth / 2f, pillTop, centreX + pillWidth / 2f, pillTop + pillHeight)
+    val corner = dp(MarkerSize.PILL_CORNER)
+    canvas.drawRoundRect(pillRect, corner, corner, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = palette.pill })
     canvas.drawRoundRect(
-        centreX - pillWidth / 2f,
-        pillTop,
-        centreX + pillWidth / 2f,
-        pillTop + pillHeight,
-        12f,
-        12f,
-        pill,
+        pillRect,
+        corner,
+        corner,
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = palette.outline
+            style = Paint.Style.STROKE
+            strokeWidth = density
+        },
     )
-    canvas.drawText(
-        text,
-        centreX,
-        pillTop + pillHeight / 2f - (label.descent() + label.ascent()) / 2f,
-        label,
-    )
+    canvas.drawText(text, centreX, pillRect.centerY() - (label.descent() + label.ascent()) / 2f, label)
     return bitmap
 }
 
 /**
  * Paints a role symbol inside the disc, in place of a tag.
  *
- * A base or a router is hardware, not a person, and its two initials tell a
- * reader nothing. Sized to the disc rather than a fixed pixel count so it keeps
- * its proportions if the marker ever changes size.
+ * A base or a router is hardware, not a person, and its two initials tell a reader nothing.
  */
 private fun drawRoleIcon(
     context: Context,
@@ -947,12 +982,12 @@ private fun drawRoleIcon(
     @DrawableRes icon: Int,
     centreX: Float,
     centreY: Float,
-    radius: Float,
+    disc: Float,
     tint: Int,
 ) {
     val drawable = ContextCompat.getDrawable(context, icon)?.mutate() ?: return
     drawable.setTint(tint)
-    val half = (radius * ICON_SHARE_OF_DISC).toInt()
+    val half = (disc * MarkerSize.ICON_SHARE / 2f).toInt()
     drawable.setBounds(
         (centreX - half).toInt(),
         (centreY - half).toInt(),
@@ -981,45 +1016,39 @@ private fun markerLabel(marker: MapMarker): String {
     }
 }
 
-/** A teardrop in the warn colour, distinct from the round node discs. */
-private fun pinBitmap(): Bitmap {
-    val size = 72
-    val bitmap = createBitmap(size, size)
+/**
+ * A teardrop in the pin colour, distinct from the round node discs. Drawn to the same proportions as the iOS pin
+ * (`MapPinShape`), and anchored at its tip.
+ */
+private fun pinBitmap(context: Context): Bitmap {
+    val size = MarkerSize.PIN * context.resources.displayMetrics.density
+    val bitmap = createBitmap(size.toInt(), size.toInt())
     val canvas = Canvas(bitmap)
     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = PIN_COLOR }
-
     val radius = size / 3f
-    canvas.drawCircle(size / 2f, radius + 4f, radius, paint)
+    val centreX = size / 2f
+    val centreY = radius + size / 18f
+    canvas.drawCircle(centreX, centreY, radius, paint)
     val tail = android.graphics.Path().apply {
-        moveTo(size / 2f - radius * 0.6f, radius + 12f)
-        lineTo(size / 2f, size.toFloat() - 4f)
-        lineTo(size / 2f + radius * 0.6f, radius + 12f)
+        moveTo(centreX - radius * 0.6f, radius + size / 6f)
+        lineTo(centreX, size - size / 18f)
+        lineTo(centreX + radius * 0.6f, radius + size / 6f)
         close()
     }
     canvas.drawPath(tail, paint)
-
-    val hole = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-    }
-    canvas.drawCircle(size / 2f, radius + 4f, radius * 0.38f, hole)
+    canvas.drawCircle(centreX, centreY, radius * 0.38f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE })
     return bitmap
 }
 
 internal const val OPEN_FREE_MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty"
-private const val LIVE_RING = 0xFF4ADE80.toInt()
-private const val STALE_RING = 0xFF8A8A8A.toInt()
+/** Map-only colours, the same literals on iOS: your own ring, and pins. */
 private const val SELF_RING = 0xFF1B73E8.toInt()
 
-// Ember surface-2 and text tokens, as ARGB for the Canvas that draws the pills.
-private const val LABEL_PILL_LIGHT = 0xFFFFFFFF.toInt()
-private const val LABEL_PILL_DARK = 0xFF1E1B18.toInt()
-private const val LABEL_TEXT_LIGHT = 0xFF1A1614.toInt()
-private const val LABEL_TEXT_DARK = 0xFFF1ECE7.toInt()
-private const val LABEL_MUTED_LIGHT = 0xFF6B625C.toInt()
-private const val LABEL_MUTED_DARK = 0xFFA39C95.toInt()
 private const val PIN_IMAGE = "map-pin"
 private const val PIN_COLOR = 0xFFF59E0B.toInt()
-private const val SELF_COLOR = 0xFF2563EB.toInt()
+
+/** Typeface weight for the name pill; the same weight iOS uses. */
+private const val SEMIBOLD = 600
 
 /** The only font family the OpenFreeMap style serves glyphs for. */
 private const val STYLE_FONT = "Noto Sans Regular"

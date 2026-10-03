@@ -12,7 +12,8 @@
             case "rooms.invite":
                 AnyView(
                     NavigationStack {
-                        InviteScreen(roomId: 12345, roomName: "Camp", app: app) {}
+                        // The demo world's own Camp, so the code and the members are real.
+                        InviteScreen(roomId: DemoWorld.camp, roomName: "Camp", app: app) {}
                     }
                 )
             case "rooms.join":
@@ -21,7 +22,7 @@
                 AnyView(
                     NavigationStack {
                         RoomMembersScreen(
-                            roomId: 12345,
+                            roomId: DemoWorld.camp,
                             channelIndex: 1,
                             roomName: "Camp",
                             app: app,

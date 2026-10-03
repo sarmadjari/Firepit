@@ -83,6 +83,7 @@ fun SettingsScreen(
     openSection: SettingsSection? = null,
     onSectionOpened: () -> Unit = {},
     onImmersiveChange: (Boolean) -> Unit = {},
+    onMessage: (Int) -> Unit = {},
     radioViewModel: RadioViewModel = hiltViewModel(),
     settingsViewModel: SettingsViewModel = hiltViewModel(),
     sharingViewModel: SharingViewModel = hiltViewModel(),
@@ -126,6 +127,11 @@ fun SettingsScreen(
         SettingsSection.NODES -> NodesScreen(
             modifier = modifier.fillMaxSize(),
             onBack = { section = null },
+            onMessage = { peer ->
+                // The conversation opens in Chats; coming back to Settings lands on the list, not here.
+                section = null
+                onMessage(peer)
+            },
             viewModel = radioViewModel,
         )
 

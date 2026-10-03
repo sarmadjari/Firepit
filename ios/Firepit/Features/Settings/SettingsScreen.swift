@@ -5,6 +5,7 @@ import FirepitTransport
 import SwiftUI
 import UserNotifications
 
+/// The screens Settings pushes, as on Android. Everything else is on the page itself.
 enum SettingsSection: String, Hashable, CaseIterable {
     case devices
     case nodes
@@ -12,36 +13,30 @@ enum SettingsSection: String, Hashable, CaseIterable {
     case pins
 }
 
-enum SettingsRoute: String, Hashable, CaseIterable {
-    case you
-    case radio
-    case devices
-    case nodes
-    case notifications
-    case retention
-    case privacy
-    case location
-    case offlineMaps
-    case pins
-    case appearance
-    case about
+/// The page's sections, in order, so a debug route can open the page at one of them.
+enum SettingsPageSection: String, Hashable, CaseIterable {
+    case you, radio, notifications, messages, privacy, map, appearance, about
 }
 
-/// Settings. Ported from android/app/…/settings/SettingsScreen.kt.
+/// Settings, ported from android/app/…/settings/SettingsScreen.kt: one page with the same sections, items, order and
+/// wording as Android, each answered where it is asked, drawn with iOS controls — fields, switches, and menus that
+/// show the current choice. Only Devices, Nodes, Offline areas and Dropped pins open screens of their own.
 struct SettingsScreen: View {
     let app: AppContainer
 
-    @State private var path: [SettingsRoute]
+    @State private var path: [SettingsSection]
     @State private var model: SettingsViewModel
     @State private var radioModel: RadioViewModel
     @State private var sharingModel: SharingViewModel
+    private let scrollTo: SettingsPageSection?
 
     init(app: AppContainer) {
         self.init(app: app, initialRoute: nil)
     }
 
-    init(app: AppContainer, initialRoute: SettingsRoute?) {
+    init(app: AppContainer, initialRoute: SettingsSection?, scrollTo: SettingsPageSection? = nil) {
         self.app = app
+        self.scrollTo = scrollTo
         _path = State(initialValue: initialRoute.map { [$0] } ?? [])
         _model = State(initialValue: SettingsViewModel(app: app))
         _radioModel = State(initialValue: RadioViewModel(app: app))
@@ -50,15 +45,14 @@ struct SettingsScreen: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            SettingsMainPage(
-                state: model.state,
+            SettingsPage(
+                model: model,
                 radio: radioModel.uiState,
-                sharing: sharingModel.state,
+                sharingModel: sharingModel,
+                scrollTo: scrollTo,
                 onOpen: { path.append($0) }
             )
-            .navigationDestination(for: SettingsRoute.self) { route in
-                destination(route)
-            }
+            .navigationDestination(for: SettingsSection.self, destination: destination)
         }
         .task { await model.observe() }
         .task { await radioModel.observe() }
@@ -74,48 +68,18 @@ struct SettingsScreen: View {
     }
 
     @ViewBuilder
-    private func destination(_ route: SettingsRoute) -> some View {
+    private func destination(_ route: SettingsSection) -> some View {
         switch route {
-        case .you:
-            PersonSettingsPage(state: model.state, onSave: model.savePerson, onUseAsNodeName: model.useAsNodeName) {
-                model.chooseIdentitySlot($0)
-            }
-            .toolbar(.hidden, for: .tabBar)
-        case .radio:
-            RadioSettingsPage(
-                state: model.state,
-                onChooseRange: model.chooseRange,
-                onMakePrivate: model.makeRadioPrivate,
-                onKeepPublic: model.keepRadioPublic
-            )
-            .toolbar(.hidden, for: .tabBar)
         case .devices:
             DevicesScreen(viewModel: radioModel)
                 .toolbar(.hidden, for: .tabBar)
         case .nodes:
-            NodesScreen(viewModel: radioModel)
-                .toolbar(.hidden, for: .tabBar)
-        case .notifications:
-            NotificationSettingsPage(
-                state: model.state,
-                onShowMessageText: model.setShowMessageText,
-                onChooseMessageAlerts: model.chooseMessageAlerts
-            )
+            NodesScreen(viewModel: radioModel) { peer in
+                // The conversation opens in Chats; coming back to Settings lands on the page, not here.
+                path.removeAll()
+                app.router.openDirect(peer)
+            }
             .toolbar(.hidden, for: .tabBar)
-        case .retention:
-            RetentionSettingsPage(
-                state: model.state,
-                onChooseRetention: model.chooseRetention,
-                onChooseRoomLifetime: model.chooseRoomLifetime,
-                onEraseHistory: model.eraseHistory
-            )
-            .toolbar(.hidden, for: .tabBar)
-        case .privacy:
-            PrivacySettingsPage(state: model.state, onAllowScreenCapture: model.setAllowScreenCapture)
-                .toolbar(.hidden, for: .tabBar)
-        case .location:
-            LocationSettingsPage(state: sharingModel.state, model: sharingModel)
-                .toolbar(.hidden, for: .tabBar)
         case .offlineMaps:
             OfflineMapsScreen(
                 model: OfflineMapsViewModel(
@@ -128,156 +92,565 @@ struct SettingsScreen: View {
         case .pins:
             PinsScreen(app: app)
                 .toolbar(.hidden, for: .tabBar)
-        case .appearance:
-            AppearanceSettingsPage(state: model.state, onChooseTheme: model.chooseTheme)
-                .toolbar(.hidden, for: .tabBar)
-        case .about:
-            AboutSettingsPage()
-                .toolbar(.hidden, for: .tabBar)
         }
     }
 }
 
-private struct SettingsMainPage: View {
-    let state: SettingsUiState
+private struct SettingsPage: View {
+    let model: SettingsViewModel
     let radio: RadioUiState
-    let sharing: SharingUiState
-    let onOpen: (SettingsRoute) -> Void
+    let sharingModel: SharingViewModel
+    let scrollTo: SettingsPageSection?
+    let onOpen: (SettingsSection) -> Void
+
+    @State private var confirmingErase = false
+    @State private var pickingRoom = false
 
     var body: some View {
-        Form {
-            Section("You") {
-                SettingsNavRow(
-                    title: "Your identity",
-                    subtitle: state.person?.name ?? "Set your name and initials",
-                    route: .you,
-                    onOpen: onOpen
+        let state = model.state
+        ScrollViewReader { proxy in
+            Form {
+                PersonSection(state: state, model: model)
+                    .id(SettingsPageSection.you)
+
+                Section {
+                    NavigationRow(title: "Devices", subtitle: SettingsViewModel.deviceSummary(radio.link)) {
+                        onOpen(.devices)
+                    }
+                    NavigationRow(title: "Nodes", subtitle: SettingsViewModel.nodeSummary(count: radio.nodes.count)) {
+                        onOpen(.nodes)
+                    }
+                } header: {
+                    Text("Radio")
+                }
+                .id(SettingsPageSection.radio)
+                RangeSections(
+                    state: state,
+                    onChooseRange: model.chooseRange,
+                    onMakePrivate: model.makeRadioPrivate,
+                    onKeepPublic: model.keepRadioPublic
                 )
+
+                NotificationSections(
+                    state: state,
+                    onShowMessageText: model.setShowMessageText,
+                    onChooseMessageAlerts: model.chooseMessageAlerts
+                )
+                .id(SettingsPageSection.notifications)
+
+                Section {
+                    choicePicker(
+                        "Keep messages for", selection: state.retention, options: MessageRetention.allCases,
+                        label: \.label, onChoose: model.chooseRetention)
+                } header: {
+                    Text("Messages")
+                } footer: {
+                    Text(
+                        """
+                        Older messages are always deleted from this phone — there is no keeping them. Everyone else \
+                        holds their own copy, and nothing on a mesh can delete theirs.
+                        """
+                    )
+                }
+                .id(SettingsPageSection.messages)
+                Section {
+                    choicePicker(
+                        "Leave quiet rooms", selection: state.roomLifetime, options: RoomLifetime.allCases,
+                        label: \.label, onChoose: model.chooseRoomLifetime)
+                } footer: {
+                    Text("Leaving takes the room's messages and its key with it, and cannot be undone.")
+                }
+
+                Section {
+                    Toggle(
+                        "Allow screenshots",
+                        isOn: Binding(get: { state.allowScreenCapture }, set: { model.setAllowScreenCapture($0) })
+                    )
+                } header: {
+                    Text("Privacy")
+                } footer: {
+                    Text(
+                        """
+                        Off hides Firepit in the app switcher and while the screen is recorded or mirrored. iOS does \
+                        not let apps block screenshots. Invite codes are always hidden from recordings and the app \
+                        switcher.
+                        """
+                    )
+                }
+                .id(SettingsPageSection.privacy)
+                Section {
+                    Button(role: .destructive) {
+                        confirmingErase = true
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Erase history on this phone")
+                                .foregroundStyle(FirepitColors.danger)
+                            Text("Messages, pins, where people were, their names, and the map tiles you looked at")
+                                .font(FirepitFont.bodySmall)
+                                .foregroundStyle(FirepitColors.textSecondary)
+                        }
+                    }
+                }
+
+                Section {
+                    SharingRow(state: sharingModel.state) { pickingRoom = true }
+                    NavigationRow(
+                        title: "Offline areas", subtitle: "Download map tiles so the map works with no signal"
+                    ) {
+                        onOpen(.offlineMaps)
+                    }
+                    NavigationRow(title: "Dropped pins", subtitle: "Rename or delete the pins on your map") {
+                        onOpen(.pins)
+                    }
+                } header: {
+                    Text("Map")
+                }
+                .id(SettingsPageSection.map)
+
+                Section {
+                    choicePicker(
+                        "Theme", selection: state.theme, options: ThemeChoice.allCases, label: \.label,
+                        onChoose: model.chooseTheme)
+                } header: {
+                    Text("Appearance")
+                } footer: {
+                    Text("Dark keeps a torch-lit camp readable and does not flare in your eyes at night.")
+                }
+                .id(SettingsPageSection.appearance)
+
+                Section {
+                    LabeledRow(
+                        title: "Firepit",
+                        detail: String(localized: "Meshtastic chat, rooms and maps that work off-grid"))
+                    LabeledRow(
+                        title: "Works with",
+                        detail: String(
+                            localized: """
+                                Meshtastic radios running firmware \(RadioCapabilities.minimumFirmware.raw) or newer. \
+                                An older node is refused rather than half-supported, because the privacy Firepit \
+                                describes would not hold on it.
+                                """
+                        )
+                    )
+                } header: {
+                    Text("About")
+                }
+                .id(SettingsPageSection.about)
             }
             .listRowBackground(FirepitColors.surface2)
-
-            Section("Radio") {
-                SettingsNavRow(
-                    title: "Devices",
-                    subtitle: SettingsViewModel.deviceSummary(radio.link),
-                    route: .devices,
-                    onOpen: onOpen
-                )
-                SettingsNavRow(
-                    title: "Nodes",
-                    subtitle: SettingsViewModel.nodeSummary(count: radio.nodes.count),
-                    route: .nodes,
-                    onOpen: onOpen
-                )
-                SettingsNavRow(
-                    title: "Radio privacy and range",
-                    subtitle: state.radioPrivacy.label,
-                    route: .radio,
-                    onOpen: onOpen
-                )
+            .scrollContentBackground(.hidden)
+            .background(FirepitColors.surface)
+            .navigationTitle("Settings")
+            .onAppear {
+                if let scrollTo { proxy.scrollTo(scrollTo, anchor: .top) }
             }
-            .listRowBackground(FirepitColors.surface2)
+        }
+        .confirmationDialog("Erase history?", isPresented: $confirmingErase, titleVisibility: .visible) {
+            Button("Erase", role: .destructive) { model.eraseHistory() }
+            Button("Keep", role: .cancel) {}
+        } message: {
+            Text(
+                """
+                Deletes every message, pin, last-known position, name card and browsed map tile on this phone. \
+                Your rooms and downloaded areas stay. Everyone else keeps their own copy.
+                """
+            )
+        }
+        .sheet(isPresented: $pickingRoom) {
+            ShareLocationSheet(
+                state: sharingModel.state,
+                onDismiss: { pickingRoom = false },
+                onShare: { roomId, choice in
+                    pickingRoom = false
+                    sharingModel.share(roomId: roomId, choice: choice)
+                },
+                onStop: {
+                    pickingRoom = false
+                    sharingModel.stop()
+                }
+            )
+        }
+    }
 
-            Section("Notifications") {
-                SettingsNavRow(
-                    title: "Message notifications",
-                    subtitle: state.showMessageText ? "Show who and what" : "Hide message text",
-                    route: .notifications,
-                    onOpen: onOpen
-                )
+    /// One question and its answers, as Android's chip rows: a menu that shows the current answer.
+    private func choicePicker<Option: Hashable>(
+        _ title: LocalizedStringKey,
+        selection: Option,
+        options: [Option],
+        label: KeyPath<Option, String>,
+        enabled: Bool = true,
+        onChoose: @escaping @MainActor (Option) -> Void
+    ) -> some View {
+        Picker(title, selection: Binding(get: { selection }, set: onChoose)) {
+            ForEach(options, id: \.self) { option in
+                Text(verbatim: option[keyPath: label]).tag(option)
             }
-            .listRowBackground(FirepitColors.surface2)
+        }
+        .pickerStyle(.menu)
+        .tint(FirepitColors.primary)
+        .disabled(!enabled)
+    }
+}
 
-            Section("Messages") {
-                SettingsNavRow(
-                    title: "History and room lifetime",
-                    subtitle: "Keep messages for \(state.retention.label)",
-                    route: .retention,
-                    onOpen: onOpen
-                )
-            }
-            .listRowBackground(FirepitColors.surface2)
+/// You: your name and initials, your colour, and putting the name on your radio. Only on this phone, and
+/// deliberately so: a name here costs nothing, needs no radio, and cannot be truncated by one.
+private struct PersonSection: View {
+    let state: SettingsUiState
+    let model: SettingsViewModel
 
-            Section("Privacy") {
-                SettingsNavRow(
-                    title: "Screenshots and recording",
-                    subtitle: state.allowScreenCapture ? "Allowed" : "Hidden in previews and recordings",
-                    route: .privacy,
-                    onOpen: onOpen
-                )
-            }
-            .listRowBackground(FirepitColors.surface2)
+    @State private var name = ""
+    @State private var tag = ""
+    @State private var tagChosen = false
+    @State private var confirmingRadioName = false
+    @State private var pickingColour = false
 
-            Section("Map") {
+    /// An emptied field falls back to the name rather than being rewritten as you delete.
+    private var effectiveTag: String {
+        tag.trimmingCharacters(in: .whitespaces).isEmpty ? Person.initialsFor(name: name) : tag
+    }
+    private var changed: Bool {
+        name.trimmingCharacters(in: .whitespaces) != (state.person?.name ?? "")
+            || effectiveTag != (state.person?.tag ?? "")
+    }
+    private var nameBytes: Int { name.utf8.count }
+    private var tagBytes: Int { tag.utf8.count }
+    private var tooLong: Bool { nameBytes > OwnerName.maxLongBytes || tagBytes > OwnerName.maxShortBytes }
+
+    var body: some View {
+        Section {
+            HStack(alignment: .center, spacing: FirepitSpacing.m) {
+                VStack(alignment: .leading, spacing: FirepitSpacing.xs) {
+                    // Typing is what decides whether the initials were chosen; loading a saved person is not.
+                    TextField(
+                        "Your name",
+                        text: Binding(
+                            get: { name },
+                            set: { next in
+                                name = next
+                                if !tagChosen { tag = Person.initialsFor(name: next) }
+                            })
+                    )
+                    .textInputAutocapitalization(.words)
+                    .textContentType(.name)
+                    Text(
+                        nameBytes > OwnerName.maxLongBytes
+                            ? String(
+                                localized:
+                                    "Longer than a mesh packet can carry by \(nameBytes - OwnerName.maxLongBytes) bytes"
+                            )
+                            : String(localized: "How this phone refers to you. The mesh sees your device's name")
+                    )
+                    .font(FirepitFont.bodySmall)
+                    .foregroundStyle(
+                        nameBytes > OwnerName.maxLongBytes ? FirepitColors.danger : FirepitColors.textSecondary)
+                }
+                // Beside the fields because the two make one thing: the dot.
                 Button {
-                    onOpen(.location)
+                    pickingColour = true
                 } label: {
-                    SharingRow(state: sharing) { onOpen(.location) }
+                    IdentityAvatar(
+                        nodeNum: state.person?.id ?? 0, tag: effectiveTag, size: 56, slot: state.person?.colourSlot)
                 }
                 .buttonStyle(.plain)
-                SettingsNavRow(
-                    title: "Offline areas",
-                    subtitle: "Download map tiles so the map works with no signal",
-                    route: .offlineMaps,
-                    onOpen: onOpen
-                )
-                SettingsNavRow(
-                    title: "Dropped pins",
-                    subtitle: "Rename or delete the pins on your map",
-                    route: .pins,
-                    onOpen: onOpen
-                )
+                .accessibilityLabel(Text("Change your colour"))
             }
-            .listRowBackground(FirepitColors.surface2)
-
-            Section("Appearance") {
-                SettingsNavRow(
-                    title: "Theme",
-                    subtitle: state.theme.label,
-                    route: .appearance,
-                    onOpen: onOpen
+            VStack(alignment: .leading, spacing: FirepitSpacing.xs) {
+                TextField(
+                    "Initials",
+                    text: Binding(
+                        get: { tag },
+                        set: { next in
+                            tag = next
+                            tagChosen = !next.trimmingCharacters(in: .whitespaces).isEmpty
+                        })
                 )
+                .textInputAutocapitalization(.characters)
+                Text(verbatim: initialsCaption)
+                    .font(FirepitFont.bodySmall)
+                    .foregroundStyle(
+                        tagBytes > OwnerName.maxShortBytes ? FirepitColors.danger : FirepitColors.textSecondary)
             }
-            .listRowBackground(FirepitColors.surface2)
-
-            Section("About") {
-                SettingsNavRow(
-                    title: "Firepit",
-                    subtitle: "Meshtastic chat, rooms and maps that work off-grid",
-                    route: .about,
-                    onOpen: onOpen
-                )
+            HStack(spacing: FirepitSpacing.m) {
+                Button("Save") { model.savePerson(name: name, tag: effectiveTag) }
+                    .buttonStyle(.borderedProminent)
+                    .tint(FirepitColors.primary)
+                    .disabled(!changed || tooLong || name.trimmingCharacters(in: .whitespaces).isEmpty)
+                // Offered rather than done: this is the one action here that leaves the phone and reconfigures
+                // hardware.
+                Button("Use on my radio") { confirmingRadioName = true }
+                    .buttonStyle(.borderless)
+                    .tint(FirepitColors.primary)
+                    .disabled(!state.connected || state.person == nil || changed)
             }
-            .listRowBackground(FirepitColors.surface2)
+        } header: {
+            Text("You")
+        } footer: {
+            Text(
+                """
+                People in your rooms see this name, sealed. Everyone else nearby sees your radio's own name, which \
+                it broadcasts in the open.
+                """
+            )
         }
-        .navigationTitle("Settings")
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(FirepitColors.surface)
+        .onChange(of: state.person, initial: true) { _, person in
+            name = person?.name ?? ""
+            tag = person?.tag ?? ""
+            // Nothing records whether a stored tag was typed or derived, so ask the rule: initials it would not have
+            // produced were chosen deliberately.
+            tagChosen = person != nil && person?.tag != Person.initialsFor(name: person?.name ?? "")
+        }
+        .alert("Put your name on your radio?", isPresented: $confirmingRadioName) {
+            Button("Use it") { model.useAsNodeName() }
+            Button("Keep the radio's name", role: .cancel) {}
+        } message: {
+            Text(
+                """
+                Your radio announces its name every few hours to every radio in range. In private mode that is under \
+                a key built into Firepit, so anyone with the app can read it; otherwise every Meshtastic radio can. \
+                Only do this if you are happy for strangers nearby to see it.
+                """
+            )
+        }
+        .sheet(isPresented: $pickingColour) {
+            ColourSheet(person: state.person, tag: effectiveTag, name: name) { slot in
+                model.chooseIdentitySlot(slot)
+                pickingColour = false
+            }
+        }
+    }
+
+    private var initialsCaption: String {
+        if tagBytes > OwnerName.maxShortBytes {
+            return String(localized: "Up to \(OwnerName.maxShortBytes) characters")
+        }
+        if tag.trimmingCharacters(in: .whitespaces).isEmpty {
+            return String(localized: "Empty follows your name: \(effectiveTag)")
+        }
+        return tagChosen
+            ? String(localized: "Yours. Clear it to follow your name again")
+            : String(localized: "Follows your name. Type your own if you prefer")
     }
 }
 
-private struct SettingsNavRow: View {
-    let title: LocalizedStringKey
-    let subtitle: String
-    let route: SettingsRoute
-    let onOpen: (SettingsRoute) -> Void
+/// Your colour, opened from your avatar as Android's dialog is. Only on this phone: the hue everyone else draws you in
+/// comes from your node number, which is how every device agrees without asking each other.
+private struct ColourSheet: View {
+    let person: Person?
+    let tag: String
+    let name: String
+    let onChoose: (Int?) -> Void
+
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        Button {
-            onOpen(route)
-        } label: {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: FirepitSpacing.l) {
+                    IdentityColourGrid(person: person, tag: tag, name: name, onChoose: onChoose)
+                    Text(
+                        """
+                        Shared with your Firepit rooms, so the people you invited see you in this colour too. \
+                        Everyone else draws you from your node number.
+                        """
+                    )
+                    .font(FirepitFont.bodySmall)
+                    .foregroundStyle(FirepitColors.textSecondary)
+                }
+                .padding(FirepitSpacing.screenMargin)
+            }
+            .background(FirepitColors.surface)
+            .navigationTitle("Your colour")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+}
+
+/// How private the radio itself is, and how far its traffic travels. No heading of its own: it sits inside Radio, and a
+/// second one under it read as a different piece of hardware.
+private struct RangeSections: View {
+    let state: SettingsUiState
+    let onChooseRange: @MainActor (RangeMode) -> Void
+    let onMakePrivate: @MainActor () -> Void
+    let onKeepPublic: @MainActor () -> Void
+
+    var body: some View {
+        Section {
+            // Not a plain choice: each answer runs a different action, and undecided is a state rather than something
+            // to offer, so it selects neither and either answer can still be given.
+            Menu {
+                privacyOption(.open, action: onKeepPublic)
+                privacyOption(.firepit, action: onMakePrivate)
+            } label: {
+                LabeledContent("This radio's own identity") {
+                    Text(
+                        verbatim: state.radioPrivacy == .undecided
+                            ? String(localized: "Not chosen") : state.radioPrivacy.label
+                    )
+                    .foregroundStyle(FirepitColors.primary)
+                }
+                .foregroundStyle(FirepitColors.textPrimary)
+            }
+        } footer: {
+            VStack(alignment: .leading, spacing: FirepitSpacing.s) {
+                Text(
+                    """
+                    Your rooms, messages, pins and locations are always sealed. This only decides who can see the \
+                    radio's own name and battery level: every Meshtastic device, or only devices running Firepit.
+                    """
+                )
+                // Undecided means nothing has been written, so it is whatever it came as.
+                Text(
+                    verbatim: state.radioPrivacy == .firepit ? RadioPrivacy.firepit.summary : RadioPrivacy.open.summary
+                )
+                .foregroundStyle(state.radioPrivacy == .firepit ? FirepitColors.textSecondary : FirepitColors.warn)
+                if state.radioPrivacy == .undecided {
+                    Text("You haven't chosen yet, so this radio is still set up the way you found it.")
+                }
+                // Whether going back is a real offer depends on having the old channel to go back to.
+                if state.radioPrivacy == .firepit {
+                    Text(verbatim: restoreCopy)
+                        .foregroundStyle(state.canRestoreRadio ? FirepitColors.textSecondary : FirepitColors.warn)
+                }
+            }
+        }
+        // Only meaningful once the primary is ours: the mode works by changing that channel's name, which is what the
+        // firmware turns into a frequency.
+        if state.radioPrivacy == .firepit {
+            Section {
+                Picker(
+                    "How far messages travel",
+                    selection: Binding(get: { state.rangeMode }, set: { onChooseRange($0) })
+                ) {
+                    ForEach(RangeMode.allCases, id: \.self) { mode in
+                        Text(verbatim: mode.label).tag(mode)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(FirepitColors.primary)
+            } footer: {
+                Text(
+                    """
+                    \(state.rangeMode.summary) Everyone in a group has to use the same setting to hear each other; \
+                    joining by QR code sets it for you.
+                    """
+                )
+            }
+        }
+    }
+
+    private func privacyOption(_ privacy: RadioPrivacy, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            if state.radioPrivacy == privacy {
+                Label(privacy.label, systemImage: "checkmark")
+            } else {
+                Text(verbatim: privacy.label)
+            }
+        }
+    }
+
+    private var restoreCopy: String {
+        let open = RadioPrivacy.open.label
+        if state.canRestoreRadio {
+            return String(localized: "Firepit kept this radio's original channel. Choosing \"\(open)\" puts it back.")
+        }
+        return String(
+            localized: """
+                Firepit has no earlier channel for this radio, so "\(open)" would leave it on Firepit's and only stop \
+                managing it.
+                """
+        )
+    }
+}
+
+/// How you hear about a message: grouped by the question being asked rather than by which device the answer is
+/// written to.
+private struct NotificationSections: View {
+    let state: SettingsUiState
+    let onShowMessageText: @MainActor (Bool) -> Void
+    let onChooseMessageAlerts: @MainActor (MessageAlerts) -> Void
+
+    @Environment(\.openURL) private var openURL
+    @State private var authorization: UNAuthorizationStatus = .notDetermined
+
+    var body: some View {
+        Section {
+            Toggle("Show who and what", isOn: Binding(get: { state.showMessageText }, set: onShowMessageText))
+            // iOS keeps its own switch for notifications; when it is off, say so where the question is asked.
+            if authorization == .denied {
+                Button("Open iOS Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                }
+                .foregroundStyle(FirepitColors.primary)
+            }
+        } header: {
+            Text("Notifications")
+        } footer: {
+            VStack(alignment: .leading, spacing: FirepitSpacing.s) {
+                Text(
+                    """
+                    Off shows only that a message arrived, not who sent it, where or what it says. A notification is \
+                    read by whoever is looking at the phone, which is not always you.
+                    """
+                )
+                if authorization == .denied {
+                    Text("Notifications are off in iOS Settings, so Firepit cannot show them until you allow it.")
+                        .foregroundStyle(FirepitColors.warn)
+                }
+            }
+        }
+        .task {
+            authorization = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        }
+        Section {
+            // A radio setting, so there must be a radio to write it to.
+            Picker(
+                "Announce a message on",
+                selection: Binding(get: { state.messageAlerts }, set: { onChooseMessageAlerts($0) })
+            ) {
+                ForEach(MessageAlerts.allCases, id: \.self) { alert in
+                    Text(verbatim: alert.label).tag(alert)
+                }
+            }
+            .pickerStyle(.menu)
+            .tint(FirepitColors.primary)
+            .disabled(!state.connected)
+        } footer: {
+            Text(
+                state.connected ? state.messageAlerts.summary : String(localized: "Connect your radio to change this."))
+        }
+    }
+}
+
+/// A row that opens another screen, with what it currently says underneath.
+private struct NavigationRow: View {
+    let title: LocalizedStringKey
+    let subtitle: String
+    let action: () -> Void
+
+    init(title: LocalizedStringKey, subtitle: String, action: @escaping () -> Void) {
+        self.title = title
+        self.subtitle = subtitle
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(FirepitFont.bodyLarge)
                         .foregroundStyle(FirepitColors.textPrimary)
                     Text(verbatim: subtitle)
-                        .font(FirepitFont.bodyMedium)
+                        .font(FirepitFont.bodySmall)
                         .foregroundStyle(FirepitColors.textSecondary)
                 }
                 Spacer()
-                Image(systemName: "chevron.right")
+                Image(icon: .chevron)
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(FirepitColors.textSecondary)
                     .accessibilityHidden(true)
@@ -288,150 +661,18 @@ private struct SettingsNavRow: View {
     }
 }
 
-private struct PersonSettingsPage: View {
-    let state: SettingsUiState
-    let onSave: (String, String) -> Void
-    let onUseAsNodeName: () -> Void
-    let onChooseIdentity: (Int?) -> Void
-
-    @State private var name: String
-    @State private var tag: String
-    @State private var tagChosen: Bool
-    @State private var confirmingRadioName = false
-
-    init(
-        state: SettingsUiState,
-        onSave: @escaping (String, String) -> Void,
-        onUseAsNodeName: @escaping () -> Void,
-        onChooseIdentity: @escaping (Int?) -> Void
-    ) {
-        self.state = state
-        self.onSave = onSave
-        self.onUseAsNodeName = onUseAsNodeName
-        self.onChooseIdentity = onChooseIdentity
-        let person = state.person
-        _name = State(initialValue: person?.name ?? "")
-        _tag = State(initialValue: person?.tag ?? "")
-        _tagChosen = State(initialValue: person != nil && person?.tag != Person.initialsFor(name: person?.name ?? ""))
-    }
-
-    private func load(_ person: Person?) {
-        name = person?.name ?? ""
-        tag = person?.tag ?? ""
-        tagChosen = person != nil && person?.tag != Person.initialsFor(name: person?.name ?? "")
-    }
-
-    /// An emptied field falls back to the name rather than being rewritten as you delete.
-    private var effectiveTag: String {
-        tag.trimmingCharacters(in: .whitespaces).isEmpty ? Person.initialsFor(name: name) : tag
-    }
-    private var changed: Bool {
-        name.trimmingCharacters(in: .whitespaces) != (state.person?.name ?? "")
-            || effectiveTag != (state.person?.tag ?? "")
-    }
-    private var tooLong: Bool { name.utf8.count > OwnerName.maxLongBytes || tag.utf8.count > OwnerName.maxShortBytes }
+/// A fact with its explanation underneath, as Android's `ListItem` rows in About.
+private struct LabeledRow: View {
+    let title: LocalizedStringKey
+    let detail: String
 
     var body: some View {
-        Form {
-            Section {
-                HStack(spacing: FirepitSpacing.m) {
-                    IdentityAvatar(
-                        nodeNum: state.person?.id ?? 0, tag: effectiveTag, size: 64, slot: state.person?.colourSlot)
-                    VStack(alignment: .leading, spacing: FirepitSpacing.xs) {
-                        // Typing is what decides whether the initials were chosen; loading a saved person is not.
-                        TextField(
-                            "Your name",
-                            text: Binding(
-                                get: { name },
-                                set: { next in
-                                    name = next
-                                    if !tagChosen { tag = Person.initialsFor(name: next) }
-                                })
-                        )
-                        .textInputAutocapitalization(.words)
-                        TextField(
-                            "Initials",
-                            text: Binding(
-                                get: { tag },
-                                set: { next in
-                                    tag = next
-                                    tagChosen = !next.trimmingCharacters(in: .whitespaces).isEmpty
-                                })
-                        )
-                        .textInputAutocapitalization(.characters)
-                    }
-                }
-                if name.utf8.count > OwnerName.maxLongBytes {
-                    Text("Longer than a mesh packet can carry by \(name.utf8.count - OwnerName.maxLongBytes) bytes")
-                        .foregroundStyle(FirepitColors.danger)
-                } else {
-                    Text("How this phone refers to you. The mesh sees your device's name")
-                        .foregroundStyle(FirepitColors.textSecondary)
-                }
-                if tag.utf8.count > OwnerName.maxShortBytes {
-                    Text("Up to \(OwnerName.maxShortBytes) characters")
-                        .foregroundStyle(FirepitColors.danger)
-                } else if tag.trimmingCharacters(in: .whitespaces).isEmpty {
-                    Text("Empty follows your name: \(effectiveTag)")
-                        .foregroundStyle(FirepitColors.textSecondary)
-                } else if tagChosen {
-                    Text("Yours. Clear it to follow your name again")
-                        .foregroundStyle(FirepitColors.textSecondary)
-                } else {
-                    Text("Follows your name. Type your own if you prefer")
-                        .foregroundStyle(FirepitColors.textSecondary)
-                }
-            } footer: {
-                Text(
-                    """
-                    People in your rooms see this name, sealed. Everyone else nearby sees your radio's own name, \
-                    which it broadcasts in the open.
-                    """
-                )
-            }
-            .listRowBackground(FirepitColors.surface2)
-
-            Section {
-                IdentityColourGrid(person: state.person, tag: effectiveTag, name: name, onChoose: onChooseIdentity)
-            } header: {
-                Text("Your colour")
-            } footer: {
-                Text(
-                    """
-                    Shared with your Firepit rooms, so the people you invited see you in this colour too. \
-                    Everyone else draws you from your node number.
-                    """
-                )
-            }
-            .listRowBackground(FirepitColors.surface2)
-
-            Section {
-                Button("Save") { onSave(name, effectiveTag) }
-                    .disabled(!changed || tooLong || name.trimmingCharacters(in: .whitespaces).isEmpty)
-                Button("Use on my radio") { confirmingRadioName = true }
-                    .disabled(!state.connected || state.person == nil || changed)
-            }
-            .listRowBackground(FirepitColors.surface2)
-        }
-        .navigationTitle("You")
-        .navigationBarTitleDisplayMode(.inline)
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(FirepitColors.surface)
-        .onChange(of: state.person, initial: true) { _, person in
-            load(person)
-        }
-        .confirmationDialog("Put your name on your radio?", isPresented: $confirmingRadioName) {
-            Button("Use it") { onUseAsNodeName() }
-            Button("Keep the radio's name", role: .cancel) {}
-        } message: {
-            Text(
-                """
-                Your radio announces its name every few hours to every radio in range. In private mode that is under \
-                a key built into Firepit, so anyone with the app can read it; otherwise every Meshtastic radio can. \
-                Only do this if you are happy for strangers nearby to see it.
-                """
-            )
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .foregroundStyle(FirepitColors.textPrimary)
+            Text(verbatim: detail)
+                .font(FirepitFont.bodySmall)
+                .foregroundStyle(FirepitColors.textSecondary)
         }
     }
 }
@@ -466,348 +707,5 @@ private struct IdentityColourGrid: View {
         if person?.colourSlot != nil {
             Button("Use my node's colour") { onChoose(nil) }
         }
-    }
-}
-
-private struct RadioSettingsPage: View {
-    let state: SettingsUiState
-    let onChooseRange: (RangeMode) -> Void
-    let onMakePrivate: () -> Void
-    let onKeepPublic: () -> Void
-
-    var body: some View {
-        Form {
-            Section {
-                Text(
-                    """
-                    Your rooms, messages, pins and locations are always sealed. This only decides who can see the \
-                    radio's own name and battery level: every Meshtastic device, or only devices running Firepit.
-                    """
-                )
-                .font(FirepitFont.bodyMedium)
-                .foregroundStyle(FirepitColors.textSecondary)
-            }
-            .listRowBackground(FirepitColors.surface2)
-
-            Section("This radio's own identity") {
-                Picker("This radio's own identity", selection: privacyBinding) {
-                    Text(verbatim: RadioPrivacy.open.label).tag(RadioPrivacy?.some(.open))
-                    Text(verbatim: RadioPrivacy.firepit.label).tag(RadioPrivacy?.some(.firepit))
-                }
-                .pickerStyle(.inline)
-                .labelsHidden()
-                Text(state.radioPrivacy == .firepit ? RadioPrivacy.firepit.summary : RadioPrivacy.open.summary)
-                    .foregroundStyle(state.radioPrivacy == .firepit ? FirepitColors.textSecondary : FirepitColors.warn)
-                if state.radioPrivacy == .undecided {
-                    Text("You haven't chosen yet, so this radio is still set up the way you found it.")
-                        .foregroundStyle(FirepitColors.textSecondary)
-                }
-                if state.radioPrivacy == .firepit {
-                    Text(restoreCopy)
-                        .foregroundStyle(state.canRestoreRadio ? FirepitColors.textSecondary : FirepitColors.warn)
-                }
-            }
-            .listRowBackground(FirepitColors.surface2)
-
-            if state.radioPrivacy == .firepit {
-                Section("How far messages travel") {
-                    Picker("How far messages travel", selection: rangeBinding) {
-                        ForEach(RangeMode.allCases, id: \.self) { entry in
-                            Text(verbatim: entry.label).tag(entry)
-                        }
-                    }
-                    .pickerStyle(.inline)
-                    .labelsHidden()
-                    Text(
-                        """
-                        \(state.rangeMode.summary) Everyone in a group has to use the same setting to hear each other; \
-                        joining by QR code sets it for you.
-                        """
-                    )
-                    .foregroundStyle(FirepitColors.textSecondary)
-                }
-                .listRowBackground(FirepitColors.surface2)
-            }
-        }
-        .navigationTitle("Radio")
-        .navigationBarTitleDisplayMode(.inline)
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(FirepitColors.surface)
-    }
-
-    /// Not a plain enum choice: each answer runs a different action, and undecided is a state rather than something
-    /// to offer, so it selects neither and either answer can still be given.
-    private var privacyBinding: Binding<RadioPrivacy?> {
-        Binding(
-            get: { state.radioPrivacy == .undecided ? nil : state.radioPrivacy },
-            set: { choice in
-                switch choice {
-                case .firepit: onMakePrivate()
-                case .open: onKeepPublic()
-                case .undecided, nil: break
-                }
-            }
-        )
-    }
-
-    private var rangeBinding: Binding<RangeMode> {
-        Binding(get: { state.rangeMode }, set: { value in onChooseRange(value) })
-    }
-
-    private var restoreCopy: String {
-        let open = RadioPrivacy.open.label
-        if state.canRestoreRadio {
-            return String(localized: "Firepit kept this radio's original channel. Choosing \"\(open)\" puts it back.")
-        }
-        return String(
-            localized: """
-                Firepit has no earlier channel for this radio, so "\(open)" would leave it on Firepit's and only stop \
-                managing it.
-                """
-        )
-    }
-}
-
-private struct NotificationSettingsPage: View {
-    let state: SettingsUiState
-    let onShowMessageText: (Bool) -> Void
-    let onChooseMessageAlerts: (MessageAlerts) -> Void
-
-    @Environment(\.openURL) private var openURL
-    @State private var authorization: UNAuthorizationStatus = .notDetermined
-
-    var body: some View {
-        Form {
-            Section {
-                Toggle(
-                    "Show who and what",
-                    isOn: Binding(get: { state.showMessageText }, set: { value in onShowMessageText(value) }))
-                Picker("Announce a message on", selection: alertsBinding) {
-                    ForEach(MessageAlerts.allCases, id: \.self) { entry in
-                        Text(verbatim: entry.label).tag(entry)
-                    }
-                }
-                .pickerStyle(.inline)
-                .disabled(!state.connected)
-            } footer: {
-                VStack(alignment: .leading, spacing: FirepitSpacing.s) {
-                    Text(
-                        """
-                        Off shows only that a message arrived, not who sent it, where or what it says. \
-                        A notification is read by whoever is looking at the phone, which is not always you.
-                        """
-                    )
-                    Text(state.connected ? state.messageAlerts.summary : "Connect your radio to change this.")
-                    if authorization == .denied {
-                        Button("Open iOS Settings") {
-                            openURL(URL(string: UIApplication.openSettingsURLString) ?? URL(fileURLWithPath: "/"))
-                        }
-                        Text("Notifications are off in iOS Settings, so Firepit cannot show them until you allow it.")
-                    }
-                }
-            }
-            .listRowBackground(FirepitColors.surface2)
-        }
-        .navigationTitle("Notifications")
-        .navigationBarTitleDisplayMode(.inline)
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(FirepitColors.surface)
-        .task {
-            let settings = await UNUserNotificationCenter.current().notificationSettings()
-            authorization = settings.authorizationStatus
-        }
-    }
-
-    private var alertsBinding: Binding<MessageAlerts> {
-        Binding(get: { state.messageAlerts }, set: { value in onChooseMessageAlerts(value) })
-    }
-}
-
-private struct RetentionSettingsPage: View {
-    let state: SettingsUiState
-    let onChooseRetention: (MessageRetention) -> Void
-    let onChooseRoomLifetime: (RoomLifetime) -> Void
-    let onEraseHistory: () -> Void
-
-    @State private var confirmingErase = false
-
-    var body: some View {
-        Form {
-            Section {
-                Picker("Keep messages for", selection: retentionBinding) {
-                    ForEach(MessageRetention.allCases, id: \.self) { entry in
-                        Text(verbatim: entry.label).tag(entry)
-                    }
-                }
-                .pickerStyle(.inline)
-            } footer: {
-                Text(
-                    """
-                    Older messages are always deleted from this phone — there is no keeping them. Everyone else holds \
-                    their own copy, and nothing on a mesh can delete theirs.
-                    """
-                )
-            }
-            .listRowBackground(FirepitColors.surface2)
-
-            Section {
-                Picker("Leave quiet rooms", selection: roomLifetimeBinding) {
-                    ForEach(RoomLifetime.allCases, id: \.self) { entry in
-                        Text(verbatim: entry.label).tag(entry)
-                    }
-                }
-                .pickerStyle(.inline)
-            } footer: {
-                Text("Leaving takes the room's messages and its key with it, and cannot be undone.")
-            }
-            .listRowBackground(FirepitColors.surface2)
-
-            Section {
-                Button("Erase history on this phone", role: .destructive) { confirmingErase = true }
-            } footer: {
-                Text("Messages, pins, where people were, their names, and the map tiles you looked at")
-            }
-            .listRowBackground(FirepitColors.surface2)
-        }
-        .navigationTitle("Messages")
-        .navigationBarTitleDisplayMode(.inline)
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(FirepitColors.surface)
-        .confirmationDialog("Erase history?", isPresented: $confirmingErase) {
-            Button("Erase", role: .destructive) { onEraseHistory() }
-            Button("Keep", role: .cancel) {}
-        } message: {
-            Text(
-                """
-                Deletes every message, pin, last-known position, name card and browsed map tile on this phone. \
-                Your rooms and downloaded areas stay. Everyone else keeps their own copy.
-                """
-            )
-        }
-    }
-
-    private var retentionBinding: Binding<MessageRetention> {
-        Binding(get: { state.retention }, set: { value in onChooseRetention(value) })
-    }
-
-    private var roomLifetimeBinding: Binding<RoomLifetime> {
-        Binding(get: { state.roomLifetime }, set: { value in onChooseRoomLifetime(value) })
-    }
-}
-
-private struct PrivacySettingsPage: View {
-    let state: SettingsUiState
-    let onAllowScreenCapture: (Bool) -> Void
-
-    var body: some View {
-        Form {
-            Section {
-                Toggle(
-                    "Allow screenshots",
-                    isOn: Binding(get: { state.allowScreenCapture }, set: { value in onAllowScreenCapture(value) })
-                )
-            } footer: {
-                Text(
-                    """
-                    Off hides Firepit in the app switcher and while the screen is recorded or mirrored. iOS does not \
-                    let apps block screenshots. Invite codes are always hidden from recordings and the app switcher.
-                    """
-                )
-            }
-            .listRowBackground(FirepitColors.surface2)
-        }
-        .navigationTitle("Privacy")
-        .navigationBarTitleDisplayMode(.inline)
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(FirepitColors.surface)
-    }
-}
-
-private struct LocationSettingsPage: View {
-    let state: SharingUiState
-    let model: SharingViewModel
-    @State private var pickingRoom = false
-
-    var body: some View {
-        Form {
-            Section {
-                SharingRow(state: state) { pickingRoom = true }
-            }
-            .listRowBackground(FirepitColors.surface2)
-        }
-        .navigationTitle("Your location")
-        .navigationBarTitleDisplayMode(.inline)
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(FirepitColors.surface)
-        .sheet(isPresented: $pickingRoom) {
-            ShareLocationSheet(
-                state: state,
-                onDismiss: { pickingRoom = false },
-                onShare: { roomId, choice in
-                    pickingRoom = false
-                    model.share(roomId: roomId, choice: choice)
-                },
-                onStop: {
-                    pickingRoom = false
-                    model.stop()
-                }
-            )
-        }
-    }
-}
-
-private struct AppearanceSettingsPage: View {
-    let state: SettingsUiState
-    let onChooseTheme: (ThemeChoice) -> Void
-
-    var body: some View {
-        Form {
-            Section {
-                Picker("Theme", selection: Binding(get: { state.theme }, set: { value in onChooseTheme(value) })) {
-                    ForEach(ThemeChoice.allCases, id: \.self) { entry in
-                        Text(entry.label).tag(entry)
-                    }
-                }
-                .pickerStyle(.inline)
-            } footer: {
-                Text("Dark keeps a torch-lit camp readable and does not flare in your eyes at night.")
-            }
-            .listRowBackground(FirepitColors.surface2)
-        }
-        .navigationTitle("Appearance")
-        .navigationBarTitleDisplayMode(.inline)
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(FirepitColors.surface)
-    }
-}
-
-private struct AboutSettingsPage: View {
-    var body: some View {
-        Form {
-            Section {
-                LabeledContent("Firepit", value: "Meshtastic chat, rooms and maps that work off-grid")
-                Text(
-                    """
-                    Meshtastic radios running firmware \(RadioCapabilities.minimumFirmware.raw) or newer. \
-                    An older node is refused rather than half-supported, because the privacy Firepit describes would \
-                    not hold on it.
-                    """
-                )
-            } header: {
-                Text("Works with")
-            }
-            .listRowBackground(FirepitColors.surface2)
-        }
-        .navigationTitle("About")
-        .navigationBarTitleDisplayMode(.inline)
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(FirepitColors.surface)
     }
 }
