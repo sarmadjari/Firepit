@@ -2,14 +2,18 @@ package com.getfirepit.core.data
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.getfirepit.core.crypto.HourKey
 import com.getfirepit.core.crypto.RoomCipher
-import com.getfirepit.core.crypto.SealedText
+import com.getfirepit.core.crypto.RoomRatchet
+import com.getfirepit.core.database.KeystoreWrapping
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -25,45 +29,56 @@ class RoomKeyStoreTest {
     private lateinit var store: RoomKeyStore
 
     private val room = 4242
+    private val sender = 7
+    private val hour = 491_234
+    private var now = hour * RoomRatchet.HOUR_MILLIS + 60_000
 
     @Before
     fun setUp() {
-        store = RoomKeyStore(context)
+        store = storeAtNow()
         store.forget(room)
+        store.forget(room + 1)
     }
 
     @After
-    fun tearDown() = store.forget(room)
+    fun tearDown() {
+        store.forget(room)
+        store.forget(room + 1)
+    }
 
     @Test
     fun aRoomWithNoKeyIsNotSealed() {
-        assertNull(store.keyFor(room))
+        assertFalse(store.holds(room))
+        assertFalse(store.canSeal(room))
+        assertNull(store.currentKey(room))
+        assertNull(store.seal(room, sender, "hello".encodeToByteArray()))
     }
 
     @Test
-    fun aGeneratedKeyIsReadBackUnchanged() {
+    fun aGeneratedKeyStartsThisHour() {
         val key = store.generate(room)
 
-        assertArrayEquals(key, store.keyFor(room))
-        assertEquals(RoomCipher.KEY_SIZE, key.size)
+        assertEquals(hour, key.hour)
+        assertTrue(store.holds(room))
+        assertArrayEquals(key.key, store.currentKey(room)?.key)
     }
 
     @Test
-    fun aKeyFromAnInviteIsKeptAsGiven() {
-        val fromInvite = RoomCipher.generateKey()
+    fun aKeyFromAGrantIsKeptAsGiven() {
+        val fromGrant = HourKey(hour, RoomCipher.generateKey())
 
-        store.remember(room, fromInvite)
+        store.remember(room, fromGrant)
 
-        assertArrayEquals(fromInvite, store.keyFor(room))
+        assertArrayEquals(fromGrant.key, store.currentKey(room)?.key)
     }
 
     @Test
     fun theStoredFormIsNotTheKey() {
         val key = store.generate(room)
-        val stored = context.getSharedPreferences("firepit_room_keys", 0)
-            .getString(room.toString(), null)!!
+        val stored = context.getSharedPreferences("firepit_room_keys", 0).getString("$room/1", null)
 
-        assertFalse("the key is sitting in preferences", stored.contains(key.toBase64()))
+        assertNotNull(stored)
+        assertFalse("the key is sitting in preferences", stored!!.contains(key.key.toBase64()))
     }
 
     @Test
@@ -71,8 +86,7 @@ class RoomKeyStoreTest {
         val mine = store.generate(room)
         val other = store.generate(room + 1)
 
-        assertNotEquals(mine.toList(), other.toList())
-        store.forget(room + 1)
+        assertNotEquals(mine.key.toList(), other.key.toList())
     }
 
     @Test
@@ -81,54 +95,121 @@ class RoomKeyStoreTest {
 
         store.forget(room)
 
-        assertNull(store.keyFor(room))
+        assertFalse(store.holds(room))
+        assertNull(store.currentKey(room))
     }
 
     @Test
     fun aKeyOutlivesTheObjectThatMadeIt() {
         val key = store.generate(room)
 
-        assertArrayEquals(key, RoomKeyStore(context).keyFor(room))
+        assertArrayEquals(key.key, storeAtNow().currentKey(room)?.key)
     }
 
     @Test
-    fun aStoredKeyStillOpensWhatItSealed() {
-        val key = store.generate(room)
-        val context = SealedText.contextOf(room, senderNodeNum = 7)
-        val sealed = SealedText.seal(key, "meet at the north gate".encodeToByteArray(), context)
+    fun aMemberReadsWhatAnotherSealedOnce() {
+        store.generate(room)
+        val sealed = store.seal(room, sender, "meet at the north gate".encodeToByteArray())!!
+        val payload = sealed.ciphertext.toByteArray()
 
-        assertEquals(
-            "meet at the north gate",
-            SealedText.open(store.keyFor(room)!!, sealed, context)?.decodeToString(),
-        )
+        val opened = store.open(room, sealed.generation, sender, payload)
+        assertEquals("meet at the north gate", (opened as Opening.Read).plain.decodeToString())
+        assertEquals(Opening.Replayed, store.open(room, sealed.generation, sender, payload))
     }
 
-    /**
-     * Keys are cached so the Keystore is not asked once per message, but each
-     * caller must get its own array: leaving a room wipes the cached copy, and
-     * a send part-way through sealing must not have its key blanked.
-     */
+    @Test
+    fun aMessageCannotBeReattributed() {
+        store.generate(room)
+        val sealed = store.seal(room, sender, "on my way".encodeToByteArray())!!
+
+        assertEquals(Opening.Unreadable, store.open(room, sealed.generation, sender + 1, sealed.ciphertext.toByteArray()))
+    }
+
+    @Test
+    fun theHourGoneStillOpensAndTheOneBeforeItDoesNot() {
+        store.generate(room)
+        val first = store.seal(room, sender, "one".encodeToByteArray())!!.ciphertext.toByteArray()
+        val second = store.seal(room, sender, "two".encodeToByteArray())!!.ciphertext.toByteArray()
+
+        now += RoomRatchet.HOUR_MILLIS
+        assertTrue(store.open(room, 1, sender, first) is Opening.Read)
+
+        now += RoomRatchet.HOUR_MILLIS
+        assertTrue(store.open(room, 1, sender, second) is Opening.OutOfHours)
+    }
+
+    @Test
+    fun aKeyTakenLaterOpensNothingFromBefore() {
+        store.generate(room)
+        val early = store.seal(room, sender, "before".encodeToByteArray())!!.ciphertext.toByteArray()
+
+        now += 5 * RoomRatchet.HOUR_MILLIS
+        store.erase()
+
+        assertEquals(hour + 5, store.currentKey(room)?.hour)
+        assertTrue(store.open(room, 1, sender, early) is Opening.OutOfHours)
+    }
+
+    @Test
+    fun aKeyHandedOnIsThisHoursAndMovesOnAsTheirsWould() {
+        val start = store.generate(room)
+
+        now += 3 * RoomRatchet.HOUR_MILLIS
+        val handed = store.currentKey(room)!!
+
+        assertEquals(hour + 3, handed.hour)
+        assertArrayEquals(RoomRatchet.forward(start.key, room, 1, hour, hour + 3), handed.key)
+    }
+
+    @Test
+    fun aKeyStoredBeforeTheRatchetCountsFromTheFixedHour() {
+        val legacy = RoomCipher.generateKey()
+        context.getSharedPreferences("firepit_room_keys", 0).edit()
+            .putString("$room/1", KeystoreWrapping.wrap(RoomKeyStore.ALIAS, legacy).toBase64())
+            .putInt("$room.generation", 1)
+            .commit()
+
+        val current = storeAtNow().currentKey(room)!!
+
+        assertEquals(hour, current.hour)
+        assertArrayEquals(RoomRatchet.forward(legacy, room, 1, RoomRatchet.LEGACY_HOUR, hour), current.key)
+    }
+
+    @Test
+    fun aGenerationMovedOnFromGoesOnceLatePacketsHaveArrived() {
+        store.generate(room)
+        store.remember(room, HourKey(hour, RoomCipher.generateKey()), generation = 2)
+        assertNotNull("sealed just before the move", store.seal(room, sender, "late".encodeToByteArray(), generation = 1))
+
+        now += RoomKeyStore.RETIRED_GRACE_HOURS * RoomRatchet.HOUR_MILLIS
+        store.erase()
+
+        assertNull(store.seal(room, sender, "later".encodeToByteArray(), generation = 1))
+        assertNotNull(store.seal(room, sender, "now".encodeToByteArray()))
+    }
+
+    @Test
+    fun aGenerationStillOwedToSomebodyIsKept() {
+        store.generate(room)
+        store.remember(room, HourKey(hour, RoomCipher.generateKey()), generation = 2)
+
+        now += 10 * RoomRatchet.HOUR_MILLIS
+        store.erase(owed = setOf(RoomGeneration(room, 1)))
+
+        assertNotNull(store.seal(room, sender, "your new key".encodeToByteArray(), generation = 1))
+    }
+
     @Test
     fun eachReadGetsItsOwnCopy() {
         val key = store.generate(room)
-        val first = store.keyFor(room)!!
+        val first = store.currentKey(room)!!
 
-        first.fill(0)
+        first.key.fill(0)
 
-        assertArrayEquals(key, store.keyFor(room))
+        assertArrayEquals(key.key, store.currentKey(room)?.key)
     }
 
-    @Test
-    fun leavingWipesTheCachedCopyTooAndNotTheCallersHand() {
-        val key = store.generate(room)
-
-        store.forget(room)
-
-        // The caller's own array is untouched; the store simply has nothing left.
-        assertEquals(RoomCipher.KEY_SIZE, key.size)
-        assertFalse("the key was zeroed in the caller's hand", key.all { it == 0.toByte() })
-        assertNull(store.keyFor(room))
-    }
+    private fun storeAtNow() = RoomKeyStore(context).also { it.clock = { now } }
 
     private fun ByteArray.toBase64() =
         android.util.Base64.encodeToString(this, android.util.Base64.NO_WRAP)

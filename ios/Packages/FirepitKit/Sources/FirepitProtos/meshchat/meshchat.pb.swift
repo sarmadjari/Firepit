@@ -471,14 +471,15 @@ public nonisolated struct Meshchat_SealedMessage: Sendable {
 
   public var roomID: UInt32 = 0
 
-  /// Which key opens it. Old keys are kept for reading history, so a message
-  /// has to say which generation sealed it rather than leave the receiver
-  /// guessing between several.
+  /// Which generation of the room's key sealed it. Members hold two for a
+  /// while after a rotation, so a message has to say which rather than leave
+  /// the receiver guessing.
   public var generation: UInt32 = 0
 
-  /// SealedText: a version byte, a nonce, then an encrypted MeshChatControl.
-  /// One envelope for everything, so words and receipts travel alike and a
-  /// listener cannot tell them apart by shape.
+  /// SealedText: a version byte, a nonce whose first two bytes say which
+  /// hour's key sealed it, then an encrypted MeshChatControl. One envelope for
+  /// everything, so words and receipts travel alike and a listener cannot tell
+  /// them apart by shape.
   public var ciphertext: Data = Data()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -577,9 +578,14 @@ public nonisolated struct Meshchat_RoomGrant: Sendable {
   public var generation: UInt32 = 0
 
   /// What the phone seals words with, sealed in turn to the joiner's phone key
-  /// (KeyEnvelope, bound to room_id, generation and the joiner's node). The
-  /// radio carries it but cannot open it.
+  /// (KeyEnvelope, bound to room_id, generation, the joiner's node and
+  /// key_hour). The radio carries it but cannot open it.
   public var sealedKey: Data = Data()
+
+  /// Which hour sealed_key is the key for (hours since 1970, UTC). Room keys
+  /// move on every hour, one way, so the joiner gets this hour's and nothing
+  /// said before it.
+  public var keyHour: UInt32 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -768,9 +774,13 @@ public nonisolated struct Meshchat_KeyRotation: Sendable {
   public var removed: [UInt32] = []
 
   /// The new key the phone seals words with, sealed in turn to the recipient's
-  /// phone key (KeyEnvelope, bound to room_id, generation and the recipient's
-  /// node). The radio carries it but cannot open it.
+  /// phone key (KeyEnvelope, bound to room_id, generation, the recipient's
+  /// node and key_hour). The radio carries it but cannot open it.
   public var sealedKey: Data = Data()
+
+  /// Which hour sealed_key is the key for (hours since 1970, UTC); see
+  /// RoomGrant.key_hour.
+  public var keyHour: UInt32 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -1644,7 +1654,7 @@ nonisolated extension Meshchat_JoinHello: SwiftProtobuf.Message, SwiftProtobuf._
 
 nonisolated extension Meshchat_RoomGrant: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RoomGrant"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}answer\0\u{3}invite_id\0\u{3}room_id\0\u{3}room_name\0\u{3}room_psk\0\u{2}\u{2}generation\0\u{4}\u{2}sealed_key\0\u{b}firepit_key\0\u{b}position_precision\0\u{c}\u{6}\u{1}\u{c}\u{8}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}answer\0\u{3}invite_id\0\u{3}room_id\0\u{3}room_name\0\u{3}room_psk\0\u{2}\u{2}generation\0\u{4}\u{2}sealed_key\0\u{3}key_hour\0\u{b}firepit_key\0\u{b}position_precision\0\u{c}\u{6}\u{1}\u{c}\u{8}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1659,6 +1669,7 @@ nonisolated extension Meshchat_RoomGrant: SwiftProtobuf.Message, SwiftProtobuf._
       case 5: try { try decoder.decodeSingularBytesField(value: &self.roomPsk) }()
       case 7: try { try decoder.decodeSingularUInt32Field(value: &self.generation) }()
       case 9: try { try decoder.decodeSingularBytesField(value: &self.sealedKey) }()
+      case 10: try { try decoder.decodeSingularUInt32Field(value: &self.keyHour) }()
       default: break
       }
     }
@@ -1686,6 +1697,9 @@ nonisolated extension Meshchat_RoomGrant: SwiftProtobuf.Message, SwiftProtobuf._
     if !self.sealedKey.isEmpty {
       try visitor.visitSingularBytesField(value: self.sealedKey, fieldNumber: 9)
     }
+    if self.keyHour != 0 {
+      try visitor.visitSingularUInt32Field(value: self.keyHour, fieldNumber: 10)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1697,6 +1711,7 @@ nonisolated extension Meshchat_RoomGrant: SwiftProtobuf.Message, SwiftProtobuf._
     if lhs.roomPsk != rhs.roomPsk {return false}
     if lhs.generation != rhs.generation {return false}
     if lhs.sealedKey != rhs.sealedKey {return false}
+    if lhs.keyHour != rhs.keyHour {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1872,7 +1887,7 @@ nonisolated extension Meshchat_RosterEntry: SwiftProtobuf.Message, SwiftProtobuf
 
 nonisolated extension Meshchat_KeyRotation: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".KeyRotation"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}room_id\0\u{1}generation\0\u{3}room_psk\0\u{4}\u{2}room_name\0\u{1}removed\0\u{3}sealed_key\0\u{b}firepit_key\0\u{c}\u{4}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}room_id\0\u{1}generation\0\u{3}room_psk\0\u{4}\u{2}room_name\0\u{1}removed\0\u{3}sealed_key\0\u{3}key_hour\0\u{b}firepit_key\0\u{c}\u{4}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1886,6 +1901,7 @@ nonisolated extension Meshchat_KeyRotation: SwiftProtobuf.Message, SwiftProtobuf
       case 5: try { try decoder.decodeSingularStringField(value: &self.roomName) }()
       case 6: try { try decoder.decodeRepeatedFixed32Field(value: &self.removed) }()
       case 7: try { try decoder.decodeSingularBytesField(value: &self.sealedKey) }()
+      case 8: try { try decoder.decodeSingularUInt32Field(value: &self.keyHour) }()
       default: break
       }
     }
@@ -1910,6 +1926,9 @@ nonisolated extension Meshchat_KeyRotation: SwiftProtobuf.Message, SwiftProtobuf
     if !self.sealedKey.isEmpty {
       try visitor.visitSingularBytesField(value: self.sealedKey, fieldNumber: 7)
     }
+    if self.keyHour != 0 {
+      try visitor.visitSingularUInt32Field(value: self.keyHour, fieldNumber: 8)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -1920,6 +1939,7 @@ nonisolated extension Meshchat_KeyRotation: SwiftProtobuf.Message, SwiftProtobuf
     if lhs.roomName != rhs.roomName {return false}
     if lhs.removed != rhs.removed {return false}
     if lhs.sealedKey != rhs.sealedKey {return false}
+    if lhs.keyHour != rhs.keyHour {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

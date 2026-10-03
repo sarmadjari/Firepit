@@ -64,11 +64,19 @@ Three kinds of key, kept apart on purpose (full detail: [security.md §3](securi
 | Key | Where it lives | What it protects |
 |---|---|---|
 | **Room PSK** (one per room) | Written to the radio | The radio-to-radio layer. Anyone holding a member's radio could read it out, so it is never the thing that protects what people say. |
-| **Firepit key** (one per room) | Only on the members' phones | Seals everything said or shared in the room: words, positions, pins, names, read receipts, member lists. |
+| **Firepit key** (one per room) | Only on the members' phones, and moved on every hour | Seals everything said or shared in the room: words, positions, pins, names, read receipts, member lists. |
 | **Phone key** (one per phone) | Never leaves the phone (Android Keystore; iPhone Secure Enclave) | Receives a room's firepit key when you join, and seals direct messages between two phones. |
 
 When someone joins a room, the room's firepit key is **sealed to their phone key** before it is sent, so even the
 radios that carry it cannot open it.
+
+**The firepit key moves on every hour, one way.** Every phone derives the next hour's key from this hour's, and keeps
+only the hour just gone, for late packets. Older keys are erased every ten minutes, so a phone taken today opens
+nothing recorded before the hour that preceded it. Each member also seals under a key of their own for the hour, and
+each sealed message opens only once, so a recording played back is ignored. None of this adds a byte to a message:
+the two bytes that say which hour sealed it ride inside the nonce that was always there. A new member is handed this
+hour's key, so they read from when they joined. The cost is that phones need clocks within about an hour of each
+other, which automatic time gives them ([security.md §3](security.md#3-key-hierarchy)).
 
 ---
 
@@ -81,7 +89,7 @@ choose to share it.
 
 | What | How it is sent | Who can read it |
 |---|---|---|
-| A message in a Firepit room | Sealed with the room's firepit key (AES-256-GCM) | Room members' phones |
+| A message in a Firepit room | Sealed with the sender's key for this hour, from the room's firepit key (AES-256-GCM) | Room members' phones |
 | A direct message to someone you share a room with | Sealed phone to phone, inside the radios' own encryption | That person's phone |
 | A direct message to someone outside your rooms | The radios' own encryption only (the composer warns you) | That person, and whoever holds either radio |
 | A message in a Meshtastic channel | Ordinary Meshtastic text | Anyone with the channel key, by design |

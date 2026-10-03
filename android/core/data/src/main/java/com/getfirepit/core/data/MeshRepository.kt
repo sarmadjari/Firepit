@@ -29,11 +29,9 @@ import com.getfirepit.core.crypto.DirectSeal
 import com.getfirepit.core.crypto.InviteCodec
 import com.getfirepit.core.crypto.KeyEnvelope
 import com.getfirepit.core.crypto.RoomCrypto
-import com.getfirepit.core.crypto.SealedText
 import com.getfirepit.protocol.meshchat.MeshChatControl
 import com.getfirepit.protocol.meshchat.RoomText
 import com.getfirepit.protocol.meshchat.SealedDirect
-import com.getfirepit.protocol.meshchat.SealedMessage
 import com.getfirepit.core.protocol.Carriage
 import com.getfirepit.core.protocol.MeshConstants
 import com.getfirepit.core.protocol.MeshPacketBuilder
@@ -336,7 +334,7 @@ class MeshRepository @Inject constructor(
      * an ordinary Meshtastic channel, described by how private its own key is.
      */
     private fun kindOf(roomId: Int, psk: ByteArray?, secondary: Boolean): RoomKind = when {
-        roomId != 0 && roomKeys.keyFor(roomId) != null ->
+        roomId != 0 && roomKeys.holds(roomId) ->
             if (roomKeys.isSuperseded(roomId)) RoomKind.FIREPIT_MOVED_ON else RoomKind.FIREPIT
 
         // Shaped like one of ours — an id and a full-length key, which Firepit
@@ -444,7 +442,7 @@ class MeshRepository @Inject constructor(
         // one the slot is either an ordinary Meshtastic channel, or one of ours
         // this phone can no longer seal for — which is refused, not downgraded.
         val roomId = roomIdForChannel(channel)
-        val roomKey = roomId?.let { roomKeys.sealingKey(it) }
+        val canSeal = roomId?.let { roomKeys.canSeal(it) } == true
         val kind = _channels.value.firstOrNull { it.index == channel }?.kind
         val peerKey = to.takeIf { it != BROADCAST_NODE_NUM }?.let { publicKeyOf(it) }
         val peerPhoneKey = to.takeIf { it != BROADCAST_NODE_NUM }?.let { phoneKeyOf(it) }
@@ -453,7 +451,7 @@ class MeshRepository @Inject constructor(
             to = to,
             channel = channel,
             isRoomSlot = isRoomSlot(channel),
-            sealingRoomId = roomId.takeIf { roomKey != null },
+            sealingRoomId = roomId.takeIf { canSeal },
             hasPeerKey = peerKey != null,
             channelKey = channelKeyOf(channel),
             hasPeerPhoneKey = peerPhoneKey != null,
@@ -527,22 +525,16 @@ class MeshRepository @Inject constructor(
             )
 
             is Carriage.SealedRoom -> {
-                val sealed = SealedText.seal(
-                    requireNotNull(roomKey),
+                val sealed = roomKeys.seal(
+                    carriage.roomId,
+                    myNodeNum,
                     MeshChatControl(room_text = RoomText(text = text, reply_id = replyId ?: 0)).encode(),
-                    SealedText.contextOf(carriage.roomId, myNodeNum),
-                )
+                ) ?: throw SendError.RoomKeyMissing
                 MeshPacketBuilder.meshPacket(
                     to = to,
                     channel = carriage.channel,
                     portNum = PortNum.PRIVATE_APP,
-                    payload = MeshChatControl(
-                        sealed_message = SealedMessage(
-                            room_id = carriage.roomId,
-                            ciphertext = sealed.toByteString(),
-                            generation = roomKeys.generationOf(carriage.roomId),
-                        ),
-                    ).encode().let(ByteString::of),
+                    payload = MeshChatControl(sealed_message = sealed).encode().let(ByteString::of),
                     hopLimit = hopLimit,
                     wantAck = true,
                 )
@@ -730,7 +722,7 @@ class MeshRepository @Inject constructor(
             direct = packet.to == _myNodeNum.value,
             pkiEncrypted = packet.pki_encrypted,
             onPrimary = packet.channel == ChannelSlotManager.PRIMARY_SLOT,
-            onFirepitRoom = roomIdForChannel(packet.channel)?.let { roomKeys.keyFor(it) } != null,
+            onFirepitRoom = roomIdForChannel(packet.channel)?.let { roomKeys.holds(it) } == true,
         )
         if (!acceptable) {
             Log.w(TAG, "dropped unsealed text from ${packet.from} on channel ${packet.channel}")

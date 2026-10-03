@@ -13,19 +13,15 @@ private func receiptRepo(_ h: Harness) -> ReceiptRepository {
         messageDao: h.messageDao, memberDao: h.memberDao, phoneKeys: h.phoneKeys)
 }
 
-private func startRoomHarness(_ h: Harness, roomKey: Data = receiptKey) async throws {
+private func startRoomHarness(_ h: Harness, roomKey: HourKey = hourKey(receiptKey)) async throws {
     try h.roomKeys.remember(roomId: 42, key: roomKey)
     h.mesh.start()
     await h.connect(makeSnapshot())
 }
 
-private func openedRoomReceipt(_ packet: MeshPacket, key: Data, sender: Int32) throws -> Meshchat_Receipt {
+private func openedRoomReceipt(_ packet: MeshPacket, key: HourKey, sender: Int32) throws -> Meshchat_Receipt {
     let outer = try Meshchat_MeshChatControl(serializedBytes: packet.decoded.payload)
-    let plain = SealedText.open(
-        key: key,
-        payload: outer.sealedMessage.ciphertext,
-        context: SealedText.contextOf(roomId: 42, senderNodeNum: sender)
-    )!
+    let plain = try #require(openSealed(outer.sealedMessage, key: key, roomId: 42, sender: sender))
     return try Meshchat_MeshChatControl(serializedBytes: plain).receipt
 }
 
@@ -46,7 +42,7 @@ private func openedRoomReceipt(_ packet: MeshPacket, key: Data, sender: Int32) t
     let receipts = receiptRepo(h)
     await receipts.read(channel: 1, messageIds: [20, 21])
     try await receipts.flush()
-    let receipt = try openedRoomReceipt(h.link.sent.last!.packet, key: receiptKey, sender: 111)
+    let receipt = try openedRoomReceipt(h.link.sent.last!.packet, key: hourKey(receiptKey), sender: 111)
     #expect(receipt.read.map { Int32(bitPattern: $0) } == [20, 21])
 }
 
@@ -57,7 +53,7 @@ private func openedRoomReceipt(_ packet: MeshPacket, key: Data, sender: Int32) t
     await receipts.received(channel: 1, messageId: 30)
     await receipts.read(channel: 1, messageIds: [30])
     try await receipts.flush()
-    let receipt = try openedRoomReceipt(h.link.sent.last!.packet, key: receiptKey, sender: 111)
+    let receipt = try openedRoomReceipt(h.link.sent.last!.packet, key: hourKey(receiptKey), sender: 111)
     #expect(receipt.delivered.isEmpty)
     #expect(receipt.read == [30])
 }
@@ -86,8 +82,7 @@ private func openedRoomReceipt(_ packet: MeshPacket, key: Data, sender: Int32) t
 
 @Test func roomReceiptCarriesRoomIdAndGeneration() async throws {
     let h = try Harness()
-    let key = RoomCipher.generateKey()
-    try h.roomKeys.remember(roomId: 42, key: key, generation: 2)
+    try h.roomKeys.remember(roomId: 42, key: hourKey(), generation: 2)
     h.mesh.start()
     await h.connect(makeSnapshot())
     let receipts = receiptRepo(h)

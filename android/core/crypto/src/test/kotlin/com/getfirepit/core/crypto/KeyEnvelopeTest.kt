@@ -20,7 +20,7 @@ class KeyEnvelopeTest {
     private val joiner = KeyEnvelope.generateKeyPair()
     private val joinerPublic = KeyEnvelope.publicBytes(joiner.public)
     private val roomKey = RoomCipher.generateKey()
-    private val context = KeyEnvelope.contextOf(roomId = 0x0BADF00D, generation = 3, recipientNodeNum = 42)
+    private val context = KeyEnvelope.contextOf(roomId = 0x0BADF00D, generation = 3, recipientNodeNum = 42, hour = 491_234)
 
     @Test
     fun `the phone it was sealed to opens it`() {
@@ -40,13 +40,16 @@ class KeyEnvelopeTest {
     }
 
     @Test
-    fun `a key sealed for one room, generation or person opens for no other`() {
+    fun `a key sealed for one room, generation, person or hour opens for no other`() {
         val sealed = KeyEnvelope.seal(joinerPublic, roomKey, context)
 
         listOf(
-            KeyEnvelope.contextOf(roomId = 0x0BADF00E, generation = 3, recipientNodeNum = 42),
-            KeyEnvelope.contextOf(roomId = 0x0BADF00D, generation = 4, recipientNodeNum = 42),
-            KeyEnvelope.contextOf(roomId = 0x0BADF00D, generation = 3, recipientNodeNum = 43),
+            KeyEnvelope.contextOf(roomId = 0x0BADF00E, generation = 3, recipientNodeNum = 42, hour = 491_234),
+            KeyEnvelope.contextOf(roomId = 0x0BADF00D, generation = 4, recipientNodeNum = 42, hour = 491_234),
+            KeyEnvelope.contextOf(roomId = 0x0BADF00D, generation = 3, recipientNodeNum = 43, hour = 491_234),
+            // Relabelled as an earlier hour, it would let the holder derive
+            // keys for hours they were never given.
+            KeyEnvelope.contextOf(roomId = 0x0BADF00D, generation = 3, recipientNodeNum = 42, hour = 491_233),
         ).forEach { elsewhere ->
             assertNull(KeyEnvelope.open(joiner.private, joinerPublic, sealed, elsewhere))
         }

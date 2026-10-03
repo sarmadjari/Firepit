@@ -32,6 +32,8 @@ here is about what travels on the air and what sits on the phone.
 | A relay carrying our packets | Between two nodes | Forwards ciphertext. Cannot read or alter anything Firepit sends undetected. |
 | Someone holding a member's radio | Physical access, USB, or a Bluetooth pairing | Reads the channel layer: the room PSK, the radio's own name and battery, and its node list. **Cannot** read sealed room text, positions or pins, or direct messages between Firepit users: the room key only ever travels sealed to a phone key (§3), and direct messages are sealed phone to phone, neither of which the radio holds. Unsealed text, pins or positions they send into a room are dropped. |
 | Someone nearby with Bluetooth | In range while the owner's phone is not connected | Can pair only with the radio's PIN. Firepit checks on every connection whether the radio has no PIN or the published default one, and offers to set a new one (§7). |
+| Someone who later takes a member's phone, its key store or a backup | Holds recordings of the air from before | Reads what the phone still shows, since history is stored opened (§4). **Cannot** decrypt recorded room traffic from before the hour preceding the theft: room keys move on every hour, one way, and the old hours' keys are destroyed (§3). |
+| Someone who records a room and plays it back | Any radio holding the room's channel key | Nothing. Each sealed message opens once, and only in the hours its key is still kept (§2). |
 
 ### What we do not defend against
 
@@ -46,9 +48,12 @@ Stated plainly, because a threat model that claims everything is worthless.
   person is sealed to the false key but still travels PKI to their own radio, so
   the liar cannot read it — but that person misses the new key and has to be
   invited again.
-- **Replayed sealed messages.** The sealing context binds a message to its room
-  and sender but not to its packet, so someone holding the room PSK can
-  re-broadcast a recorded sealed message and it shows as new.
+- **Phones whose clocks are far apart.** Room keys follow the clock (§3), so
+  a phone whose clock is more than about an hour away from the others' cannot
+  read their room messages, nor they its, until the clock is put right. A
+  clock set far ahead also destroys keys early, which cannot be undone; the
+  room's next rotation, or a new invite, recovers that phone. Phones that set
+  their time automatically are minutes apart at worst, even off the network.
 - **A compromised or unlocked phone.** On Android the database and every key are
   encrypted at rest (§4), so a copy of the app's files reads as noise. On iPhone
   the keys are in the Keychain, but the database has only iOS's own file
@@ -91,8 +96,9 @@ must open what the other sealed.
 
 | Purpose | Construction | Parameters |
 |---|---|---|
-| Sealing room content | AES-256-GCM | 32-byte key, 12-byte random nonce, 16-byte tag |
-| Handing a room key to one phone | ECDH P-256 (one-off key) + HKDF-SHA256 + AES-256-GCM | 33-byte compressed keys, bound to room id + generation + recipient |
+| Sealing room content | AES-256-GCM | 32-byte key of one sender for one hour, 12-byte nonce (2 bytes of the hour, 10 random), 16-byte tag |
+| Moving a room key on, once an hour | HKDF-SHA256 expand (HMAC-SHA256) | next hour's key from this hour's; each sender's key from the hour's key and their node number |
+| Handing a room key to one phone | ECDH P-256 (one-off key) + HKDF-SHA256 + AES-256-GCM | 33-byte compressed keys, bound to room id + generation + recipient + hour |
 | Direct messages between phones | ECDH P-256 (both phones' keys) + HKDF-SHA256 + AES-256-GCM | bound to sender + recipient, in that order |
 | Direct messages, radio layer | X25519 + AES-CCM | Meshtastic firmware PKI, 32-byte public keys; the outer layer only |
 | Invite tokens | HMAC-SHA256 | truncated to 8 bytes |
@@ -107,9 +113,11 @@ must open what the other sealed.
 | The phone key (P-256) | Wrapped by the Keystore, like the room keys | Created inside the Secure Enclave, which never releases the private half |
 | Randomness | `java.security.SecureRandom` | `SecRandomCopyBytes` and CryptoKit's generator |
 
-Implemented in `core/crypto/RoomCipher.kt`, `core/crypto/KeyEnvelope.kt`,
+Implemented in `core/crypto/RoomCipher.kt`, `core/crypto/SealedText.kt`,
+`core/crypto/RoomRatchet.kt`, `core/crypto/KeyEnvelope.kt`,
 `core/crypto/DirectSeal.kt`, `core/crypto/RoomCrypto.kt` and
-`core/database/DatabaseEncryption.kt`; on iOS in `FirepitCrypto/RoomCipher.swift`,
+`core/database/DatabaseEncryption.kt`; on iOS in `FirepitCrypto/RoomCipher.swift`
+(`RoomCipher`, `SealedText`), `FirepitCrypto/RoomRatchet.swift`,
 `FirepitCrypto/PhoneSeals.swift` (`KeyEnvelope`, `DirectSeal`) and
 `FirepitCrypto/RoomCrypto.swift`.
 
@@ -117,9 +125,19 @@ Implemented in `core/crypto/RoomCipher.kt`, `core/crypto/KeyEnvelope.kt`,
 on a point that is not is how a long-lived private key leaks a few bits at a
 time.
 
-**Nonces are random and transmitted**, never derived from a packet id. A packet
-id is not ours to guarantee unique, and a repeated nonce under the same key
-breaks GCM completely.
+**Nonces are transmitted**, never derived from a packet id. A packet id is not
+ours to guarantee unique, and a repeated nonce under the same key breaks GCM
+completely. A room message's nonce starts with two bytes saying which hour
+sealed it, so the receiver knows which key to derive, and ends with ten random
+bytes. The key it is used with belongs to one sender for one hour, so no two
+members ever share a key and nonce, however busy the room.
+
+**Each sealed message opens once.** A recorded room message would otherwise
+open again when played back, and a receipt, position, pin or roster change be
+believed twice. Every phone remembers the nonce of each room message it opened
+for as long as that message could still open, which is about three hours
+(`SeenSeals`), on disk, so restarting the app does not reset it. A copy is
+dropped however it arrives.
 
 **Sealed content is bound to its room and sender.** `SealedText.contextOf(roomId,
 senderNodeNum)` is passed as GCM additional authenticated data — authenticated
@@ -131,11 +149,13 @@ direct message is bound the same way to its sender and recipient
 (`DirectSeal.contextOf`), so it cannot be turned round or re-addressed, and only
 the sender's phone key can produce one that opens.
 
-> Verify: `RoomCipherTest`, `SealedTextTest`, `SealedRoomTextTest`, `SealedReceiptTest`,
-> `KeyEnvelopeTest`, `DirectSealTest`, `TrustRulesTest`
+> Verify: `RoomCipherTest`, `SealedTextTest`, `RoomRatchetTest`, `SeenSealsTest`, `SealedRoomTextTest`,
+> `SealedReceiptTest`, `KeyEnvelopeTest`, `DirectSealTest`, `TrustRulesTest`, and on a device
+> `RoomKeyStoreTest`
 >
-> iOS: `RoomSealingTests`, `PhoneSealTests`, `TrustRulesTests`, and `AndroidInteropTests`, which opens
-> what Android's code sealed and derives the same contexts, keys, tokens and invite codes.
+> iOS: `RoomSealingTests`, `RoomRatchetTests`, `SeenSealsTests`, `PhoneSealTests`, `TrustRulesTests`, the
+> key-store tests in `StoreAndSmallTypeTests`, and `AndroidInteropTests`, which opens what Android's code
+> sealed and derives the same contexts, hour and sender keys, tokens and invite codes.
 > `scripts/check-android-interop.sh` runs the reverse direction too: Android opens what iOS sealed
 
 ---
@@ -148,9 +168,13 @@ Three kinds of key, deliberately.
 room PSK (32 bytes, random)          →  written to the radio
   └─ invite key   = HMAC(psk, "meshchat-invite-v1" || room_id || generation)
 
-firepit key (32 bytes, random)       →  on phones only; travels only sealed to a phone key
-  └─ seals room text, positions, pins, person cards, receipts,
-     roster events and syncs, key rotations and the notice that one happened
+firepit key (32 bytes, random, one per generation)
+  │                                   →  on phones only; travels only sealed to a phone key
+  └─ hour key  E(h)  the firepit key is the key for the hour it was made in;
+     │               E(h+1) = HMAC(E(h), "firepit-hour-v1" || room_id || generation || h+1 || 1)
+     └─ sender key  = HMAC(E(h), "firepit-sender-v1" || room_id || generation || h || sender || 1)
+          seals room text, positions, pins, person cards, receipts,
+          roster events and syncs, key rotations and the notice that one happened
 
 phone key (P-256, one per phone)     →  private half never leaves the phone
   ├─ receives a room's firepit key in a grant or a rotation
@@ -168,6 +192,23 @@ receiving *radio* decrypts, with a private key that anyone holding that radio
 can read out over Bluetooth. So the firepit key never rides that layer alone:
 it is sealed again to the recipient's **phone key** (`KeyEnvelope`), and the
 radio carries something it cannot open.
+
+**Keys move on every hour, one way** (`RoomRatchet`). Hours are counted in UTC
+since 1970, so every member derives the same keys from the same clock without a
+byte or a packet more. A phone keeps one key per generation: the hour just gone,
+for packets the mesh delivers late. Later hours are derived when needed, and
+earlier ones are destroyed every ten minutes whether or not anyone spoke
+(`RoomKeyStore.erase`). No one can run the step backwards, so whoever takes the
+phone, its key store or a backup reads nothing recorded before the hour that
+preceded it. That is forward secrecy, in hours rather than per message, which
+is what fits a mesh that cannot afford a reply to every message.
+
+A message opens only if it was sealed in the hour just gone, this one or the
+next (`RoomRatchet.opens`), which absorbs clocks a little apart. A new member,
+or one handed a rotation they missed, is given **this hour's** key and nothing
+older, so they read from the moment they were let in. Keys stored before this
+scheme existed are taken to belong to a fixed hour, 2026-01-01T00:00Z, so phones
+that updated at different times still agree on every later key.
 
 A room key is never derived from a room name or anything guessable, and never
 empty: the firmware treats an empty PSK as "inherit the primary", which would
@@ -191,7 +232,9 @@ Each key is wrapped by an AES-256-GCM key that never leaves secure hardware
 (the Android Keystore), and only the wrapped form is written to preferences.
 
 - `core/database/KeystoreWrapping.kt` — wrap/unwrap, one implementation
-- `core/data/RoomKeyStore.kt` — room keys, per generation
+- `core/data/RoomKeyStore.kt` — room keys: one hour's key per generation
+- `core/data/SeenSeals.kt` — the nonces of room messages already opened, in
+  `noBackupFilesDir`. Not secret: nonces travel in the clear
 - `core/data/PhoneKeyStore.kt` — this phone's own key pair
 - `core/data/PrimaryBackup.kt` — the radio's original channel, which contains
   somebody else's mesh PSK
@@ -223,8 +266,11 @@ Paths are under `ios/Packages/FirepitKit/Sources/FirepitData/`.
 - `KeychainStore.swift` — every secret, as a Keychain item that is readable
   after the phone's first unlock, belongs to this device only, and is never
   synced to iCloud Keychain
-- `RoomKeyStore.swift`, `PrimaryBackup.swift` — room keys per generation, and
-  the radio's original channel, both in that store
+- `RoomKeyStore.swift`, `PrimaryBackup.swift` — room keys (one hour's key per
+  generation), and the radio's original channel, both in that store
+- `SeenSeals.swift` — the nonces of room messages already opened, in the
+  database folder, so it shares that folder's protection and stays out of
+  backups
 - `PhoneKeyStore.swift` — this phone's key pair, created inside the **Secure
   Enclave**. The private half never leaves it, not even to the app; the Keychain
   holds only a reference that the Enclave alone can use. (Simulators and tests,
@@ -252,9 +298,13 @@ removes everything.
 
 ### Both apps
 
-**Old generations are kept**, so a packet sealed just before a rotation that
-arrives after it still opens; the mesh delivers late. History itself is stored
-opened, in the protected database.
+**Room keys are destroyed as they age** (§3). Each generation keeps one hour's
+key, moved on every ten minutes. A generation the room has rotated away from is
+kept two hours more, so a packet sealed just before the rotation still opens
+when the mesh delivers it late, and then deleted; it stays only while a member
+who missed the rotation is still owed a key sealed under it. History itself is
+stored opened, in the protected database, so destroying old keys costs the
+reader nothing they had.
 
 **Nothing is kept longer than asked.** The retention window deletes messages,
 and with them positions older than the window, nodes not heard in it that share
@@ -409,7 +459,7 @@ inviter                                   joiner
    ├─ ask the person holding the phone, showing a fingerprint of joiner_key
    │  and phone_key together
    │
-   │    RoomGrant { room_psk, generation, sealed_key = seal(phone_key, firepit key) }
+   │    RoomGrant { room_psk, generation, key_hour, sealed_key = seal(phone_key, this hour's key) }
    │ ────────────────────────────────────►  PKI to joiner_key
    │                                        writes the channel, stores keys
    │    SealedMessage { RosterSync }        sealed under the key just granted
@@ -636,7 +686,14 @@ than as fact. `core/protocol/RadioClock.kt`:
 An unconfigured radio can sit at 1970 or drift by days. In testing, two radios
 were 305 and 282 seconds out.
 
-> Verify: `RadioClockTest`
+**Room keys follow the phone clock** (§3), never a radio's. A phone takes the
+current hour to be never earlier than the hour whose key it holds, so a clock
+set back neither reopens destroyed hours nor seals under one. A clock set far
+ahead destroys keys early; that is the price of erasing them on the clock
+rather than waiting for traffic. A message sealed outside the hours a phone can
+open is logged with both hours, which is how a wrong clock shows up.
+
+> Verify: `RadioClockTest`, `RoomRatchetTest`
 
 ---
 
@@ -679,24 +736,26 @@ Worth reading in order:
 1. `core/protocol/MessagePrivacy.kt` — the carriage rule
 2. `core/protocol/TrustRules.kt` — what is believed on the way in
 3. `core/protocol/MeshPacketBuilder.kt` — what cannot be built
-4. `core/crypto/RoomCipher.kt` — the sealing construction
+4. `core/crypto/RoomCipher.kt`, `core/crypto/SealedText.kt`,
+   `core/crypto/RoomRatchet.kt` — the sealing construction and the hourly keys
 5. `core/crypto/KeyEnvelope.kt` — how a room key reaches one phone
 6. `core/crypto/DirectSeal.kt` — how one person's words reach one phone
 7. `core/data/RoomRepository.kt` — invites, grants, rosters, rotation
 8. `core/data/LocationRepository.kt`, `core/data/WaypointRepository.kt` — sealed positions and pins
 9. `core/protocol/RadioSecurityCheck.kt` — what is checked on the radio itself
-10. `core/data/RoomKeyStore.kt`, `core/data/PhoneKeyStore.kt`,
+10. `core/data/RoomKeyStore.kt`, `core/data/SeenSeals.kt`, `core/data/PhoneKeyStore.kt`,
     `core/database/DatabaseEncryption.kt` — storage
 
 On iOS the same reading order works in `ios/Packages/FirepitKit/Sources`:
 `FirepitProtocol/MessagePrivacy.swift`, `TrustRules.swift` and
-`MeshPacketBuilder.swift`; `FirepitCrypto/RoomCipher.swift` and
-`PhoneSeals.swift` (key envelopes and direct seals); `FirepitData/RoomRepository.swift`,
+`MeshPacketBuilder.swift`; `FirepitCrypto/RoomCipher.swift`, `RoomRatchet.swift`
+and `PhoneSeals.swift` (key envelopes and direct seals); `FirepitData/RoomRepository.swift`,
 `LocationRepository.swift` and `WaypointRepository.swift`;
 `FirepitProtocol/RadioSecurityCheck.swift`; and for storage
-`FirepitData/RoomKeyStore.swift`, `PhoneKeyStore.swift`, `KeychainStore.swift`
-and `FirepitDatabase.swift`. The cryptography tests are grouped differently
-(`RoomSealingTests`, `PhoneSealTests`, `InviteTests`, `AndroidInteropTests`);
+`FirepitData/RoomKeyStore.swift`, `SeenSeals.swift`, `PhoneKeyStore.swift`,
+`KeychainStore.swift` and `FirepitDatabase.swift`. The cryptography tests are
+grouped differently (`RoomSealingTests`, `RoomRatchetTests`, `PhoneSealTests`,
+`InviteTests`, `AndroidInteropTests`);
 the protocol tests share Android's names with an `s`.
 
 Every `link.send` in the codebase is in `core/data` on Android and in

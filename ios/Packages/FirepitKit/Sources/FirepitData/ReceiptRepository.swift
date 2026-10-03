@@ -75,7 +75,7 @@ public final class ReceiptRepository: Sendable {
     /// The room a channel carries, only when we hold the key that seals it.
     private func firepitRoomFor(channel: Int) -> Int32? {
         guard let roomId = mesh.roomIdForChannel(channel),
-            roomKeys.keyFor(roomId: roomId) != nil
+            roomKeys.holds(roomId: roomId)
         else {
             return nil
         }
@@ -371,22 +371,13 @@ public final class ReceiptRepository: Sendable {
      * everyone in earshot what this phone has been reading.
      */
     private func seal(roomId: Int32, myNodeNum: Int32, control: Meshchat_MeshChatControl) -> Data? {
-        guard let key = roomKeys.sealingKey(roomId: roomId),
-            let plaintext = try? control.serializedData()
+        // The generation travels with it: without that the receiver reaches for
+        // generation 1 and every receipt goes unreadable once a room rotates.
+        guard let plaintext = try? control.serializedData(),
+            let message = roomKeys.seal(roomId: roomId, sender: myNodeNum, plaintext: plaintext)
         else {
             return nil
         }
-        let sealed = SealedText.seal(
-            key: key,
-            plaintext: plaintext,
-            context: SealedText.contextOf(roomId: roomId, senderNodeNum: myNodeNum)
-        )
-        var message = Meshchat_SealedMessage()
-        message.roomID = UInt32(bitPattern: roomId)
-        message.ciphertext = sealed
-        // Without this the receiver reaches for generation 1 and every receipt
-        // goes unreadable the moment a room rotates its key.
-        message.generation = UInt32(roomKeys.generationOf(roomId: roomId))
         var outer = Meshchat_MeshChatControl()
         outer.sealedMessage = message
         return try? outer.serializedData()

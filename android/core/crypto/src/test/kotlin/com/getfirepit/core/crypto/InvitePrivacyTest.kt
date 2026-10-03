@@ -94,7 +94,7 @@ class InvitePrivacyTest {
     fun `a grant carries the room key sealed to the joiner's phone, never in the clear`() {
         val phone = KeyEnvelope.generateKeyPair()
         val phonePublic = KeyEnvelope.publicBytes(phone.public)
-        val context = KeyEnvelope.contextOf(roomId = 0x0BADF00D, generation = 1, recipientNodeNum = 42)
+        val context = KeyEnvelope.contextOf(roomId = 0x0BADF00D, generation = 1, recipientNodeNum = 42, hour = 491_234)
         val grant = RoomGrant(
             answer = RoomGrant.Answer.GRANTED,
             invite_id = 0x1234_5678,
@@ -103,6 +103,7 @@ class InvitePrivacyTest {
             room_psk = roomPsk.toByteString(),
             generation = 1,
             sealed_key = KeyEnvelope.seal(phonePublic, firepitKey, context).toByteString(),
+            key_hour = 491_234,
         )
 
         val bytes = grant.encode()

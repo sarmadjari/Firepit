@@ -69,79 +69,93 @@ struct RoomSealingTests {
 
     // MARK: SealedText
 
+    let hour = 491_234
     let context = SealedText.contextOf(roomId: 7, senderNodeNum: 42)
+
+    private func sealed(_ words: String, under key: Data? = nil) -> Data {
+        SealedText.seal(key: key ?? self.key, hour: hour, plaintext: Data(words.utf8), context: context)
+    }
+
+    private func opened(_ payload: Data, under key: Data? = nil, context: Data? = nil) -> String? {
+        SealedText.open(key: key ?? self.key, payload: payload, context: context ?? self.context)
+            .map { String(decoding: $0, as: UTF8.self) }
+    }
 
     /// The protocol layer mirrors this figure for the composer's byte count; they must never drift.
     @Test func theBudgetTheSenderPlansWithMatchesWhatSealingActuallyCosts() {
         #expect(SealedText.overhead == MessagePrivacy.sealedOverhead)
         let plaintext = Data(count: SealedText.maxTextBytes)
-        #expect(SealedText.seal(key: key, plaintext: plaintext, context: context).count == MeshConstants.maxTextBytes)
+        #expect(
+            SealedText.seal(key: key, hour: hour, plaintext: plaintext, context: context).count
+                == MeshConstants.maxTextBytes)
     }
 
     @Test func aMemberReadsTheSealedMessageBack() {
-        let sealed = SealedText.seal(key: key, plaintext: Data("meet at the north gate".utf8), context: context)
-        #expect(
-            SealedText.open(key: key, payload: sealed, context: context).map { String(decoding: $0, as: UTF8.self) }
-                == "meet at the north gate")
+        #expect(opened(sealed("meet at the north gate")) == "meet at the north gate")
     }
 
     @Test func someoneWithOnlyTheChannelKeyReadsNothingSealed() {
-        let sealed = SealedText.seal(key: key, plaintext: Data("meet at the north gate".utf8), context: context)
-        #expect(SealedText.open(key: other, payload: sealed, context: context) == nil)
+        #expect(opened(sealed("meet at the north gate"), under: other) == nil)
     }
 
     @Test func aMessageCannotBeReattributedToAnotherSender() {
-        let sealed = SealedText.seal(key: key, plaintext: Data("on my way".utf8), context: context)
-        #expect(
-            SealedText.open(key: key, payload: sealed, context: SealedText.contextOf(roomId: 7, senderNodeNum: 43))
-                == nil)
+        #expect(opened(sealed("on my way"), context: SealedText.contextOf(roomId: 7, senderNodeNum: 43)) == nil)
     }
 
     @Test func aMessageCannotBeLiftedIntoAnotherRoom() {
-        let sealed = SealedText.seal(key: key, plaintext: Data("on my way".utf8), context: context)
-        #expect(
-            SealedText.open(key: key, payload: sealed, context: SealedText.contextOf(roomId: 8, senderNodeNum: 42))
-                == nil)
+        #expect(opened(sealed("on my way"), context: SealedText.contextOf(roomId: 8, senderNodeNum: 42)) == nil)
+    }
+
+    @Test func theNonceSaysWhichHourSealedItAndNothingElseDoes() {
+        let payload = sealed("hello")
+        #expect(SealedText.hourTagOf(payload) == RoomRatchet.tagOf(hour))
+        #expect(SealedText.nonceOf(payload) == payload.subdata(in: 1..<(1 + RoomCipher.nonceSize)))
+    }
+
+    @Test func changingTheHourItClaimsBreaksTheSeal() {
+        var payload = sealed("hello")
+        payload[2] &+= 1
+        #expect(opened(payload) == nil)
     }
 
     @Test func aVersionThisBuildDoesNotKnowIsRefusedNotMisread() {
-        var sealed = SealedText.seal(key: key, plaintext: Data("hello".utf8), context: context)
-        sealed[0] = 0x02
-        #expect(SealedText.open(key: key, payload: sealed, context: context) == nil)
+        var payload = sealed("hello")
+        payload[0] = 0x03
+        #expect(opened(payload) == nil)
+        #expect(SealedText.hourTagOf(payload) == nil)
+    }
+
+    @Test func theFirstFormatUnderAKeyThatNeverChangedIsNoLongerRead() {
+        let first = Data([0x01]) + RoomCipher.seal(key: key, plaintext: Data("hello".utf8), context: context)
+        #expect(opened(first) == nil)
     }
 
     @Test func noiseOnThePortIsRefusedRatherThanCrashing() {
         #expect(SealedText.open(key: key, payload: Data(), context: context) == nil)
-        #expect(SealedText.open(key: key, payload: Data([0x01]), context: context) == nil)
-        #expect(SealedText.open(key: key, payload: Data(repeating: 0x01, count: 4), context: context) == nil)
+        #expect(SealedText.open(key: key, payload: Data([0x02]), context: context) == nil)
+        #expect(SealedText.open(key: key, payload: Data(repeating: 0x02, count: 4), context: context) == nil)
+        #expect(SealedText.hourTagOf(Data(repeating: 0x02, count: SealedText.overhead - 1)) == nil)
     }
 
     @Test func otherAlphabetsSurviveTheRoundTrip() {
         let arabic = "نلتقي عند البوابة"
-        let sealed = SealedText.seal(key: key, plaintext: Data(arabic.utf8), context: context)
-        #expect(
-            SealedText.open(key: key, payload: sealed, context: context).map { String(decoding: $0, as: UTF8.self) }
-                == arabic)
+        #expect(opened(sealed(arabic)) == arabic)
     }
 
     @Test func aFullLengthMessageStillFitsThePayload() {
         let text = String(repeating: "x", count: SealedText.maxTextBytes)
-        let sealed = SealedText.seal(key: key, plaintext: Data(text.utf8), context: context)
-        #expect(sealed.count <= MeshConstants.maxTextBytes, "sealed to \(sealed.count) bytes")
-        #expect(
-            SealedText.open(key: key, payload: sealed, context: context).map { String(decoding: $0, as: UTF8.self) }
-                == text)
+        let payload = sealed(text)
+        #expect(payload.count <= MeshConstants.maxTextBytes, "sealed to \(payload.count) bytes")
+        #expect(opened(payload) == text)
     }
 
-    @Test func sealingCostsTwentyNineBytesOfTheBudget() {
+    @Test func sealingCostsTwentyNineBytesOfTheBudgetAsItAlwaysHas() {
         #expect(SealedText.overhead == 29)
         #expect(SealedText.maxTextBytes == 171)
     }
 
     @Test func theSameWordsNeverSealTheSameWayTwice() {
-        #expect(
-            SealedText.seal(key: key, plaintext: Data("same".utf8), context: context)
-                != SealedText.seal(key: key, plaintext: Data("same".utf8), context: context))
+        #expect(sealed("same") != sealed("same"))
     }
 }
 

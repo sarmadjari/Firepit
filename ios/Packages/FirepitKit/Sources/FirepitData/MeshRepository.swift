@@ -387,7 +387,7 @@ public final class MeshRepository: Sendable {
      * an ordinary Meshtastic channel, described by how private its own key is.
      */
     private func kindOf(roomId: Int32, psk: Data?, secondary: Bool) -> RoomKind {
-        if roomId != 0, roomKeys.keyFor(roomId: roomId) != nil {
+        if roomId != 0, roomKeys.holds(roomId: roomId) {
             return roomKeys.isSuperseded(roomId: roomId) ? .firepitMovedOn : .firepit
         }
         if secondary, roomId != 0, psk?.count == RoomCrypto.pskSize {
@@ -484,7 +484,7 @@ public final class MeshRepository: Sendable {
         }
         let payload = Data(text.utf8)
         let roomId = roomIdForChannel(channel) ?? 0
-        let roomKey = roomId == 0 ? nil : roomKeys.sealingKey(roomId: roomId)
+        let canSeal = roomId != 0 && roomKeys.canSeal(roomId: roomId)
         let peerKey = to == broadcastNodeNum ? nil : await publicKeyOf(nodeNum: to)
         let peerPhoneKey = to == broadcastNodeNum ? nil : await phoneKeyOf(nodeNum: to)
         let kind = channels.value.first { $0.index == channel }?.kind
@@ -492,7 +492,7 @@ public final class MeshRepository: Sendable {
             to: to,
             channel: channel,
             isRoomSlot: isRoomSlot(channel),
-            sealingRoomId: roomKey == nil ? nil : roomId,
+            sealingRoomId: canSeal ? roomId : nil,
             hasPeerKey: peerKey != nil,
             channelKey: channelKeyOf(channel),
             hasPeerPhoneKey: peerPhoneKey != nil,
@@ -510,7 +510,6 @@ public final class MeshRepository: Sendable {
             channel: channel,
             text: text,
             payload: payload,
-            roomKey: roomKey,
             peerKey: peerKey,
             peerPhoneKey: peerPhoneKey,
             myNodeNum: myNodeNum,
@@ -551,7 +550,6 @@ public final class MeshRepository: Sendable {
         channel: Int,
         text: String,
         payload: Data,
-        roomKey: Data?,
         peerKey: Data?,
         peerPhoneKey: Data?,
         myNodeNum: Int32,
@@ -615,15 +613,12 @@ public final class MeshRepository: Sendable {
             roomText.text = text
             roomText.replyID = UInt32(bitPattern: replyId ?? 0)
             inner.roomText = roomText
-            let sealed = SealedText.seal(
-                key: roomKey!,
-                plaintext: try inner.serializedData(),
-                context: SealedText.contextOf(roomId: roomId, senderNodeNum: myNodeNum)
-            )
-            var message = Meshchat_SealedMessage()
-            message.roomID = UInt32(bitPattern: roomId)
-            message.ciphertext = sealed
-            message.generation = UInt32(roomKeys.generationOf(roomId: roomId))
+            guard
+                let message = roomKeys.seal(
+                    roomId: roomId, sender: myNodeNum, plaintext: try inner.serializedData())
+            else {
+                throw SendError.roomKeyMissing
+            }
             var outer = Meshchat_MeshChatControl()
             outer.sealedMessage = message
             return try MeshPacketBuilder.meshPacket(
@@ -789,7 +784,7 @@ public final class MeshRepository: Sendable {
             direct: direct,
             pkiEncrypted: packet.pkiEncrypted,
             onPrimary: Int(packet.channel) == ChannelSlotManager.primarySlot,
-            onFirepitRoom: roomIdForChannel(Int(packet.channel)).flatMap { roomKeys.keyFor(roomId: $0) } != nil
+            onFirepitRoom: roomIdForChannel(Int(packet.channel)).map { roomKeys.holds(roomId: $0) } == true
         )
         guard acceptable else {
             log.warning("dropped unsealed text")

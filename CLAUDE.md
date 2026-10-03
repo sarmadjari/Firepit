@@ -33,6 +33,9 @@ they differ, Android's code decides behaviour and wire format.
 - **Seal everything a person says or shares.** Words, positions, pins, names and receipts travel
   under the room key or phone to phone. The radio and its channel key must never be what protects
   them: anyone holding a radio can read both.
+- **Seal and open room content only through `RoomKeyStore`** (`seal`, `open`). Room keys move on
+  every hour, one way, each sender has a key of their own, and each message opens once
+  (security.md §3); a stored key used directly would skip all three. No sealed message grows by a byte.
 - **Verify before relying on a default.** Defaults changed between firmware 2.7 and 2.8. Set what you need explicitly.
 - **Gate on capability fields, not version strings** (`DeviceMetadata.has_xeddsa`, `MeshPacket.xeddsa_signed`).
 - **Prefer no-reboot operations.** Channel edits do not reboot; most `set_config` writes do.

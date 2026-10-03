@@ -2,7 +2,6 @@ package com.getfirepit.core.data
 
 import android.util.Log
 import com.getfirepit.core.crypto.DirectSeal
-import com.getfirepit.core.crypto.SealedText
 import com.getfirepit.core.database.MessageDao
 import com.getfirepit.core.database.ReceiptDao
 import com.getfirepit.core.database.RoomMemberDao
@@ -21,7 +20,6 @@ import com.getfirepit.core.transport.RadioLink
 import com.getfirepit.protocol.meshchat.MeshChatControl
 import com.getfirepit.protocol.meshchat.Receipt as ReceiptProto
 import com.getfirepit.protocol.meshchat.SealedDirect
-import com.getfirepit.protocol.meshchat.SealedMessage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -80,7 +78,7 @@ class ReceiptRepository @Inject constructor(
 
     /** The room a channel carries, only when we hold the key that seals it. */
     private fun firepitRoomFor(channel: Int): Int? =
-        mesh.roomIdForChannel(channel)?.takeIf { roomKeys.keyFor(it) != null }
+        mesh.roomIdForChannel(channel)?.takeIf { roomKeys.holds(it) }
 
     /** Who has this message, and when they got it. */
     fun observe(messageId: Int): Flow<List<Receipt>> = receiptDao.observe(messageId)
@@ -292,17 +290,10 @@ class ReceiptRepository @Inject constructor(
      * everyone in earshot what this phone has been reading.
      */
     private fun seal(roomId: Int, myNodeNum: Int, control: MeshChatControl): ByteString? {
-        val key = roomKeys.sealingKey(roomId) ?: return null
-        val sealed = SealedText.seal(key, control.encode(), SealedText.contextOf(roomId, myNodeNum))
-        return MeshChatControl(
-            sealed_message = SealedMessage(
-                room_id = roomId,
-                ciphertext = sealed.toByteString(),
-                // Without this the receiver reaches for generation 1 and every
-                // receipt goes unreadable the moment a room rotates its key.
-                generation = roomKeys.generationOf(roomId),
-            ),
-        ).encode().let(ByteString::of)
+        // The generation travels with it: without that the receiver reaches for
+        // generation 1 and every receipt goes unreadable once a room rotates.
+        val sealed = roomKeys.seal(roomId, myNodeNum, control.encode()) ?: return null
+        return MeshChatControl(sealed_message = sealed).encode().let(ByteString::of)
     }
 
     private companion object {

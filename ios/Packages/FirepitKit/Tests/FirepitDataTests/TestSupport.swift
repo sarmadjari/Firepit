@@ -1,5 +1,7 @@
+import FirepitCrypto
 import FirepitData
 import FirepitModel
+import FirepitProtos
 import Foundation
 import GRDB
 
@@ -57,4 +59,30 @@ func eventually(
         try? await Task.sleep(for: .milliseconds(10))
     }
     return try await condition()
+}
+
+/// A key for this hour, as a grant or a rotation would hand one over.
+func hourKey(_ key: Data = RoomCipher.generateKey()) -> HourKey {
+    HourKey(hour: RoomRatchet.hourOf(unixMillis: Int64(Date().timeIntervalSince1970 * 1_000)), key: key)
+}
+
+/// Opens what a phone sealed for a room, the way another member holding `key` would: moved on to the hour the
+/// message names, then the sender's own key for that hour.
+func openSealed(_ sealed: Meshchat_SealedMessage, key: HourKey, roomId: Int32, sender: Int32) -> Data? {
+    guard let tag = SealedText.hourTagOf(sealed.ciphertext) else {
+        return nil
+    }
+    let generation = sealed.generation == 0 ? RoomKeyStore.first : Int(sealed.generation)
+    let hour = RoomRatchet.hourNear(tag: tag, near: key.hour)
+    guard
+        let hourKey = RoomRatchet.forward(
+            key: key.key, roomId: roomId, generation: generation, from: key.hour, to: hour)
+    else {
+        return nil
+    }
+    let senderKey = RoomRatchet.senderKey(
+        hourKey: hourKey, roomId: roomId, generation: generation, hour: hour, sender: sender)
+    return SealedText.open(
+        key: senderKey, payload: sealed.ciphertext,
+        context: SealedText.contextOf(roomId: roomId, senderNodeNum: sender))
 }

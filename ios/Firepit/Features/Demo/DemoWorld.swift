@@ -37,7 +37,7 @@
         @MainActor
         static func prepare(_ app: AppContainer) {
             for room in [camp, crew] {
-                try? app.roomKeys.remember(roomId: room, key: RoomCipher.generateKey())
+                _ = try? app.roomKeys.generate(roomId: room)
             }
             (app.radio as? DemoRadio)?.publish(snapshot())
         }

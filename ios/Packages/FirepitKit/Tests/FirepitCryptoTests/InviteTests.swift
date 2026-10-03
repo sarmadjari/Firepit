@@ -252,7 +252,7 @@ struct InviteTests {
     @Test func aGrantCarriesTheRoomKeySealedToTheJoinersPhoneNeverInTheClear() throws {
         let phone = KeyEnvelope.generateKeyPair()
         let phonePublic = KeyEnvelope.publicBytes(phone.publicKey)
-        let context = KeyEnvelope.contextOf(roomId: 0x0BAD_F00D, generation: 1, recipientNodeNum: 42)
+        let context = KeyEnvelope.contextOf(roomId: 0x0BAD_F00D, generation: 1, recipientNodeNum: 42, hour: 491_234)
         let sealedKey = try KeyEnvelope.seal(recipient: phonePublic, secret: firepitKey, context: context)
         let grant = Meshchat_RoomGrant.with {
             $0.answer = .granted
@@ -262,6 +262,7 @@ struct InviteTests {
             $0.roomPsk = roomPsk
             $0.generation = 1
             $0.sealedKey = sealedKey
+            $0.keyHour = 491_234
         }
 
         let bytes: Data = try grant.serializedBytes()

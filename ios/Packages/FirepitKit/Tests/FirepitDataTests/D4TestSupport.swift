@@ -141,7 +141,7 @@ struct D4SyncHarness: Sendable {
     }
 
     func seedRoom(roomId: Int32, channel: Int) throws {
-        try roomKeys.remember(roomId: roomId, key: RoomCipher.generateKey())
+        try roomKeys.generate(roomId: roomId)
         var settings = ChannelSettings()
         settings.name = "Camp"
         settings.id = UInt32(bitPattern: roomId)
@@ -197,19 +197,12 @@ func rememberMembers(_ harness: RoomRepositoryHarness, nodes: [Int32]) async thr
 
 func openedControl(
     from packet: MeshPacket,
-    key: Data,
+    key: HourKey,
     roomId: Int32,
     sender: Int32
 ) throws -> Meshchat_MeshChatControl {
     let outer = try Meshchat_MeshChatControl(serializedBytes: packet.decoded.payload)
-    let sealed = outer.sealedMessage
-    let plain = try #require(
-        SealedText.open(
-            key: key,
-            payload: sealed.ciphertext,
-            context: SealedText.contextOf(roomId: roomId, senderNodeNum: sender)
-        )
-    )
+    let plain = try #require(openSealed(outer.sealedMessage, key: key, roomId: roomId, sender: sender))
     return try Meshchat_MeshChatControl(serializedBytes: plain)
 }
 
@@ -217,8 +210,8 @@ func lastSentPacket(_ harness: RoomRepositoryHarness) throws -> MeshPacket {
     try #require(harness.base.link.sent.last?.packet)
 }
 
-func roomKey(_ harness: RoomRepositoryHarness, roomId: Int32 = 42) throws -> Data {
-    try #require(harness.base.roomKeys.keyFor(roomId: roomId))
+func roomKey(_ harness: RoomRepositoryHarness, roomId: Int32 = 42) throws -> HourKey {
+    try #require(harness.base.roomKeys.currentKey(roomId: roomId))
 }
 
 func waitUntil(_ condition: @escaping @Sendable () -> Bool) async -> Bool {

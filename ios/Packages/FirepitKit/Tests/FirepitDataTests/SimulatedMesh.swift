@@ -176,11 +176,18 @@ final class SimulatedPhone: @unchecked Sendable {
     let handovers: PendingHandoverDao
     let sharing: SharingStore
 
+    /// How far this phone's own clock is from everyone else's, for scenarios where phones disagree on the time.
+    let clockSkewMillis = Mutex<Int64>(0)
+
     init(nodeNum: Int32, mesh: SimulatedMesh) throws {
         db = try FirepitDatabase.inMemory()
         radio = SimulatedRadio(nodeNum: nodeNum, radioKey: SimulatedMesh.radioKey(nodeNum))
         radio.mesh = mesh
-        roomKeys = RoomKeyStore(store: InMemorySecretStore())
+        let skew = clockSkewMillis
+        // Room keys follow the phone's own clock: the mesh's, plus whatever this phone is out by.
+        roomKeys = RoomKeyStore(
+            store: InMemorySecretStore(),
+            clock: { [weak mesh] in currentEpochMillis() + (mesh?.clockOffsetMillis ?? 0) + skew.withLock { $0 } })
         phoneKeys = PhoneKeyStore(store: InMemorySecretStore(), source: SoftwarePhoneKeySource())
         messageDao = MessageDao(db)
         nodeDao = NodeDao(db)

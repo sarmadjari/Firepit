@@ -2,22 +2,33 @@ package com.getfirepit.core.data
 
 import android.content.Context
 import android.util.Base64
-import android.util.Log
 import androidx.core.content.edit
+import com.getfirepit.core.crypto.HourKey
 import com.getfirepit.core.crypto.RoomCipher
+import com.getfirepit.core.crypto.RoomRatchet
+import com.getfirepit.core.crypto.SealedText
 import com.getfirepit.core.database.KeystoreWrapping
+import com.getfirepit.protocol.meshchat.SealedMessage
 import dagger.hilt.android.qualifiers.ApplicationContext
+import okio.ByteString.Companion.toByteString
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * The keys that open rooms, held where the radio cannot reach.
+ * The keys that open rooms, held where the radio cannot reach, and destroyed
+ * as the clock moves on.
  *
  * A room key has to leave the phone — sealed to another phone's key in a grant
  * or a rotation — so it cannot live inside the Keystore itself. Instead each one
  * is wrapped by a master key that never leaves secure hardware, so what sits in
  * preferences is useless to anyone who copies the file off the phone.
+ *
+ * For each generation of a room's key, one hour's key is kept: the hour just
+ * gone, so a packet the mesh delivers late still opens. Later hours are derived
+ * from it when needed and earlier ones are destroyed, busy room or quiet
+ * ([RoomRatchet]), so whoever takes the phone cannot read what was said before.
  */
 @Singleton
 class RoomKeyStore @Inject constructor(
@@ -26,45 +37,40 @@ class RoomKeyStore @Inject constructor(
     private val preferences =
         context.getSharedPreferences("firepit_room_keys", Context.MODE_PRIVATE)
 
+    private val seen = SeenSeals(File(context.noBackupFilesDir, SEEN_FILE))
+
     /**
      * Unwrapped keys, so the Keystore is asked once per room rather than once
      * per message. A busy room decrypts on every arrival, and the platform asks
      * that its Keystore not be used on hot paths or the main thread.
      */
-    private val unwrapped = ConcurrentHashMap<String, ByteArray>()
+    private val unwrapped = ConcurrentHashMap<String, HourKey>()
 
-    /** The key a room is sealing with now, or null when it is not sealed. */
-    fun keyFor(roomId: Int): ByteArray? = keyFor(roomId, generationOf(roomId))
+    /** Moving a key on is read, derive, write: two at once would each keep a different hour. */
+    private val lock = Any()
+
+    /** The wall clock. Replaced only by tests. */
+    internal var clock: () -> Long = System::currentTimeMillis
 
     /**
-     * A specific generation, because old keys are kept.
-     *
-     * History on the phone is stored already opened, in the encrypted
-     * database, so this is not what keeps it readable. It is for packets sealed
-     * just before a rotation that arrive after it, which would otherwise be
-     * lost: the mesh delivers late and out of order.
+     * True when this phone holds the key [roomId] seals with now, which is what makes a slot one of ours.
+     * Under the lock, so a room being forgotten at that moment cannot have its key put back in memory.
      */
-    fun keyFor(roomId: Int, generation: Int): ByteArray? {
-        val slot = slot(roomId, generation)
-        // A copy every time: the cached array is wiped when the room is left,
-        // and a caller part-way through sealing must not have its key blanked.
-        unwrapped[slot]?.let { return it.copyOf() }
-        val stored = preferences.getString(slot, null) ?: return null
-        return unwrap(Base64.decode(stored, Base64.NO_WRAP))?.also { unwrapped[slot] = it.copyOf() }
+    fun holds(roomId: Int): Boolean = synchronized(lock) {
+        held(roomId, generationOf(roomId))?.key?.fill(0) != null
     }
+
+    /**
+     * True when something new may be sealed for [roomId]: we hold its key, and
+     * the room has not moved to one that never reached us. The only other
+     * people still sealing under an old key are whoever was removed.
+     */
+    fun canSeal(roomId: Int): Boolean = !isSuperseded(roomId) && holds(roomId)
 
     /** Which generation this room is sealing with. */
     fun generationOf(roomId: Int): Int = preferences.getInt(current(roomId), FIRST)
 
-    /**
-     * The key to seal with now, or null when there is none — or when the room
-     * has moved to a key that never reached us. Old keys still open history,
-     * but the only other people holding them are whoever was removed, so
-     * nothing new is ever sealed under one.
-     */
-    fun sealingKey(roomId: Int): ByteArray? = if (isSuperseded(roomId)) null else keyFor(roomId)
-
-    /** True when a member told us the room moved to a later key than the one we hold. */
+    /** True when a member told us the room moved on to a later key than the one we hold. */
     fun isSuperseded(roomId: Int): Boolean = preferences.getInt(superseded(roomId), 0) > generationOf(roomId)
 
     /** Records that [roomId] has moved on to [generation]; cleared once we hold that key. */
@@ -73,37 +79,231 @@ class RoomKeyStore @Inject constructor(
         preferences.edit { putInt(superseded(roomId), maxOf(generation, preferences.getInt(superseded(roomId), 0))) }
     }
 
-    fun remember(roomId: Int, key: ByteArray, generation: Int = FIRST) {
-        require(key.size == RoomCipher.KEY_SIZE) { "A room key is ${RoomCipher.KEY_SIZE} bytes" }
-        preferences.edit {
-            putString(slot(roomId, generation), Base64.encodeToString(wrap(key), Base64.NO_WRAP))
-            // Never walk backwards: a late rotation message must not undo a
-            // newer one that has already been applied.
-            if (generation >= generationOf(roomId)) putInt(current(roomId), generation)
-            // Holding the key the room moved to is the end of being left behind.
-            if (generation >= preferences.getInt(superseded(roomId), 0)) remove(superseded(roomId))
+    /**
+     * [plaintext] sealed by [sender] for [roomId] under this hour's key, ready
+     * to travel. Null when there is no key to seal with.
+     *
+     * [generation] is for a rotation, which is sealed under the key a member
+     * still holds. Anything else uses the room's current key, and nothing is
+     * sealed at all once the room has moved on without us.
+     */
+    fun seal(roomId: Int, sender: Int, plaintext: ByteArray, generation: Int? = null): SealedMessage? {
+        if (generation == null && isSuperseded(roomId)) return null
+        val sealingGeneration = generation ?: generationOf(roomId)
+        val now = RoomRatchet.hourOf(clock())
+        val held = advanced(roomId, sealingGeneration, now) ?: return null
+        val hour = RoomRatchet.currentHour(held.hour, now)
+        val key = senderKey(roomId, sealingGeneration, held, hour, sender) ?: return null
+        return try {
+            SealedMessage(
+                room_id = roomId,
+                ciphertext = SealedText.seal(key, hour, plaintext, SealedText.contextOf(roomId, sender)).toByteString(),
+                generation = sealingGeneration,
+            )
+        } finally {
+            key.fill(0)
         }
-        unwrapped[slot(roomId, generation)] = key.copyOf()
     }
 
-    fun generate(roomId: Int, generation: Int = FIRST): ByteArray =
-        RoomCipher.generateKey().also { remember(roomId, it, generation) }
+    /**
+     * What [sender] sealed for [roomId] under [generation], opened, or why not.
+     *
+     * Only messages sealed in the hours this phone still holds keys for open,
+     * and each one only once.
+     */
+    fun open(roomId: Int, generation: Int, sender: Int, payload: ByteArray): Opening {
+        val tag = SealedText.hourTagOf(payload) ?: return Opening.Unreadable
+        val now = RoomRatchet.hourOf(clock())
+        val held = advanced(roomId, generation, now) ?: return Opening.NoKey
+        val hour = RoomRatchet.hourNear(tag, RoomRatchet.currentHour(held.hour, now))
+        if (!RoomRatchet.opens(held.hour, now, hour)) {
+            held.key.fill(0)
+            return Opening.OutOfHours(hour, now)
+        }
+        val key = senderKey(roomId, generation, held, hour, sender) ?: return Opening.NoKey
+        val plain = try {
+            SealedText.open(key, payload, SealedText.contextOf(roomId, sender))
+        } finally {
+            key.fill(0)
+        } ?: return Opening.Unreadable
+        val nonce = SealedText.nonceOf(payload) ?: return Opening.Unreadable
+        if (!seen.firstSight(roomId, generation, sender, hour, nonce, now)) return Opening.Replayed
+        return Opening.Read(plain)
+    }
+
+    /**
+     * This hour's key for [generation] of [roomId]: what somebody joining, or
+     * a member who missed a rotation, is handed. Never an earlier hour's, so
+     * they cannot read what was said before they had it.
+     */
+    fun currentKey(roomId: Int, generation: Int = generationOf(roomId)): HourKey? {
+        val now = RoomRatchet.hourOf(clock())
+        val held = advanced(roomId, generation, now) ?: return null
+        val hour = RoomRatchet.currentHour(held.hour, now)
+        val key = try {
+            RoomRatchet.forward(held.key, roomId, generation, held.hour, hour)
+        } finally {
+            held.key.fill(0)
+        } ?: return null
+        return HourKey(hour, key)
+    }
+
+    fun remember(roomId: Int, key: HourKey, generation: Int = FIRST) {
+        synchronized(lock) {
+            val previous = generationOf(roomId)
+            val now = RoomRatchet.hourOf(clock())
+            preferences.edit {
+                putString(slot(roomId, generation), encode(key))
+                remove(retired(roomId, generation))
+                when {
+                    // Never walk backwards: a late rotation message must not
+                    // undo a newer one that has already been applied.
+                    generation < previous -> putInt(retired(roomId, generation), now)
+                    generation > previous -> {
+                        putInt(current(roomId), generation)
+                        // Kept a little longer, for packets sealed just before the move.
+                        if (preferences.contains(slot(roomId, previous))) putInt(retired(roomId, previous), now)
+                    }
+                    else -> putInt(current(roomId), generation)
+                }
+                // Holding the key the room moved to is the end of being left behind.
+                if (generation >= preferences.getInt(superseded(roomId), 0)) remove(superseded(roomId))
+            }
+            unwrapped.put(slot(roomId, generation), key.copy())?.key?.fill(0)
+        }
+    }
+
+    /** A new key for [roomId], starting this hour. */
+    fun generate(roomId: Int, generation: Int = FIRST): HourKey =
+        HourKey(RoomRatchet.hourOf(clock()), RoomCipher.generateKey()).also { remember(roomId, it, generation) }
+
+    /**
+     * Destroys every key that is no longer needed, in every room.
+     *
+     * Run on the clock, not on traffic: a quiet room has to forget as surely
+     * as a busy one. A generation the room has moved on from goes entirely
+     * once late packets sealed under it have had time to arrive, unless it is
+     * in [owed]: a member who missed the move still holds it, and their new key
+     * has to be sealed under it.
+     */
+    fun erase(owed: Set<RoomGeneration> = emptySet()) {
+        val now = RoomRatchet.hourOf(clock())
+        val slots = preferences.all.keys.mapNotNull(::parseSlot)
+        slots.forEach { held ->
+            synchronized(lock) {
+                if (held.generation != generationOf(held.roomId)) {
+                    val retiredAt = preferences.getInt(retired(held.roomId, held.generation), NEVER)
+                        .takeIf { it != NEVER }
+                        ?: now.also { preferences.edit { putInt(retired(held.roomId, held.generation), it) } }
+                    if (now - retiredAt >= RETIRED_GRACE_HOURS && held !in owed) {
+                        drop(held.roomId, held.generation)
+                        return@synchronized
+                    }
+                }
+                advanced(held.roomId, held.generation, now)?.key?.fill(0)
+            }
+        }
+    }
 
     /** Leaving a room takes every key it ever had, or leaving would not mean much. */
     fun forget(roomId: Int) {
-        preferences.edit {
-            preferences.all.keys
-                .filter { it == current(roomId) || it == superseded(roomId) || it.startsWith("$roomId/") }
-                .forEach { remove(it) }
-        }
-        // Leaving has to take the copies in memory too, or the room stays
-        // readable for the life of the process.
-        unwrapped.keys.filter { it.startsWith("$roomId/") }.forEach { slot ->
-            unwrapped.remove(slot)?.fill(0)
+        synchronized(lock) {
+            preferences.edit {
+                preferences.all.keys
+                    .filter { it == current(roomId) || it == superseded(roomId) || it.startsWith("$roomId/") }
+                    .forEach { remove(it) }
+            }
+            // Leaving has to take the copies in memory too, or the room stays
+            // readable for the life of the process.
+            unwrapped.keys.filter { it.startsWith("$roomId/") }.forEach { slot ->
+                unwrapped.remove(slot)?.key?.fill(0)
+            }
         }
     }
 
+    /**
+     * The held key for one generation, first moved on so that nothing older
+     * than the hour just gone survives, on disk or in memory.
+     */
+    private fun advanced(roomId: Int, generation: Int, now: Int): HourKey? = synchronized(lock) {
+        val held = held(roomId, generation) ?: return null
+        val keep = RoomRatchet.keepFrom(held.hour, now)
+        if (keep == held.hour) return held
+        // A clock decades out: keep what we have rather than spin.
+        val moved = RoomRatchet.forward(held.key, roomId, generation, held.hour, keep) ?: return held
+        held.key.fill(0)
+        val next = HourKey(keep, moved)
+        preferences.edit { putString(slot(roomId, generation), encode(next)) }
+        unwrapped.put(slot(roomId, generation), next.copy())?.key?.fill(0)
+        next
+    }
+
+    /** Wipes [held] whatever happens: it is a copy made for this one use. */
+    private fun senderKey(roomId: Int, generation: Int, held: HourKey, hour: Int, sender: Int): ByteArray? {
+        val hourKey = try {
+            RoomRatchet.forward(held.key, roomId, generation, held.hour, hour)
+        } finally {
+            held.key.fill(0)
+        } ?: return null
+        return try {
+            RoomRatchet.senderKey(hourKey, roomId, generation, hour, sender)
+        } finally {
+            hourKey.fill(0)
+        }
+    }
+
+    /** A copy every time: the cached one is wiped when it moves on, and a caller part-way through must not see that. */
+    private fun held(roomId: Int, generation: Int): HourKey? {
+        val slot = slot(roomId, generation)
+        unwrapped[slot]?.let { return it.copy() }
+        val stored = preferences.getString(slot, null) ?: return null
+        val plain = unwrap(Base64.decode(stored, Base64.NO_WRAP)) ?: return null
+        return try {
+            decode(plain)?.also { unwrapped[slot] = it.copy() }
+        } finally {
+            plain.fill(0)
+        }
+    }
+
+    private fun drop(roomId: Int, generation: Int) {
+        preferences.edit {
+            remove(slot(roomId, generation))
+            remove(retired(roomId, generation))
+        }
+        unwrapped.remove(slot(roomId, generation))?.key?.fill(0)
+    }
+
+    /** The hour, then its key, wrapped. */
+    private fun encode(key: HourKey): String {
+        val plain = intBytes(key.hour) + key.key
+        return try {
+            Base64.encodeToString(wrap(plain), Base64.NO_WRAP)
+        } finally {
+            plain.fill(0)
+        }
+    }
+
+    /** A bare 32-byte key was stored before keys moved on, and counts from [RoomRatchet.LEGACY_HOUR]. */
+    private fun decode(plain: ByteArray): HourKey? = when (plain.size) {
+        RoomCipher.KEY_SIZE -> HourKey(RoomRatchet.LEGACY_HOUR, plain.copyOf())
+        HOUR_SIZE + RoomCipher.KEY_SIZE -> HourKey(
+            ((plain[0].toInt() and 0xFF) shl 24) or ((plain[1].toInt() and 0xFF) shl 16) or
+                ((plain[2].toInt() and 0xFF) shl 8) or (plain[3].toInt() and 0xFF),
+            plain.copyOfRange(HOUR_SIZE, plain.size),
+        )
+        else -> null
+    }
+
+    private fun parseSlot(name: String): RoomGeneration? {
+        val match = SLOT.matchEntire(name) ?: return null
+        val roomId = match.groupValues[1].toIntOrNull() ?: return null
+        val generation = match.groupValues[2].toIntOrNull() ?: return null
+        return RoomGeneration(roomId, generation)
+    }
+
     private fun slot(roomId: Int, generation: Int) = "$roomId/$generation"
+
+    private fun retired(roomId: Int, generation: Int) = "$roomId/$generation.retired"
 
     private fun current(roomId: Int) = "$roomId.generation"
 
@@ -113,6 +313,13 @@ class RoomKeyStore @Inject constructor(
 
     private fun unwrap(stored: ByteArray): ByteArray? = KeystoreWrapping.unwrap(ALIAS, stored)
 
+    private fun intBytes(value: Int) = byteArrayOf(
+        (value ushr 24).toByte(),
+        (value ushr 16).toByte(),
+        (value ushr 8).toByte(),
+        value.toByte(),
+    )
+
     companion object {
         /** Rooms start here; a rotation is always one more. */
         const val FIRST = 1
@@ -121,5 +328,41 @@ class RoomKeyStore @Inject constructor(
 
         /** Unchanged since the first release: renaming it would orphan every stored key. */
         const val ALIAS = "firepit_room_key_wrapping"
+
+        /**
+         * How long a generation the room has moved on from stays, in hours:
+         * long enough for anything sealed under it just before the move, from
+         * a sender whose clock runs a little behind, to arrive and open.
+         */
+        const val RETIRED_GRACE_HOURS = 2
+
+        private const val HOUR_SIZE = 4
+        private const val NEVER = Int.MIN_VALUE
+        private const val SEEN_FILE = "firepit-seen-seals"
+        private val SLOT = Regex("""(-?\d+)/(\d+)""")
     }
+}
+
+/** One generation of one room's key. */
+data class RoomGeneration(val roomId: Int, val generation: Int)
+
+/** What came of trying to open a sealed message. */
+sealed interface Opening {
+    /** It opened, for the first time. */
+    class Read(val plain: ByteArray) : Opening
+
+    /** This phone holds no key for that room and generation, or no longer does. */
+    data object NoKey : Opening
+
+    /**
+     * Sealed in an hour whose key this phone has destroyed, or not yet
+     * reached: an old recording, or two clocks more than an hour apart.
+     */
+    data class OutOfHours(val hour: Int, val now: Int) : Opening
+
+    /** Opened before: a copy of a message already read. */
+    data object Replayed : Opening
+
+    /** Not a seal this build reads, or one that was changed or made with another key. */
+    data object Unreadable : Opening
 }

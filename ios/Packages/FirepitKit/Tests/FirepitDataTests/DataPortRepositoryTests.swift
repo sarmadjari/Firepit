@@ -187,7 +187,9 @@ func channelTextPacket(id: Int32, from node: Int32, text: String, channel: Int =
     )
 }
 
-@Test func historyFromBeforeTheRotationStaysReadableToThoseWhoStayed() throws {
+/// Whoever stays holds both for a while after the move, so something sealed just before it still opens when the mesh
+/// delivers it late. What they had already read is kept opened on the phone, not under these keys.
+@Test func aMessageSealedJustBeforeTheRotationStillOpensForThoseWhoStayed() throws {
     let roomId: Int32 = 0x51DE51DE
     let sender: Int32 = -211096906
     let oldKey = RoomCipher.generateKey()
@@ -596,7 +598,7 @@ func channelTextPacket(id: Int32, from node: Int32, text: String, channel: Int =
     h.mesh.start()
     await h.connect(makeSnapshot())
     #expect(await eventually { h.mesh.channels.value.first?.kind == .firepitKeyMissing })
-    try h.roomKeys.remember(roomId: 42, key: RoomCipher.generateKey())
+    try h.roomKeys.generate(roomId: 42)
     h.mesh.refreshRoomKinds()
     #expect(h.mesh.channels.value.first?.kind == .firepit)
     try h.roomKeys.markSuperseded(roomId: 42, generation: 2)
@@ -865,6 +867,10 @@ private func positionPacket(from node: Int32, latitudeI: Int32, precisionBits: U
 
 let receiptKey = Data((0..<RoomCipher.keySize).map { UInt8($0) })
 
+/// The hour the envelope-level tests seal in. They exercise the envelope with a key used as it stands; moving keys
+/// on is RoomRatchetTests' business.
+let envelopeHour = 491_234
+
 func sealRoomText(
     _ text: String,
     roomId: Int32,
@@ -880,6 +886,7 @@ func sealRoomText(
     inner.roomText = roomText
     let sealed = SealedText.seal(
         key: key,
+        hour: envelopeHour,
         plaintext: try! inner.serializedData(),
         context: SealedText.contextOf(roomId: roomId, senderNodeNum: sender)
     )

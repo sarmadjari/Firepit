@@ -67,12 +67,12 @@ object KeyEnvelope {
     fun isValidPublicKey(bytes: ByteArray): Boolean = decode(bytes) != null
 
     /**
-     * Binds a sealed secret to one room, one generation and one recipient, so
-     * it cannot be replayed as a different room's key or handed to somebody
-     * else.
+     * Binds a sealed secret to one room, one generation, one recipient and
+     * the hour it is the key for, so it cannot be replayed as a different
+     * room's key, handed to somebody else, or relabelled as another hour's.
      */
-    fun contextOf(roomId: Int, generation: Int, recipientNodeNum: Int): ByteArray =
-        intBytes(roomId) + intBytes(generation) + intBytes(recipientNodeNum)
+    fun contextOf(roomId: Int, generation: Int, recipientNodeNum: Int, hour: Int): ByteArray =
+        intBytes(roomId) + intBytes(generation) + intBytes(recipientNodeNum) + intBytes(hour)
 
     /** Seals [secret] so that only the holder of the private half of [recipient] can open it. */
     fun seal(recipient: ByteArray, secret: ByteArray, context: ByteArray): ByteArray {

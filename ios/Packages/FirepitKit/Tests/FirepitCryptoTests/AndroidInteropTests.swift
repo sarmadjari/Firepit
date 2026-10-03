@@ -42,7 +42,16 @@ struct AndroidInteropTests {
         let roomKey = try bytes("roomKey")
         let sealedText = try bytes("sealedText")
         let textPlain = try bytes("textPlain")
-        #expect(SealedText.open(key: roomKey, payload: sealedText, context: context) == textPlain)
+        // Derived here from the room key alone: if the two apps moved keys on differently, it would not open.
+        let generation = Int(try value("ratchetGeneration")) ?? -1
+        let hour = Int(try value("ratchetHour")) ?? -1
+        let hourKey = RoomRatchet.forward(
+            key: roomKey, roomId: 0x0BAD_F00D, generation: generation,
+            from: Int(try value("ratchetFromHour")) ?? -1, to: hour)
+        let senderKey = RoomRatchet.senderKey(
+            hourKey: try #require(hourKey), roomId: 0x0BAD_F00D, generation: generation, hour: hour, sender: sender)
+        #expect(SealedText.hourTagOf(sealedText) == RoomRatchet.tagOf(hour))
+        #expect(SealedText.open(key: senderKey, payload: sealedText, context: context) == textPlain)
         let roomCipherEmpty = try bytes("roomCipherEmpty")
         #expect(RoomCipher.open(key: roomKey, sealed: roomCipherEmpty, context: Data()) == Data())
     }
@@ -52,7 +61,8 @@ struct AndroidInteropTests {
         let joinerPublic = try bytes("joinerPublic")
         #expect(KeyEnvelope.publicBytes(joiner.publicKey) == joinerPublic, "both platforms compress a point alike")
         let context = try bytes("envelopeContext")
-        #expect(KeyEnvelope.contextOf(roomId: 0x0BAD_F00D, generation: 3, recipientNodeNum: -42) == context)
+        #expect(
+            KeyEnvelope.contextOf(roomId: 0x0BAD_F00D, generation: 3, recipientNodeNum: -42, hour: 491_234) == context)
         let envelope = try bytes("envelope")
         let roomKey = try bytes("roomKey")
         #expect(

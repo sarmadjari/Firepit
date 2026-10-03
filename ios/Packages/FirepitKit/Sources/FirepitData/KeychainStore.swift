@@ -7,6 +7,8 @@ public protocol SecretStore: Sendable {
     func set(_ data: Data, for key: String) throws
     func remove(_ key: String) throws
     func removeAll(prefix: String) throws
+    /// Every name something is stored under, for a sweep that has to visit them all.
+    func accounts() throws -> [String]
 }
 
 public enum SecretStoreError: Error, Sendable, Equatable { case keychain(OSStatus) }
@@ -40,18 +42,20 @@ public struct KeychainStore: SecretStore {
         guard status == errSecSuccess || status == errSecItemNotFound else { throw SecretStoreError.keychain(status) }
     }
     public func removeAll(prefix: String) throws {
+        for account in try accounts() where account.hasPrefix(prefix) {
+            try remove(account)
+        }
+    }
+    public func accounts() throws -> [String] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
             kSecReturnAttributes as String: true, kSecMatchLimit as String: kSecMatchLimitAll,
         ]
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { return }
+        if status == errSecItemNotFound { return [] }
         guard status == errSecSuccess else { throw SecretStoreError.keychain(status) }
-        for item in (result as? [[String: Any]]) ?? [] {
-            guard let account = item[kSecAttrAccount as String] as? String, account.hasPrefix(prefix) else { continue }
-            try remove(account)
-        }
+        return ((result as? [[String: Any]]) ?? []).compactMap { $0[kSecAttrAccount as String] as? String }
     }
     private func baseQuery(_ key: String) -> [String: Any] {
         [
@@ -73,4 +77,5 @@ public final class InMemorySecretStore: SecretStore {
         values.withLock { state in state.keys.filter { $0.hasPrefix(prefix) }.forEach { state.removeValue(forKey: $0) }
         }
     }
+    public func accounts() -> [String] { values.withLock { Array($0.keys) } }
 }

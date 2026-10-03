@@ -22,11 +22,25 @@ struct IOSVectorWriter {
         fields["roomKey"] = roomKey.hex
         fields["textPlain"] = text.hex
         fields["textContext"] = textContext.hex
-        fields["sealedText"] = SealedText.seal(key: roomKey, plaintext: text, context: textContext).hex
+        // roomKey taken as one hour's key, moved on two hours, then this sender's key for that hour.
+        let generation = 3
+        let fromHour = 491_234
+        let sealHour = fromHour + 2
+        let hourKey = try #require(
+            RoomRatchet.forward(key: roomKey, roomId: 0x0BAD_F00D, generation: generation, from: fromHour, to: sealHour)
+        )
+        let senderKey = RoomRatchet.senderKey(
+            hourKey: hourKey, roomId: 0x0BAD_F00D, generation: generation, hour: sealHour, sender: sender)
+        fields["ratchetGeneration"] = String(generation)
+        fields["ratchetFromHour"] = String(fromHour)
+        fields["ratchetHour"] = String(sealHour)
+        fields["sealedText"] =
+            SealedText.seal(key: senderKey, hour: sealHour, plaintext: text, context: textContext).hex
 
         let joiner = P256.KeyAgreement.PrivateKey()
         let joinerPublic = KeyEnvelope.publicBytes(joiner.publicKey)
-        let envelopeContext = KeyEnvelope.contextOf(roomId: 0x0BAD_F00D, generation: 3, recipientNodeNum: -42)
+        let envelopeContext = KeyEnvelope.contextOf(
+            roomId: 0x0BAD_F00D, generation: 3, recipientNodeNum: -42, hour: 491_234)
         fields["joinerScalar"] = joiner.rawRepresentation.hex
         fields["joinerPublic"] = joinerPublic.hex
         fields["envelopeContext"] = envelopeContext.hex

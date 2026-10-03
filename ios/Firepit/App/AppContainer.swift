@@ -95,9 +95,11 @@ final class AppContainer {
         link = RadioLink(central: central)
         switch configuration {
         case .live:
-            daos = try FirepitDaos.open(at: Self.databaseDirectory())
+            let databaseDirectory = try Self.databaseDirectory()
+            daos = try FirepitDaos.open(at: databaseDirectory)
             defaults = .standard
-            roomKeys = RoomKeyStore()
+            // Beside the database, so it shares its protection and stays out of backups.
+            roomKeys = RoomKeyStore(seen: SeenSeals(file: databaseDirectory.appendingPathComponent("seen-seals")))
             phoneKeys = PhoneKeyStore()
             primaryBackup = PrimaryBackup()
             radio = link

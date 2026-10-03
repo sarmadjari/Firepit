@@ -21,7 +21,7 @@ class SealedRoomTextTest {
 
     private fun wire(text: String, replyId: Int = 0, under: ByteArray = key): ByteArray {
         val inner = MeshChatControl(room_text = RoomText(text = text, reply_id = replyId)).encode()
-        val sealed = SealedText.seal(under, inner, SealedText.contextOf(roomId, sender))
+        val sealed = SealedText.seal(under, 491_234, inner, SealedText.contextOf(roomId, sender))
         return MeshChatControl(
             sealed_message = SealedMessage(room_id = roomId, ciphertext = sealed.toByteString()),
         ).encode()

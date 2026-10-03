@@ -684,9 +684,9 @@ A token proves the *invite* is genuine, not that the *bearer* was authorised. Wi
 ```text
 MeshPacket{ to: joiner, pki_encrypted: true, public_key: joiner_key, want_ack: true,
             decoded: Data{ portnum: PRIVATE_APP,
-                           payload: MeshChatControl{ room_grant: RoomGrant{ answer: GRANTED, invite_id, room_id, room_name, room_psk, generation, position_precision, sealed_key } } } }
+                           payload: MeshChatControl{ room_grant: RoomGrant{ answer: GRANTED, invite_id, room_id, room_name, room_psk, generation, sealed_key, key_hour } } } }
 ```
-`generation` is the room key's current generation. `sealed_key` is the room's firepit key sealed to the joiner's `phone_key`, bound to `room_id`, `generation` and the joiner's node number: the radios at both ends decrypt the PKI layer, and anyone holding one can read its private key, but neither can open this. Declining sends the same message with `answer: DECLINED` and no keys, so the joiner is told rather than left waiting.
+`generation` is the room key's current generation. `sealed_key` is that generation's key for the current hour, sealed to the joiner's `phone_key` and bound to `room_id`, `generation`, the joiner's node number and `key_hour`, the hour it belongs to (UTC hours since 1970). Room keys move on every hour, one way (security.md §3), so the joiner reads from the hour they were let in and nothing recorded before it. The radios at both ends decrypt the PKI layer, and anyone holding one can read its private key, but neither can open this. Declining sends the same message with `answer: DECLINED` and no keys, so the joiner is told rather than left waiting.
 
 The joiner accepts a grant only from the node it asked, only for the invite it asked about, and only while still waiting. The sender check is not redundant with the id checks: `room_id` and `invite_id` both travel in the QR code, so anyone who photographed it can name them and race the real inviter with their own keys, landing the scanner in a room they control. Answering *as the scanned node* needs that node's private key, and the joiner seeded its public key from the code in step A — so `packet.from == awaited.inviter` on an already-`pki_encrypted` packet is what makes the substitution fail. A grant for a room already held is taken only from a member of it, moving it forward (`TrustRules.mayTakeGrant`). It then writes the channel, stores both keys, and announces itself. The inviter broadcasts a sealed `RosterEvent{ JOINED, phone_key }` to the room and sends the roster privately to the joiner.
 
@@ -716,13 +716,13 @@ message MeshChatControl {
 message SealedDirect { bytes ciphertext = 1; }        // DirectSeal: P-256 ECDH of both phones' keys + HKDF + AES-GCM
 message PositionQuery {}
 message JoinHello { fixed32 invite_id = 1; bytes token = 2; uint32 generation = 3; uint32 app_version = 4; bytes joiner_key = 5; bytes phone_key = 6; }
-message RoomGrant { enum Answer { GRANTED = 0; DECLINED = 1; } reserved 6, 8; Answer answer = 1; fixed32 invite_id = 2; fixed32 room_id = 3; string room_name = 4; bytes room_psk = 5; uint32 generation = 7; bytes sealed_key = 9; }
+message RoomGrant { enum Answer { GRANTED = 0; DECLINED = 1; } reserved 6, 8; Answer answer = 1; fixed32 invite_id = 2; fixed32 room_id = 3; string room_name = 4; bytes room_psk = 5; uint32 generation = 7; bytes sealed_key = 9; uint32 key_hour = 10; }
 message RosterEvent { enum Kind { JOINED = 0; KEY_ROTATED = 1; } Kind kind = 1; uint32 node_num = 2; uint32 invited_by = 3; uint32 generation = 4; bytes phone_key = 5; }
-message KeyRotation { reserved 4; fixed32 room_id = 1; uint32 generation = 2; bytes room_psk = 3; string room_name = 5; repeated fixed32 removed = 6; bytes sealed_key = 7; }
+message KeyRotation { reserved 4; fixed32 room_id = 1; uint32 generation = 2; bytes room_psk = 3; string room_name = 5; repeated fixed32 removed = 6; bytes sealed_key = 7; uint32 key_hour = 8; }
 message PersonCard { string name = 1; string tag = 2; uint32 colour_slot_plus_one = 3; bytes phone_key = 4; }
 message LiveLocationRequest { fixed32 room_id = 1; uint32 suggested_secs = 2; }
 message Receipt { fixed32 room_id = 1; repeated fixed32 delivered = 2; repeated fixed32 read = 3; }
-message SealedMessage { fixed32 room_id = 1; bytes ciphertext = 2; fixed32 reply_id = 3; }
+message SealedMessage { fixed32 room_id = 1; bytes ciphertext = 2; uint32 generation = 3; }  // ciphertext: SealedText v2, the nonce opens with the hour
 ```
 Rules: one packet per event, except the sealed position, which is sent at the beacon interval only while the user shares; unknown fields and kinds are ignored; a control packet is never rendered as chat. Every sealed room packet asks for an acknowledgement, so the header's `want_ack` bit does not tell words from receipts, cards or positions. Most payloads are ≤ ~40 bytes; a full receipt of 40 ids is ~206 bytes sealed and still inside the 233-byte budget, which `SealedReceiptTest` asserts rather than assumes.
 
@@ -730,8 +730,8 @@ Rules: one packet per event, except the sealed position, which is sent at the be
 
 #### 6.8.6 Removing a member / leaving (key rotation)
 
-1. The initiator generates a new `room_psk` and firepit key at `generation + 1`, same `room_id`, and writes its own channel in place (same slot; no reboot).
-2. Each remaining member gets a `KeyRotation` as a PKI DM. Its `sealed_key` is the new firepit key sealed to that member's phone key; the whole `MeshChatControl{ key_rotation }` travels inside a `SealedMessage` under the **old** generation's key, so only somebody who holds the room can move it on. It is accepted only from a member, privately, sealed under the current generation, and moving forward (`TrustRules.rotationAcceptable`). About 200 of the 221 bytes a PKI DM leaves, which `ProtocolContractTest` pins.
+1. The initiator generates a new `room_psk` and firepit key at `generation + 1`, same `room_id`, and writes its own channel in place (same slot; no reboot). The new key is the key for the current hour, and moves on hourly like any other (security.md §3).
+2. Each remaining member gets a `KeyRotation` as a PKI DM. Its `sealed_key` is the new generation's key for the hour it is sent in, sealed to that member's phone key with `key_hour` saying which hour; a member handed it later, after missing it, gets that later hour's key; the whole `MeshChatControl{ key_rotation }` travels inside a `SealedMessage` under the **old** generation's key, so only somebody who holds the room can move it on. It is accepted only from a member, privately, sealed under the current generation, and moving forward (`TrustRules.rotationAcceptable`). About 200 of the 221 bytes a PKI DM leaves, which `ProtocolContractTest` pins.
 3. A member whose phone key was never learned, or who is out of range, cannot be handed the new key and is reported back as missed, to be invited again.
 4. Phone keys come from the join hello, the sealed `JOINED` event that introduces a newcomer, and person cards, which every phone sends even with no name chosen. They are learned on first sight and kept; only an approved join — the approver's own, or the sealed `JOINED` announcing it — replaces one.
 5. The removed member keeps the old key, past messages, and hears the mesh at the radio layer; state this plainly (design §6).

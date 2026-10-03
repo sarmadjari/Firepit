@@ -55,10 +55,10 @@ public enum KeyEnvelope {
     /// True when `bytes` is a point on the curve, and so something a secret can be sealed to.
     public static func isValidPublicKey(_ bytes: Data) -> Bool { decode(bytes) != nil }
 
-    /// Binds a sealed secret to one room, one generation and one recipient, so it cannot be replayed as a different
-    /// room's key or handed to somebody else.
-    public static func contextOf(roomId: Int32, generation: Int32, recipientNodeNum: Int32) -> Data {
-        bigEndian(roomId) + bigEndian(generation) + bigEndian(recipientNodeNum)
+    /// Binds a sealed secret to one room, one generation, one recipient and the hour it is the key for, so it cannot be
+    /// replayed as a different room's key, handed to somebody else, or relabelled as another hour's.
+    public static func contextOf(roomId: Int32, generation: Int32, recipientNodeNum: Int32, hour: Int32) -> Data {
+        bigEndian(roomId) + bigEndian(generation) + bigEndian(recipientNodeNum) + bigEndian(hour)
     }
 
     /// Seals `secret` so that only the holder of the private half of `recipient` can open it.

@@ -74,7 +74,7 @@ struct RoomRepositoryHarness: Sendable {
     }
 
     func seedRoom(roomId: Int32 = 42, channel: Int = 1, key: Data = Data(repeating: 7, count: 32)) throws {
-        try base.roomKeys.remember(roomId: roomId, key: RoomCipher.generateKey())
+        try base.roomKeys.generate(roomId: roomId)
         var settings = ChannelSettings()
         settings.name = "Camp"
         settings.id = UInt32(bitPattern: roomId)
@@ -299,7 +299,7 @@ struct RoomRepositoryFocusedTests {
         let h = try RoomRepositoryHarness()
         let room = try await h.repository.createRoom(name: "Camp")
         #expect(room.index == 1)
-        #expect(h.base.roomKeys.keyFor(roomId: room.id) != nil)
+        #expect(h.base.roomKeys.holds(roomId: room.id))
         #expect(!h.base.link.sent.isEmpty)
     }
 

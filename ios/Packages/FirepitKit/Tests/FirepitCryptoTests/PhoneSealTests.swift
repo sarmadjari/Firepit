@@ -13,7 +13,7 @@ struct PhoneSealTests {
     let joiner = KeyEnvelope.generateKeyPair()
     var joinerPublic: Data { KeyEnvelope.publicBytes(joiner.publicKey) }
     let roomKey = RoomCipher.generateKey()
-    let context = KeyEnvelope.contextOf(roomId: 0x0BAD_F00D, generation: 3, recipientNodeNum: 42)
+    let context = KeyEnvelope.contextOf(roomId: 0x0BAD_F00D, generation: 3, recipientNodeNum: 42, hour: 491_234)
 
     @Test func thePhoneItWasSealedToOpensIt() throws {
         let sealed = try KeyEnvelope.seal(recipient: joinerPublic, secret: roomKey, context: context)
@@ -32,12 +32,14 @@ struct PhoneSealTests {
         #expect(KeyEnvelope.open(privateKey: other, ownPublic: joinerPublic, sealed: sealed, context: context) == nil)
     }
 
-    @Test func aKeySealedForOneRoomGenerationOrPersonOpensForNoOther() throws {
+    @Test func aKeySealedForOneRoomGenerationPersonOrHourOpensForNoOther() throws {
         let sealed = try KeyEnvelope.seal(recipient: joinerPublic, secret: roomKey, context: context)
         for elsewhere in [
-            KeyEnvelope.contextOf(roomId: 0x0BAD_F00E, generation: 3, recipientNodeNum: 42),
-            KeyEnvelope.contextOf(roomId: 0x0BAD_F00D, generation: 4, recipientNodeNum: 42),
-            KeyEnvelope.contextOf(roomId: 0x0BAD_F00D, generation: 3, recipientNodeNum: 43),
+            KeyEnvelope.contextOf(roomId: 0x0BAD_F00E, generation: 3, recipientNodeNum: 42, hour: 491_234),
+            KeyEnvelope.contextOf(roomId: 0x0BAD_F00D, generation: 4, recipientNodeNum: 42, hour: 491_234),
+            KeyEnvelope.contextOf(roomId: 0x0BAD_F00D, generation: 3, recipientNodeNum: 43, hour: 491_234),
+            // Relabelled as an earlier hour, it would let the holder derive keys for hours they were never given.
+            KeyEnvelope.contextOf(roomId: 0x0BAD_F00D, generation: 3, recipientNodeNum: 42, hour: 491_233),
         ] {
             #expect(
                 KeyEnvelope.open(privateKey: joiner, ownPublic: joinerPublic, sealed: sealed, context: elsewhere) == nil

@@ -273,6 +273,7 @@ class ProtocolContractTest {
                 room_psk = bytes(32),
                 generation = Int.MAX_VALUE,
                 sealed_key = bytes(SEALED_KEY),
+                key_hour = Int.MAX_VALUE,
             ),
         )
 
@@ -295,6 +296,7 @@ class ProtocolContractTest {
                 room_name = "a".repeat(MAX_ROOM_NAME_BYTES),
                 removed = listOf(Int.MIN_VALUE),
                 sealed_key = bytes(SEALED_KEY),
+                key_hour = Int.MAX_VALUE,
             ),
         )
         val sealedSize = MeshChatControl.ADAPTER.encode(rotation).size + SEALING_OVERHEAD

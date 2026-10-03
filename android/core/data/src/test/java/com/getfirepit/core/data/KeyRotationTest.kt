@@ -23,12 +23,14 @@ class KeyRotationTest {
     private val roomId = 0x51DE51DE
     private val sender = -211096906
 
+    private val hour = 491_234
+
     private val oldKey = RoomCipher.generateKey()
     private val newKey = RoomCipher.generateKey()
 
     private fun seal(text: String, key: ByteArray, generation: Int): ByteArray {
         val inner = MeshChatControl(room_text = RoomText(text = text)).encode()
-        val sealed = SealedText.seal(key, inner, SealedText.contextOf(roomId, sender))
+        val sealed = SealedText.seal(key, hour, inner, SealedText.contextOf(roomId, sender))
         return MeshChatControl(
             sealed_message = SealedMessage(
                 room_id = roomId,
@@ -49,7 +51,11 @@ class KeyRotationTest {
         return MeshChatControl.ADAPTER.decode(plain).room_text?.text
     }
 
-    /** Whoever stays keeps every key, so nothing they already had goes dark. */
+    /**
+     * Whoever stays holds both for a while after the move, so something sealed
+     * just before it still opens when the mesh delivers it late. What they had
+     * already read is kept opened on the phone, not under these keys.
+     */
     private val staying = mapOf(1 to oldKey, 2 to newKey)
 
     /** Whoever was removed keeps the old key and is never sent the new one. */
@@ -64,7 +70,7 @@ class KeyRotationTest {
     }
 
     @Test
-    fun `history from before the rotation stays readable to those who stayed`() {
+    fun `a message sealed just before the rotation still opens for those who stayed`() {
         val before = seal("meet at the north gate", oldKey, generation = 1)
 
         assertEquals("meet at the north gate", open(before, staying))

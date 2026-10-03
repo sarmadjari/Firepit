@@ -23,7 +23,7 @@ RTL-ready from Stage 3) · invite-link domain deferred until Stage 8.
 | 8 | v1.0 features | ✅ Built, except emoji reactions |
 | 9 | Release prep: accessibility and RTL pass, R8, store listing | Not started |
 | 10 | The iPhone app | ✅ Built. An iPhone and an Android phone in one room over real radios is still to be tested |
-| 11 | Security within Meshtastic's limits: Signal-grade protections where the radio allows, with no message growing by a byte | In progress: Phase 1 |
+| 11 | Security within Meshtastic's limits: Signal-grade protections where the radio allows, with no message growing by a byte | In progress: Phase 1 done on both apps, Phase 2 next |
 
 ---
 
@@ -514,7 +514,8 @@ the app's claims were ahead of its code.
   they can be and **not sent at all** where they cannot. Shown on the sender's own bubble.
 - **Key rotation on removal** — new generation, new keys handed to each remaining member as a PKI
   direct message, a notice on the old key for whoever missed it, and a line in the room naming who
-  was removed. Old generations are kept so history stays readable.
+  was removed. History is stored opened, so it stays readable; since Stage 11 the old generation's
+  key itself is deleted two hours after the move.
 - **Room lifetimes** — optionally leave a room after a month or three months of silence. Off by
   default.
 - **The radio's clock** — measured from the packets themselves, offered for correction when it is
@@ -710,9 +711,8 @@ Wire-incompatible with builds before it — acceptable before release.
 
 ### Accepted, not fixed
 
-Written up in `docs/security.md` §1: a member can forge sealed text as another member; sealed
-messages can be replayed by someone with the room PSK; positions and telemetry are accepted from any
-channel; a member can announce a false phone key for someone else, which cannot let them read that
+Written up in `docs/security.md` §1: a member can forge sealed text as another member; positions and
+telemetry are accepted from any channel; a member can announce a false phone key for someone else, which cannot let them read that
 person's next key but can make that person miss it.
 
 ---
@@ -858,8 +858,8 @@ receipt, position or pin grows by a single byte, and nothing about chatting chan
 do not fit as they are: its ratchets send new public keys with messages and its post-quantum keys are
 about 1 KB, larger than four LoRa packets. So each protection here is rebuilt from what the radio can carry.
 
-**The byte budget stays.** Sealing costs 29 bytes today: a version byte, a 12-byte random nonce and a
-16-byte tag. Version `02` keeps all 29 and changes only what the nonce carries: a 2-byte number for the
+**The byte budget stays.** Sealing cost 29 bytes before this stage: a version byte, a 12-byte random
+nonce and a 16-byte tag. Version `02` keeps all 29 and changes only what the nonce carries: a 2-byte number for the
 hour the key belongs to, then 10 random bytes. Each sender has a key of their own for each hour, so 10
 random bytes are far more than a nonce needs.
 
@@ -894,6 +894,43 @@ random bytes are far more than a nonce needs.
 6. **Proof of sender, within the limits.** Meshtastic 2.8 radio signatures are shown per message, at no cost
    to the message. Phone keys learned in person always win over later announcements, which closes the gap
    where a member could name a false key for someone else.
+
+### Phase 1 record
+
+Done on both apps, byte for byte, with no change to any chat, receipt, position or pin size
+(`ProtocolContractTest`, `SealedTextTest`):
+
+- `RoomRatchet`: hour `h` counts UTC hours since 1970; `E(h+1) = HMAC(E(h), "firepit-hour-v1" ‖ room ‖
+  generation ‖ h+1 ‖ 1)`; a sender's key is `HMAC(E(h), "firepit-sender-v1" ‖ room ‖ generation ‖ h ‖
+  sender ‖ 1)`. A message opens in the hour just gone, this one or the next.
+- `SealedText` version `02`: the nonce starts with the hour's low 16 bits; version `01` is no longer
+  read.
+- `RoomKeyStore` keeps one hour's key per generation, moves it on and erases older hours every ten
+  minutes, keeps a superseded generation two hours (or while a member is owed a key sealed under it),
+  and stores keys from before this stage as belonging to 2026-01-01T00:00Z, so every phone migrates to
+  the same keys without a word.
+- `SeenSeals` refuses a second copy of any sealed room message, kept on disk across restarts.
+- `RoomGrant.key_hour` and `KeyRotation.key_hour` (about 4 bytes, control messages only) say which
+  hour's key is handed over; the hour is bound into the key envelope's context.
+- Tests: known answers computed with plain HMAC (`RoomRatchetTest`/`RoomRatchetTests`), the key store
+  on iOS and on an Android device (`RoomKeyStoreTest`), replay, and simulated-mesh scenarios for clocks
+  forty minutes and three hours apart, a member back after three days, a recording played back, a
+  recording kept past its hour, and a joiner. `scripts/check-android-interop.sh` opens each app's
+  hourly keys and seals in the other.
+
+Still open from the rules below:
+
+- The radio's GPS time is not yet used as a check. A clock set back is safe by construction (a phone
+  never takes the hour to be earlier than the one it holds keys for); a clock set far ahead erases
+  keys early, which `security.md` §1 states as a limit.
+- Android's `RoomKeyStoreTest` runs on a device and was compiled, not run, in this pass; the same
+  behaviour runs on iOS in `swift test`.
+- Every phone in a room has to run this build: a seal or grant from an earlier build does not open.
+- A handover counts as delivered when the member's radio acknowledges it, as before this stage, not
+  when their app has stored the key. With old generations now deleted, a member whose app failed at
+  that moment cannot be handed the key again and has to be invited again. An app-level confirmation,
+  sealed under the new key, would close this; it is a protocol change for a later phase.
+- An independent review before release.
 
 ### Rules for every phase
 

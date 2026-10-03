@@ -41,12 +41,20 @@ class CrossPlatformVectorGen {
         val text = "Meet at the ridge — نلتقي عند البوابة 👍🏽".toByteArray(Charsets.UTF_8)
         val textCtx = SealedText.contextOf(roomId = 0x0BADF00D, senderNodeNum = sender)
         put("roomKey", hex(roomKey)); put("textPlain", hex(text)); put("textContext", hex(textCtx))
-        put("sealedText", hex(SealedText.seal(roomKey, text, textCtx)))
+        // roomKey taken as one hour's key, moved on two hours, then this sender's key for that hour.
+        val generation = 3
+        val fromHour = 491_234
+        val sealHour = fromHour + 2
+        val hourKey = requireNotNull(RoomRatchet.forward(roomKey, 0x0BADF00D, generation, fromHour, sealHour))
+        val senderKey = RoomRatchet.senderKey(hourKey, 0x0BADF00D, generation, sealHour, sender)
+        put("ratchetGeneration", generation.toString()); put("ratchetFromHour", fromHour.toString())
+        put("ratchetHour", sealHour.toString())
+        put("sealedText", hex(SealedText.seal(senderKey, sealHour, text, textCtx)))
         put("roomCipherEmpty", hex(RoomCipher.seal(roomKey, ByteArray(0), ByteArray(0))))
 
         val joiner = KeyEnvelope.generateKeyPair()
         val joinerPub = KeyEnvelope.publicBytes(joiner.public)
-        val envCtx = KeyEnvelope.contextOf(roomId = 0x0BADF00D, generation = 3, recipientNodeNum = -42)
+        val envCtx = KeyEnvelope.contextOf(roomId = 0x0BADF00D, generation = 3, recipientNodeNum = -42, hour = 491_234)
         put("joinerScalar", hex(scalar(joiner.private))); put("joinerPkcs8", hex(joiner.private.encoded))
         put("joinerPublic", hex(joinerPub)); put("envelopeContext", hex(envCtx))
         put("envelope", hex(KeyEnvelope.seal(joinerPub, roomKey, envCtx)))

@@ -43,15 +43,20 @@ class CrossPlatformIosVerify {
     @Test
     fun `a room message sealed on iOS opens on Android`() {
         assertArrayEquals(bytes("textContext"), SealedText.contextOf(0x0BADF00D, sender))
-        assertArrayEquals(
-            bytes("textPlain"),
-            SealedText.open(bytes("roomKey"), bytes("sealedText"), bytes("textContext")),
+        // Derived here from the room key alone: if the two apps moved keys on differently, it would not open.
+        val generation = vectors.getValue("ratchetGeneration").toInt()
+        val hour = vectors.getValue("ratchetHour").toInt()
+        val hourKey = requireNotNull(
+            RoomRatchet.forward(bytes("roomKey"), 0x0BADF00D, generation, vectors.getValue("ratchetFromHour").toInt(), hour),
         )
+        val senderKey = RoomRatchet.senderKey(hourKey, 0x0BADF00D, generation, hour, sender)
+        assertEquals(RoomRatchet.tagOf(hour), SealedText.hourTagOf(bytes("sealedText")))
+        assertArrayEquals(bytes("textPlain"), SealedText.open(senderKey, bytes("sealedText"), bytes("textContext")))
     }
 
     @Test
     fun `a room key sealed on iOS to this phone opens on Android`() {
-        assertArrayEquals(bytes("envelopeContext"), KeyEnvelope.contextOf(0x0BADF00D, 3, -42))
+        assertArrayEquals(bytes("envelopeContext"), KeyEnvelope.contextOf(0x0BADF00D, 3, -42, 491_234))
         assertArrayEquals(
             bytes("roomKey"),
             KeyEnvelope.open(privateFrom("joinerScalar"), bytes("joinerPublic"), bytes("envelope"), bytes("envelopeContext")),

@@ -46,8 +46,16 @@ object RoomCipher {
      * [context] is authenticated but not sent — bind the room and sender to it
      * so a sealed message cannot be replayed into another room or re-attributed.
      */
-    fun seal(key: ByteArray, plaintext: ByteArray, context: ByteArray = ByteArray(0)): ByteArray {
-        val nonce = ByteArray(NONCE_SIZE).also(random::nextBytes)
+    fun seal(key: ByteArray, plaintext: ByteArray, context: ByteArray = ByteArray(0)): ByteArray =
+        seal(key, plaintext, context, randomBytes(NONCE_SIZE))
+
+    /**
+     * With a nonce the caller built, for a format that carries something of
+     * its own in it. Whatever that is, the caller still owes GCM a nonce that
+     * never repeats under [key].
+     */
+    internal fun seal(key: ByteArray, plaintext: ByteArray, context: ByteArray, nonce: ByteArray): ByteArray {
+        require(nonce.size == NONCE_SIZE) { "A nonce is $NONCE_SIZE bytes, not ${nonce.size}" }
         val cipher = Cipher.getInstance(TRANSFORMATION).apply {
             init(Cipher.ENCRYPT_MODE, keyOf(key), GCMParameterSpec(TAG_SIZE * 8, nonce))
             updateAAD(context)
@@ -74,6 +82,8 @@ object RoomCipher {
             null
         }
     }
+
+    internal fun randomBytes(size: Int): ByteArray = ByteArray(size).also(random::nextBytes)
 
     private fun keyOf(key: ByteArray): SecretKeySpec {
         require(key.size == KEY_SIZE) { "A room key is $KEY_SIZE bytes, not ${key.size}" }

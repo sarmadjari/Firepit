@@ -150,10 +150,12 @@ Encryption is always on. Nothing to configure, no way to turn it off.
 **A custom E2E layer was first considered and rejected, and that decision has since been reversed.** The original reasoning was that native PKI DMs already give a pairwise layer, a second one costs bytes, and rooms had no key management. It does not survive the radio: a radio hands its private key and every channel key to any phone that connects, so anyone holding a member's radio — or pairing with it over Bluetooth — could read rooms, direct messages, positions and pins. A layer the radio never sees is the only thing that changes that. What exists now:
 
 - `RoomCipher` — AES-256-GCM, 28 bytes of overhead, platform crypto only
-- `SealedText` — a version byte plus ciphertext, 171 characters of room inside one packet
+- `SealedText` — a version byte, a nonce that says which hour sealed it, then ciphertext: 171 characters of room inside one packet
+- `RoomRatchet` — moves each room key on every hour, one way, and gives each sender a key of their own
 - `KeyEnvelope` — how a room key reaches one phone, sealed to its P-256 key
 - `DirectSeal` — how one person's words reach one phone, 170 characters inside one PKI packet
-- `RoomKeyStore`, `PhoneKeyStore` — keys wrapped by the Android Keystore
+- `RoomKeyStore`, `PhoneKeyStore` — keys wrapped by the Android Keystore; room keys keep only the hour just gone
+- `SeenSeals` — each sealed room message opens once, so a recording played back is ignored
 - `RoomAdmin` — ECDSA P-256, the signatures admin-only invites will rest on
 
 ### Who has read what
@@ -195,7 +197,7 @@ Nothing takes a key back from a person who already holds it. Removing somebody i
 
 **A notice goes out on the old key**, once, so a member who missed the handover sees a reason rather than a room that went quiet.
 
-**History survives.** Keys are kept per generation and a sealed message carries the generation that sealed it, so the conversation from before a rotation still opens. It also still opens for the person removed: they keep what they already received, and the UI says so instead of suggesting the past can be withdrawn.
+**History survives.** History is stored on the phone already opened, so a rotation takes nothing from anyone who stays. The old generation's key is kept for two hours more, so a message sealed just before the rotation still opens when the mesh delivers it late, then deleted (sooner keys are covered by the hourly ratchet; see security.md §3). The person removed keeps what they already received, and the UI says so instead of suggesting the past can be withdrawn.
 
 **What the room sees.** A line in the conversation naming who was removed and stating that the key changed — written by the room, not by anyone in it.
 
@@ -289,6 +291,7 @@ The cost is real and accepted: you cannot add someone who is not with you. That 
 | Roster trust chain | inviter broadcasts a JOINED event to the room | guide D-3 |
 | Room words | sealed under a room key the radio never holds; 171 bytes per packet | design §6, guide §6.8.5 |
 | Removing someone | rotate to a new generation; new keys sent per member as PKI DMs | design §6 |
+| Room keys over time | moved on every hour, one way, with old hours erased; each sender seals under a key of their own; each message opens once. No byte added: the hour rides in the nonce (2026-10, Stage 11 phase 1) | security.md §3, build plan Stage 11 |
 | Room messages | sent with `want_ack` for the "heard by the mesh" tick; no delivery claim | guide D-5, UX §7.2 |
 | Live location | precision toggle per room for start/stop; duration tier change may restart the node; presets 15 min · 1 h · 8 h · Custom | guide D-6, UX U-6 |
 | Telemetry | device telemetry on, every 30 min, primary channel | guide D-7 |
