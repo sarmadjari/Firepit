@@ -9,6 +9,8 @@ to each other over kilometres, with no phone network, no internet, no servers an
 There are two native apps, **Android** (Kotlin) and **iPhone** (Swift). They speak exactly the same protocol, so
 Android and iPhone users can share a room.
 
+**Website:** [firepit.sarmad.no](https://firepit.sarmad.no)
+
 ---
 
 ## What it does
@@ -64,6 +66,7 @@ Known differences between the two apps, such as iOS not allowing apps to block s
 | [`protos/`](protos) | The wire contract both apps are built from: Meshtastic protobufs (pinned at v2.8.0), Firepit's own `meshchat.proto`, and the app-wide primary-channel key |
 | [`docs/`](docs) | How it works, security, protocol, UX, product, build history. Start at [docs/README.md](docs/README.md) |
 | [`design/`](design) | The app icon, Figma exports and reference screens |
+| [`website/`](website) | The project website, [firepit.sarmad.no](https://firepit.sarmad.no): plain HTML and CSS, published by GitHub Pages |
 | [`scripts/`](scripts) | Checks that keep the two apps identical, and iOS tooling |
 | [`archive/`](archive) | Old prototypes and design files, kept for the record and not maintained |
 
@@ -153,6 +156,21 @@ This is the full gate, run before every push. It:
 GitHub CI runs the Android build, tests and lint, and the protobuf-copy check, on every push to `main` and every
 pull request. The iOS steps need a Mac, so they run locally through `verify-all.sh`.
 
+## Website
+
+[firepit.sarmad.no](https://firepit.sarmad.no) is a single static page in `website/`: HTML, CSS and a few lines of
+JavaScript, with no build step, no web fonts, no cookies and no third-party requests (its Content-Security-Policy
+allows only its own files). Light and dark follow the visitor's setting, using the apps' own colour tokens.
+
+```bash
+python3 -m http.server 8000 --directory website   # preview at http://localhost:8000
+scripts/capture-site-screens.sh                    # refresh the app screenshots from the iOS demo mode
+```
+
+Pushing a change under `website/` to `main` publishes it: the `Website` workflow
+(`.github/workflows/pages.yml`) uploads that folder to GitHub Pages, which serves it on the custom domain. Keep its
+claims in line with the documents; it describes the same features in fewer words.
+
 ## Scripts
 
 | Script | What it does |
@@ -165,6 +183,7 @@ pull request. The iOS steps need a Mac, so they run locally through `verify-all.
 | `scripts/gen-swift-protos.sh` | Regenerates the Swift protobuf code with tools built from the pinned SwiftProtobuf |
 | `scripts/sync-ios-glyphs.py` | Copies the drawings both apps must show identically (room icons, radio roles, the map pin) from Android into iOS. `--check` reports drift |
 | `scripts/render-ios-app-icon.swift` | Renders the iOS app icon from `design/artwork/icon-app.svg` |
+| `scripts/capture-site-screens.sh` | Captures the website's app screenshots from the iOS demo mode, in light and dark, with no phone signal in the status bar |
 | `scripts/fetch-refs.sh` | Fetches the Meshtastic firmware and reference apps into `refs/` (git-ignored), to cite when firmware behaviour matters |
 
 ## Documentation

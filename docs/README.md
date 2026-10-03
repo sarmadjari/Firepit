@@ -32,6 +32,7 @@ Which document answers which question, how current each one is, and where to sta
 | [../CLAUDE.md](../CLAUDE.md) | Working rules for everyone who changes code: sources of truth, protocol rules, toolchains, workflow |
 | [../protos/UPSTREAM.md](../protos/UPSTREAM.md) | Which Meshtastic protobufs are vendored, at which version, and the constants the apps depend on |
 | [../design/README.md](../design/README.md) | The app icon, the one-colour mark, Figma exports and reference screenshots |
+| [../website/](../website) | The project website, [firepit.sarmad.no](https://firepit.sarmad.no): what Firepit is, why, how it works, and what it adds on top of Meshtastic |
 | [../archive/README.md](../archive/README.md) | Kept for the record: the first Android prototype, the MeshChat-era design, the first icon, the 2026-09-30 reorganisation |
 
 ## Reading paths

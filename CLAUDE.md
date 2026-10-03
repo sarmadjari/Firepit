@@ -67,6 +67,7 @@ they differ, Android's code decides behaviour and wire format.
 | `protos/` | Vendored Meshtastic protos + `meshchat/meshchat.proto` + app-wide primary key. |
 | `docs/` | Start with `architecture.md`; `README.md` there indexes the rest: design docs, `build-plan.md`, `security.md`, `ios-ui-porting-rules.md`, the WisMesh Tag guide. |
 | `design/` | Brand (the icon both apps use), Figma exports, reference renders. See `design/README.md`. No build reads it. |
+| `website/` | The public site, firepit.sarmad.no: static HTML/CSS, no third-party requests, deployed by `.github/workflows/pages.yml`. Screenshots come from `scripts/capture-site-screens.sh`. |
 | `scripts/` | Cross-platform checks and iOS tooling. `verify-all.sh` runs the full gate. |
 | `archive/` | Not maintained and not built: the Android design prototype, the MeshChat-era design, the 2026-09-30 reorganisation record. |
 | `refs/` | Git-ignored: reference clones (`scripts/fetch-refs.sh`) and tool builds. |
@@ -144,7 +145,7 @@ xcodebuild test -project ios/Firepit.xcodeproj -scheme Firepit \
   test suites, the protos copy, crypto interop in both directions and DAO parity.
 - Keep docs in sync: a behaviour change updates the relevant doc section in the same commit.
 - Commits: Conventional Commits with a scope, subject in plain English — `feat(android): …`, `fix(ios): …`,
-  `docs: …`. Scopes: `android`, `ios`, `protos`, `design`, `docs`, `scripts`, `ci`, `repo`.
+  `docs: …`. Scopes: `android`, `ios`, `protos`, `design`, `docs`, `website`, `scripts`, `ci`, `repo`.
 
 ## Licensing
 
