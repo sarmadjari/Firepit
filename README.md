@@ -51,8 +51,8 @@ Android and iPhone users can share a room.
 | Android app | ✅ Built: all v1 features except quick replies and emoji reactions |
 | iPhone app | ✅ Built: a one-to-one port of the Android app, with the same features |
 | Android ↔ iPhone compatibility | ✅ Proven by tests: each app opens what the other encrypts. ⏳ Not yet tested on real radios |
-| Field test | ⏳ A full afternoon outdoors with several phones and radios is still to do |
-| Release | ⏳ Not started: store listings, accessibility and right-to-left pass, Arabic, licence (see below) |
+| Field test | ⏳ Initial field tests under way. The main tests, including a full afternoon outdoors with several phones and radios, decide the release |
+| Release | ⏳ Once the main field tests pass. Still to do before then: store listings, accessibility and right-to-left pass, Arabic, licence (see below) |
 
 Known differences between the two apps, such as iOS not allowing apps to block screenshots, are listed in
 [docs/architecture.md §10](docs/architecture.md#10-where-android-and-ios-differ).

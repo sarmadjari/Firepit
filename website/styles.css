@@ -332,6 +332,7 @@ svg.icon, .fact-ico svg, .f-ico svg, .node-ico svg {
   background: color-mix(in srgb, var(--surface-2) 70%, transparent);
   font-size: 13.5px; color: var(--text-2);
 }
+.eyebrow-dot { flex: none; }
 .eyebrow a {
   color: inherit; text-decoration: underline dotted color-mix(in srgb, var(--primary) 70%, transparent);
   text-underline-offset: 3px; transition: color 0.2s;
@@ -362,7 +363,7 @@ h1 em, h2 em { font-style: italic; font-weight: 400; color: var(--primary); }
   display: flex; align-items: center; gap: 10px; margin-top: 32px;
   font-family: var(--font-mono); font-size: 13px; letter-spacing: 0.02em; color: var(--text-2);
 }
-.status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); animation: breathe 2.6s ease-in-out infinite; }
+.status-dot { flex: none; align-self: flex-start; width: 7px; height: 7px; margin-top: 0.5em; border-radius: 50%; background: var(--warn); animation: breathe 2.6s ease-in-out infinite; }
 @keyframes breathe { 50% { opacity: 0.3; } }
 
 /* Phones */
@@ -648,7 +649,12 @@ h2 {
   color: var(--text-2);
 }
 .wire-tag .lock:last-of-type { margin-right: 4px; }
-.wire-val code, .wire-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Long values fade out at the edge rather than end in an ellipsis. */
+.wire-val code, .wire-text {
+  min-width: 0; overflow: hidden; white-space: nowrap;
+  -webkit-mask-image: linear-gradient(90deg, #000 82%, transparent);
+  mask-image: linear-gradient(90deg, #000 82%, transparent);
+}
 .wire-val code { font-family: var(--font-mono); font-size: 13.5px; letter-spacing: 0.04em; }
 .wire-text { font-size: 15px; color: var(--text); }
 .v-sealed { background: var(--primary-soft); border-color: color-mix(in srgb, var(--primary) 30%, var(--line)); }

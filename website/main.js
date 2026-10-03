@@ -97,7 +97,7 @@ function playPacketStory(reduceMotion) {
 
   // What sealed bytes look like: new for every message, as real encryption would make them.
   const randomHex = (count) => [...crypto.getRandomValues(new Uint8Array(count))]
-    .map((b) => b.toString(16).padStart(2, '0').toUpperCase()).join(' ') + ' …';
+    .map((b) => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
 
   let message = 0;
   let step = 0;
@@ -111,9 +111,9 @@ function playPacketStory(reduceMotion) {
 
     if (step === 0) {
       bubbles.forEach((bubble) => { bubble.textContent = text; });
-      words.textContent = `“${text}”`;
-      sealedBytes.textContent = randomHex(12);
-      wrappedBytes.textContent = randomHex(12);
+      words.textContent = `"${text}"`;
+      sealedBytes.textContent = randomHex(16);
+      wrappedBytes.textContent = randomHex(16);
     }
     Object.assign(flow.dataset, { dir, stage, phase, content });
 

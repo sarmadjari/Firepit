@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
-  <title>Firepit — Off the grid. Still together.</title>
-  <meta name="description" content="Firepit is private group chat and a live map for Meshtastic LoRa radios. Talk and find each other with no phone signal, no internet and no accounts. For Android and iPhone.">
+  <title>Firepit | Off the grid. Still together.</title>
+  <meta name="description" content="Firepit is a private group chat and live map for Meshtastic radios. Talk and find each other with no phone signal, no internet and no accounts. For Android and iPhone.">
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#FAF7F3" media="(prefers-color-scheme: light)" data-scheme="light">
   <meta name="theme-color" content="#141210" media="(prefers-color-scheme: dark)" data-scheme="dark">
@@ -15,7 +15,7 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Firepit">
   <meta property="og:url" content="https://firepit.sarmad.no/">
-  <meta property="og:title" content="Firepit — Off the grid. Still together.">
+  <meta property="og:title" content="Firepit | Off the grid. Still together.">
   <meta property="og:description" content="Private group chat and a live map for Meshtastic LoRa radios. No phone signal, no internet, no accounts. For Android and iPhone.">
   <meta property="og:image" content="https://firepit.sarmad.no/assets/og.jpg">
   <meta property="og:image:width" content="1200">
@@ -95,14 +95,14 @@
 
       <div class="wrap hero-grid">
         <div class="hero-copy">
-          <p class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span>For <a href="#meshtastic">Meshtastic radios</a> · Android &amp; iPhone</p>
+          <p class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span><span>Android and iPhone app for <a href="#meshtastic">Meshtastic radios</a></span></p>
           <h1 id="hero-title">Off the grid.<br><em>Still together.</em></h1>
-          <p class="hero-lead">Firepit is private group chat and a live map that run on small LoRa radios. Talk and find each other where phones have no signal: no internet, no accounts, no servers.</p>
+          <p class="hero-lead">Firepit is a private group chat and live map that works over small radios. Talk with your group and see where everyone is, even where phones have no signal. No internet, no accounts, no servers.</p>
           <div class="actions">
             <a class="btn btn-primary" href="#how">See how it works</a>
             <a class="btn btn-ghost" href="#features">What makes it different</a>
           </div>
-          <p class="status"><span class="status-dot" aria-hidden="true"></span>In development · field testing next</p>
+          <p class="status"><span class="status-dot" aria-hidden="true"></span>Now in initial field tests. Release when the main tests pass.</p>
         </div>
 
         <div class="hero-devices">
@@ -138,7 +138,7 @@
         <p class="kicker reveal"><span class="kicker-n">01</span><span class="kicker-line" aria-hidden="true"></span>What is Firepit</p>
         <div class="intro">
           <h2 id="what-title" class="reveal">Group chat and a live map, <em>carried by radio.</em></h2>
-          <p class="lede reveal">Everyone in the group carries a pocket-sized Meshtastic radio, paired with their phone over Bluetooth. The radios pass messages to each other, hop by hop, across kilometres of valley, forest or festival field. Firepit turns that mesh into something anyone can use: rooms you join by scanning a code, messages with honest ticks, and a map that shows where everyone is.</p>
+          <p class="lede reveal">Each person carries a small Meshtastic radio, connected to their phone by Bluetooth. The radios pass messages to each other over kilometres of forest, mountain or festival field. Firepit makes this easy for everyone: join a room by scanning a code, chat with your group, and see everyone on a map.</p>
         </div>
 
         <ul class="facts">
@@ -147,21 +147,21 @@
               <svg viewBox="0 0 24 24"><path d="M4 20v-3M9 20v-6M14 20v-9M19 20V5"/><path d="M3 3l18 18"/></svg>
             </span>
             <h3>No signal needed</h3>
-            <p>LoRa radios reach for kilometres and relay for each other. No towers, no Wi-Fi, no internet.</p>
+            <p>The radios reach for kilometres and pass messages on for each other. No phone towers, Wi-Fi or internet needed.</p>
           </li>
           <li class="fact reveal">
             <span class="fact-ico" aria-hidden="true">
               <svg viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/><path d="M12 14.5v2"/></svg>
             </span>
             <h3>Private by design</h3>
-            <p>In a Firepit room, words, positions and pins are sealed on your phone. The radios in between carry only ciphertext.</p>
+            <p>Messages, locations and pins are encrypted on your phone before they leave it. The radios that carry them cannot read them.</p>
           </li>
           <li class="fact reveal">
             <span class="fact-ico" aria-hidden="true">
               <svg viewBox="0 0 24 24"><rect x="2.5" y="5" width="9" height="16" rx="2.2"/><rect x="12.5" y="3" width="9" height="16" rx="2.2"/><path d="M6 18h2M16 16h2"/></svg>
             </span>
             <h3>Android and iPhone</h3>
-            <p>Two native apps that speak exactly the same protocol, so everyone fits in the same room.</p>
+            <p>Android and iPhone users chat in the same rooms. Both apps work the same way.</p>
           </li>
         </ul>
       </div>
@@ -174,7 +174,7 @@
           <div class="mesh-copy">
             <p class="kicker"><span class="kicker-n">02</span><span class="kicker-line" aria-hidden="true"></span>Built on Meshtastic</p>
             <h2 id="meshtastic-title">Meshtastic is the network. <em>Firepit is the conversation.</em></h2>
-            <p class="lede">Meshtastic is a free, open-source project that turns small, low-cost LoRa radios into a mesh network. Every radio passes on the messages it hears, so people can stay in touch across kilometres with no phone signal, no internet and no towers. Volunteers around the world build it, and it uses radio bands that need no licence in most countries.</p>
+            <p class="lede">Meshtastic is a free, open-source project that turns small, low-cost LoRa radios into a mesh network. Each radio passes on the messages it hears, so people stay in touch over kilometres without phone signal or internet.</p>
             <p class="mesh-note">Firepit is an independent app that works with any Meshtastic radio. It is not part of the Meshtastic project.</p>
             <a class="btn btn-ghost mesh-link" href="https://meshtastic.org" target="_blank" rel="noopener">Visit meshtastic.org<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg></a>
           </div>
@@ -201,16 +201,16 @@
       <div class="wrap why-grid">
         <div>
           <p class="kicker reveal"><span class="kicker-n">03</span><span class="kicker-line" aria-hidden="true"></span>Why it was created</p>
-          <h2 id="why-title" class="reveal">Phones go quiet exactly where groups <em>spread out.</em></h2>
+          <h2 id="why-title" class="reveal">Phones lose signal right where groups <em>spread out.</em></h2>
         </div>
         <div class="prose">
-          <p class="reveal">At festivals, on long trails, in the desert and in the mountains, the signal fades just as people drift apart. Meshtastic radios solve the hardest part: a network that needs no towers at all.</p>
-          <p class="reveal">But turning those radios into a group chat meant channels, keys and settings, and it was less private than it looked. A radio shares its channel keys with any phone paired to it, so whoever holds a friend's radio can read the whole group.</p>
+          <p class="reveal">At festivals, on long trails and in the mountains, phones lose signal just when people drift apart. Meshtastic radios solve the hardest part: a network that needs no towers.</p>
+          <p class="reveal">But using them as a group chat was hard to set up, and less private than it looks. Anyone who gets hold of a friend's radio can read the whole group's messages.</p>
           <p class="reveal">Firepit was made to fix both: simple enough for everyone around the fire, and private enough that what people say stays on their phones.</p>
         </div>
       </div>
       <figure class="wrap quote reveal">
-        <blockquote>No accounts, no servers, no public directory. Just a room, a few friends, and a&nbsp;mesh.</blockquote>
+        <blockquote>No accounts, no servers, no sign-up. Just a room, a few friends and a&nbsp;mesh.</blockquote>
       </figure>
     </section>
 
@@ -220,7 +220,7 @@
         <p class="kicker reveal"><span class="kicker-n">04</span><span class="kicker-line" aria-hidden="true"></span>How it works</p>
         <div class="intro">
           <h2 id="how-title" class="reveal">Sealed on one phone. <em>Opened on another.</em></h2>
-          <p class="lede reveal">Your phone talks to your radio over Bluetooth. Radios talk to each other over LoRa and pass messages along. Firepit seals everything before it leaves your phone, so every radio on the way, your own included, carries only ciphertext.</p>
+          <p class="lede reveal">Your phone connects to your radio by Bluetooth. The radios talk to each other over LoRa and pass messages along. Firepit encrypts every message before it leaves your phone, so no radio on the way can read it, not even your own.</p>
         </div>
 
         <div class="flow reveal" role="img"
@@ -265,21 +265,21 @@
           </div>
           <div class="readout">
             <div class="wire">
-              <span class="wire-val v-plain"><span class="wire-tag">Words</span><span class="wire-text">“Hi Maya! Where are you?”</span></span>
-              <span class="wire-val v-sealed"><span class="wire-tag"><i class="lock lock-room"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>Sealed</span><code>9F 2C A1 07 E4 5B 3D 88 C2 1E 6B F0 …</code></span>
-              <span class="wire-val v-wrapped"><span class="wire-tag"><i class="lock lock-room"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i><i class="lock lock-chan"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>Sealed + channel</span><code>4C 09 D1 EE 7A 31 B6 05 F0 6A 2D 93 …</code></span>
+              <span class="wire-val v-plain"><span class="wire-tag">Words</span><span class="wire-text">"Hi Maya! Where are you?"</span></span>
+              <span class="wire-val v-sealed"><span class="wire-tag"><i class="lock lock-room"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>Sealed</span><code>9F 2C A1 07 E4 5B 3D 88 C2 1E 6B F0 57 D2 0A 39</code></span>
+              <span class="wire-val v-wrapped"><span class="wire-tag"><i class="lock lock-room"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i><i class="lock lock-chan"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>Sealed + channel</span><code>4C 09 D1 EE 7A 31 B6 05 F0 6A 2D 93 E8 14 C7 5F</code></span>
             </div>
             <p class="caps">
-              <span class="cap cap-a"><span class="when-out">Ryan&#39;s phone seals his message with the room key. Only phones in the room hold it.</span><span class="when-in">Maya&#39;s phone seals her reply with the room key. Only phones in the room hold it.</span></span>
-              <span class="cap cap-b"><span class="when-out">Ryan&#39;s radio wraps it again with the channel key, as every Meshtastic radio does.</span><span class="when-in">Maya&#39;s radio wraps it again with the channel key, as every Meshtastic radio does.</span></span>
+              <span class="cap cap-a"><span class="when-out">Ryan&#39;s phone seals his message with the room key. Only phones in the room have this key.</span><span class="when-in">Maya&#39;s phone seals her reply with the room key. Only phones in the room have this key.</span></span>
+              <span class="cap cap-b"><span class="when-out">Ryan&#39;s radio adds a second layer with the channel key, as all Meshtastic radios do.</span><span class="when-in">Maya&#39;s radio adds a second layer with the channel key, as all Meshtastic radios do.</span></span>
               <span class="cap cap-c">Radios in between pass it on. None of them can open the seal.</span>
               <span class="cap cap-d"><span class="when-out">Maya&#39;s radio removes the channel layer. Inside, the message is still sealed.</span><span class="when-in">Ryan&#39;s radio removes the channel layer. Inside, the reply is still sealed.</span></span>
               <span class="cap cap-e"><span class="when-out">Maya&#39;s phone opens it with the room key, and she can read it.</span><span class="when-in">Ryan&#39;s phone opens it with the room key, and he can read it.</span></span>
               <span class="cap cap-static">Each message is sealed on the sender's phone with the room key, wrapped by the radios in the channel key, and opened only on the other phone.</span>
             </p>
             <p class="keys">
-              <span class="key"><i class="lock lock-room"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>Room key · only on members' phones</span>
-              <span class="key"><i class="lock lock-chan"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>Channel key · on the radios</span>
+              <span class="key"><i class="lock lock-room"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>Room key: only on members' phones</span>
+              <span class="key"><i class="lock lock-chan"><svg viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="7" rx="1.8"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></svg></i>Channel key: on the radios</span>
             </p>
           </div>
         </div>
@@ -290,28 +290,28 @@
               <span class="step-n" aria-hidden="true">1</span>
               <div>
                 <h3>Pair your radio</h3>
-                <p>Connect over Bluetooth. Firepit checks the radio's security settings, such as a default PIN, and offers to fix them.</p>
+                <p>Connect your radio by Bluetooth. Firepit checks its security settings, like a weak PIN, and helps you fix them.</p>
               </div>
             </li>
             <li class="step reveal">
               <span class="step-n" aria-hidden="true">2</span>
               <div>
                 <h3>Start a room</h3>
-                <p>A room lives in one of your radio's channel slots, up to seven of them. Creating one never restarts the radio.</p>
+                <p>Create a private room for your group. Each radio holds up to seven rooms.</p>
               </div>
             </li>
             <li class="step reveal">
               <span class="step-n" aria-hidden="true">3</span>
               <div>
                 <h3>Invite in person</h3>
-                <p>Show the room's QR code. It carries no key and changes every few seconds. They scan it, you compare a short key on both screens, and let them in.</p>
+                <p>Show the room's QR code to a friend next to you. They scan it, you both check a short key on screen, and you let them in.</p>
               </div>
             </li>
             <li class="step reveal">
               <span class="step-n" aria-hidden="true">4</span>
               <div>
                 <h3>Talk and share</h3>
-                <p>Send messages, share where you are for as long as you choose, and drop pins. Every radio on the way helps carry them; only your room can read them.</p>
+                <p>Send messages, share your location for as long as you want, and drop pins on the map. Only your room can read them.</p>
               </div>
             </li>
           </ol>
@@ -361,34 +361,34 @@
         <p class="kicker reveal"><span class="kicker-n">05</span><span class="kicker-line" aria-hidden="true"></span>On top of Meshtastic</p>
         <div class="intro">
           <h2 id="features-title" class="reveal">Meshtastic builds the network. <em>Firepit adds what a group needs.</em></h2>
-          <p class="lede reveal">Firepit runs on stock Meshtastic firmware 2.7 or newer and speaks the standard protocol, so every radio in range helps carry your messages. Everything below is Firepit's own.</p>
+          <p class="lede reveal">Firepit works with standard Meshtastic radios on firmware 2.7 or newer, so every radio nearby helps carry your messages. Everything below is extra, and only in Firepit.</p>
         </div>
 
         <div class="features">
           <article class="feature reveal">
             <span class="f-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l8.5-8.5M16.5 6.5l2.5 2.5M14 9l2 2"/></svg></span>
             <h3>A second lock only phones hold</h3>
-            <p>Every Firepit room has a key that never touches a radio. Words, positions and pins are sealed with it, so a lost or borrowed radio gives nothing away.</p>
+            <p>Each room has a key that stays on members' phones and never goes on a radio. If someone finds or borrows a radio, they still cannot read your messages.</p>
           </article>
           <article class="feature reveal">
             <span class="f-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="6.5" height="6.5" rx="1.4"/><rect x="14" y="3.5" width="6.5" height="6.5" rx="1.4"/><rect x="3.5" y="14" width="6.5" height="6.5" rx="1.4"/><path d="M14 14h2.5v2.5H14zM18 18h2.5v2.5H18zM18 14h2.5M14 20.5h2.5"/></svg></span>
             <h3>Invites that carry no key</h3>
-            <p>A room's QR code is shown in person and changes every few seconds. A photo of it can only ask to join, and you let people in after comparing a short key on both screens.</p>
+            <p>You invite people face to face, with a QR code that changes every few seconds. A photo of the code cannot get anyone in. You let each person in yourself.</p>
           </article>
           <article class="feature reveal">
             <span class="f-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20.5 11.5c0 4.1-3.8 7.5-8.5 7.5-1.2 0-2.4-.2-3.4-.6L3.5 20l1.4-3.7c-.9-1.4-1.4-3-1.4-4.8C3.5 7.4 7.3 4 12 4s8.5 3.4 8.5 7.5z"/><rect x="9.4" y="11" width="5.2" height="4.2" rx="1"/><path d="M10.4 11v-1a1.6 1.6 0 0 1 3.2 0v1"/></svg></span>
             <h3>Direct messages, sealed twice</h3>
-            <p>Between people who share a room, a direct message is sealed from one phone to the other, inside the radios' own encryption. Neither radio can read it.</p>
+            <p>Private messages to people in your rooms are encrypted from one phone to the other. Not even the two radios can read them.</p>
           </article>
           <article class="feature reveal">
             <span class="f-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 0 1-12.8 5.3M4.5 12a7.5 7.5 0 0 1 12.8-5.3"/><path d="M17.5 3v4h-4M6.5 21v-4h4"/></svg></span>
             <h3>Remove someone, change the lock</h3>
-            <p>Removing a member gives everyone who stays a new room key. The person removed keeps what they already saw, and can read nothing new.</p>
+            <p>When you remove someone, the room gets a new key. They keep what they already saw, but cannot read anything new.</p>
           </article>
           <article class="feature reveal">
             <span class="f-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2.5 12.5l4 4 8.5-9.5M11 15.5l1 1 8.5-9.5"/></svg></span>
             <h3>Ticks that tell the truth</h3>
-            <p>Each tick claims only what the mesh can prove. "Read by" comes sealed from the readers' own phones, and nobody is ever shown as "online".</p>
+            <p>Ticks only show what really happened. "Read" comes from the reader's own phone, and there is no fake "online" status.</p>
             <ul class="ticks" aria-label="Delivery ticks">
               <li><svg class="t-wait" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.3"/></svg>Sending</li>
               <li><svg class="t-sent" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3 3 7-7.5"/></svg>Sent to your node</li>
@@ -399,36 +399,36 @@
           <article class="feature reveal">
             <span class="f-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><path d="M12 7.2v3.1l2.1 1.3"/></svg></span>
             <h3>Location on your terms</h3>
-            <p>Share where you are with one room, for an hour, four hours, a day, or until you stop. Your phone seals every position, and sharing pauses while it is away from your radio.</p>
+            <p>Share your location with one room, for 1 hour, 4 hours, a day, or until you stop. Your location is encrypted too.</p>
           </article>
           <article class="feature reveal">
             <span class="f-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 21V4M6 4.5h11l-2.5 4 2.5 4H6"/></svg></span>
             <h3>Pins only your group can see</h3>
-            <p>Drop a meeting point with a note. Pins are sealed to the room, and only the person who placed one can move or remove it.</p>
+            <p>Drop a pin with a note, like a meeting point. Only your room can see it, and only you can move or delete it.</p>
           </article>
           <article class="feature reveal">
             <span class="f-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5.5c0 4.4-3 8.2-7 9.5-4-1.3-7-5.1-7-9.5V6l7-3z"/><path d="M9 12l2.2 2.2L15.5 10"/></svg></span>
             <h3>A health check for your radio</h3>
-            <p>Every time you connect, Firepit looks for risky settings, such as a missing or default Bluetooth PIN, remote admin or MQTT, and offers a one-tap fix.</p>
+            <p>Each time you connect, Firepit checks your radio for risky settings, like a weak Bluetooth PIN, and helps you fix them in one tap.</p>
           </article>
           <article class="feature reveal">
             <span class="f-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg></span>
             <h3>Every room says who can read it</h3>
-            <p>Each room carries a clear label: only the people you invited, anyone who has the channel's key, or every Meshtastic radio in range. Firepit refuses to send on a channel with no encryption.</p>
+            <p>Each room shows who can read it: only the people you invited, anyone with the channel key, or everyone nearby. Firepit never sends on a channel without encryption.</p>
           </article>
         </div>
 
         <div class="extras-block reveal">
-          <h3 class="extras-title">And the quieter details</h3>
+          <h3 class="extras-title">Also included</h3>
           <ul class="extras">
-            <li>Offline map areas</li>
-            <li>The map never fetches tiles where your group is until you ask</li>
-            <li>History deletes itself after a day, a week or a month</li>
+            <li>Maps that work offline</li>
+            <li>The online map only loads your group's area when you ask</li>
+            <li>Messages delete themselves after a day, a week or a month</li>
             <li>Quiet rooms can be left automatically</li>
-            <li>A radio mode that hides you from ordinary Meshtastic radios</li>
-            <li>"Our nodes only" or "Nearby radios too"</li>
-            <li>Personal, Base and Router radio roles</li>
-            <li>Light and dark</li>
+            <li>A private mode that hides your radio from other Meshtastic users</li>
+            <li>Choose who passes your messages on: your group's radios only, or nearby radios too</li>
+            <li>Set up radios as Personal, Base or Router</li>
+            <li>Light and dark mode</li>
           </ul>
         </div>
       </div>
@@ -440,7 +440,7 @@
       <div class="wrap closing-inner">
         <img class="closing-icon reveal" src="assets/icon.svg" alt="" width="96" height="96">
         <h2 id="closing-title" class="reveal">Gather round.</h2>
-        <p class="reveal">Firepit is in development for Android and iPhone, with field tests coming next. It works with any Meshtastic radio on firmware 2.7 or newer.</p>
+        <p class="reveal">Firepit for Android and iPhone is now in initial field tests. It will be released once it passes the main tests. It works with any Meshtastic radio on firmware 2.7 or newer.</p>
       </div>
     </section>
   </main>
@@ -452,7 +452,7 @@
         <span>Firepit</span>
       </div>
       <p>Private group chat and a live map for Meshtastic radios.</p>
-      <p class="fine">This site sets no cookies and makes no third-party requests. A theme you pick is remembered in this browser only.</p>
+      <p class="fine">This site uses no cookies and loads nothing from other websites. Your theme choice is saved in this browser only.</p>
       <p class="fine">Meshtastic® is a registered trademark of Meshtastic LLC. Firepit is an independent project and is not affiliated with or endorsed by Meshtastic LLC.</p>
       <p class="fine">© 2026 Sarmad Jari</p>
     </div>
