@@ -6,8 +6,8 @@ Each stage records what it built, what broke, and what is still unverified.
 Companion to `meshchat-app-design.md` (product), `meshchat-implementation-guide.md` (protocol),
 `meshchat-ux-design.md` (screens), `meshchat-v1-scope.md` (decisions).
 
-Eleven planned stages (0–10), each with a demoable outcome and an exit proof, plus five the work
-itself called for (7.5–7.9). Adaptive/foldable work is a thread inside every UI stage, never a stage
+Eleven planned stages (0–10), each with a demoable outcome and an exit proof, plus six the work
+itself called for (7.5–7.9 and 11). Adaptive/foldable work is a thread inside every UI stage, never a stage
 of its own — retrofitting it later costs 3–4×.
 
 **Decisions taken 2026-09-09:** Hilt for DI · Kable for BLE · RTL/Arabic supported (layouts
@@ -23,6 +23,7 @@ RTL-ready from Stage 3) · invite-link domain deferred until Stage 8.
 | 8 | v1.0 features | ✅ Built, except emoji reactions |
 | 9 | Release prep: accessibility and RTL pass, R8, store listing | Not started |
 | 10 | The iPhone app | ✅ Built. An iPhone and an Android phone in one room over real radios is still to be tested |
+| 11 | Security within Meshtastic's limits: Signal-grade protections where the radio allows, with no message growing by a byte | In progress: Phase 1 |
 
 ---
 
@@ -847,6 +848,71 @@ reference: when the two disagree, Android's code decides.
 What iOS allows differs from Android in places: screenshots cannot be blocked, the database has iOS
 file encryption rather than SQLCipher, the Keychain survives a reinstall, and there is no keyboard
 learning switch. `architecture.md` §10 and `security.md` §11 list them all.
+
+---
+
+## Stage 11 — Security within Meshtastic's limits
+
+The goal is Signal-grade protection wherever the radio allows it, under two hard rules: no chat message,
+receipt, position or pin grows by a single byte, and nothing about chatting changes. Signal's own methods
+do not fit as they are: its ratchets send new public keys with messages and its post-quantum keys are
+about 1 KB, larger than four LoRa packets. So each protection here is rebuilt from what the radio can carry.
+
+**The byte budget stays.** Sealing costs 29 bytes today: a version byte, a 12-byte random nonce and a
+16-byte tag. Version `02` keeps all 29 and changes only what the nonce carries: a 2-byte number for the
+hour the key belongs to, then 10 random bytes. Each sender has a key of their own for each hour, so 10
+random bytes are far more than a nonce needs.
+
+### Phases
+
+1. **Forward secrecy and replay protection for rooms.** Every hour each phone derives the next room key
+   from the current one with HKDF, a one-way step, and deletes the old one after an hour's grace for late
+   packets. No radio traffic is needed: every phone computes the same next key. Each sender seals with a
+   key of their own derived from the hour's key. A phone remembers the nonces it has seen in the hours it
+   can still open and refuses exact copies; once an hour's key is gone, a recording of it cannot be opened
+   at all. A joiner receives the current hour's key rather than the room's first one, so they cannot read
+   what was recorded before they joined. Old key generations are deleted after a grace period instead of
+   being kept for good. Someone who later steals a phone's keys reads at most about the last hour of what
+   they recorded, not the room's whole history.
+2. **Forward secrecy for direct messages.** The phone-to-phone key is mixed with the current hourly key of
+   a room both people share. An attacker then needs a phone's private key and that hour's room key, which
+   no longer exists after the hour; other members still cannot read it, because they hold neither phone's
+   private key. The receiver tries the rooms it shares with the sender, at most 7 rooms and 2 hours, so the
+   message carries nothing extra.
+3. **Quantum hedging through the in-person invite.** The invite QR gains a 16-byte random secret that is
+   shown on screen and never transmitted, and it is mixed into the key that protects the grant. Someone who
+   records every radio packet and later has a quantum computer still cannot open the grant, so cannot open
+   anything that follows from it. Key changes are mixed with the current hourly key, so every link traces
+   back to a secret that never went over the air. Radio bytes are unchanged; the QR is slightly denser.
+4. **Recovery after a break-in.** Room keys change on a schedule (a setting: daily by default, weekly, or
+   never) through the existing key-change messages, one small packet per member and never per chat
+   message. Android's phone key moves into secure hardware through Keystore key agreement (Android 12 and
+   newer), as the iPhone's already lives in the Secure Enclave: a key that cannot be copied means a thief is
+   locked out at the next change. A contact's phone key changing raises an alert.
+5. **Phone storage.** The iPhone's database is encrypted with SQLCipher, as on Android, and key material is
+   wiped from memory where the platforms allow.
+6. **Proof of sender, within the limits.** Meshtastic 2.8 radio signatures are shown per message, at no cost
+   to the message. Phone keys learned in person always win over later announcements, which closes the gap
+   where a member could name a false key for someone else.
+
+### Rules for every phase
+
+- Android first; iOS ported with the same names and the same bytes.
+- New interop vectors, opened in both directions by `scripts/check-android-interop.sh`.
+- A contract test proves the sealing overhead and every message limit are unchanged.
+- Simulated-mesh scenarios: a member back after days away, late packets across the hour, phone clocks an
+  hour apart, replayed copies, joiners, and recordings that stay closed once keys are deleted, even with
+  the phone's own key.
+- A wrongly set clock must not make a phone delete keys it still needs; the radio's GPS time is used as a
+  check where there is one.
+- `security.md` and `architecture.md` change in the same commit as the behaviour.
+- An independent review before release.
+
+### Not possible without adding bytes
+
+Per-message recovery after a break-in (it needs a new public key in every message), per-person signatures
+inside a room (64 bytes each) and ML-KEM post-quantum keys (about 1 KB). Each is weighed again if the
+zero-size rule is ever relaxed.
 
 ---
 
