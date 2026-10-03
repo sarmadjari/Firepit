@@ -326,6 +326,11 @@ svg.icon, .fact-ico svg, .f-ico svg, .node-ico svg {
   background: color-mix(in srgb, var(--surface-2) 70%, transparent);
   font-size: 13.5px; color: var(--text-2);
 }
+.eyebrow a {
+  color: inherit; text-decoration: underline dotted color-mix(in srgb, var(--primary) 70%, transparent);
+  text-underline-offset: 3px; transition: color 0.2s;
+}
+.eyebrow a:hover { color: var(--text); }
 .eyebrow-dot {
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--primary);
@@ -448,7 +453,29 @@ h2 {
 .fact h3, .feature h3, .step h3 { margin-bottom: 8px; font-size: 18.5px; font-weight: 600; line-height: 1.3; letter-spacing: -0.01em; }
 .fact p, .feature p, .step p { font-size: 16px; line-height: 1.62; color: var(--text-2); }
 
-/* 02 Why */
+/* 02 Built on Meshtastic: the network Firepit runs on, as one card */
+
+.section-mesh { padding-top: 0; }
+.mesh-card {
+  display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.7fr); align-items: center;
+  gap: clamp(32px, 5vw, 72px); padding: clamp(30px, 5vw, 64px);
+  border: 1px solid var(--line); border-radius: 32px;
+  background:
+    radial-gradient(60% 80% at 100% 0%, color-mix(in srgb, var(--primary) 8%, transparent), transparent 70%),
+    linear-gradient(180deg, var(--surface-2), var(--surface));
+  box-shadow: var(--shadow-sm);
+}
+.mesh-copy .lede { max-width: 46ch; margin-top: 24px; }
+.mesh-note { max-width: 52ch; margin-top: 16px; font-size: 14.5px; line-height: 1.55; color: var(--text-2); }
+.mesh-link { gap: 8px; margin-top: 28px; }
+.mesh-link svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.mesh-facts { display: grid; gap: 26px; }
+.mesh-facts li { display: grid; grid-template-columns: 46px 1fr; align-items: start; gap: 16px; }
+.mesh-facts .fact-ico { margin-bottom: 0; }
+.mesh-facts h3 { margin-bottom: 4px; font-size: 17px; font-weight: 600; line-height: 1.3; }
+.mesh-facts p { font-size: 15px; line-height: 1.55; color: var(--text-2); }
+
+/* 03 Why */
 
 .why-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; gap: clamp(32px, 6vw, 96px); }
 .prose p { font-size: 17.5px; line-height: 1.75; color: var(--text-2); }
@@ -470,7 +497,7 @@ h2 {
   font-size: 1.9em; font-style: normal; line-height: 0.6; color: var(--primary);
 }
 
-/* 03 How */
+/* 04 How */
 
 .flow {
   display: grid;
@@ -693,7 +720,7 @@ h2 {
 .inv-help { font-size: 3.73cqw; line-height: 1.33; color: var(--text-2); }
 .inv-key { font-size: 3.98cqw; font-weight: 600; line-height: 1.31; }
 
-/* 04 Features */
+/* 05 Features */
 
 .features { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-top: clamp(56px, 7vw, 88px); }
 .feature {
@@ -789,7 +816,7 @@ h2 {
 @media (max-width: 1020px) {
   .mesh { opacity: 0.55; }
   .mesh-packets { display: none; }
-  .hero-grid, .intro, .why-grid, .how-grid { grid-template-columns: 1fr; }
+  .hero-grid, .intro, .why-grid, .how-grid, .mesh-card { grid-template-columns: 1fr; }
   .hero-devices { min-height: 0; padding-block: 36px 20px; }
   .device { --w: clamp(190px, 40vw, 270px); }
   .features { grid-template-columns: repeat(2, minmax(0, 1fr)); }
