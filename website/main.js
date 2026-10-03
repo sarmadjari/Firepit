@@ -156,7 +156,7 @@ function playPacketStory(reduceMotion) {
 }
 
 // The invite screen beside the steps: like the app, the code is replaced every 8 seconds, on the clock, and counts
-// down to it. A real invite would be pointless here, so each code just says hello, in turn in five languages
+// down to it. A real invite would be pointless here, so each code just says hello, in turn in eleven languages
 // (scripts/make-site-qr.py makes them).
 function playInviteDemo() {
   const screen = document.querySelector('.invite-screen');
