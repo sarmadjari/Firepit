@@ -1,13 +1,28 @@
-# Firepit — Android build plan
+# Firepit — build plan
+
+How the apps were built, stage by stage: Android first (Stages 0–9), then the iPhone port (Stage 10).
+Each stage records what it built, what broke, and what is still unverified.
 
 Companion to `meshchat-app-design.md` (product), `meshchat-implementation-guide.md` (protocol),
 `meshchat-ux-design.md` (screens), `meshchat-v1-scope.md` (decisions).
 
-Ten stages, each with a demoable outcome and an exit proof. Adaptive/foldable work is a thread
-inside every UI stage, never a stage of its own — retrofitting it later costs 3–4×.
+Eleven planned stages (0–10), each with a demoable outcome and an exit proof, plus five the work
+itself called for (7.5–7.9). Adaptive/foldable work is a thread inside every UI stage, never a stage
+of its own — retrofitting it later costs 3–4×.
 
 **Decisions taken 2026-09-09:** Hilt for DI · Kable for BLE · RTL/Arabic supported (layouts
 RTL-ready from Stage 3) · invite-link domain deferred until Stage 8.
+
+## Status
+
+| Stage | What it delivers | Status |
+|---|---|---|
+| 0–2 | Foundations, talking to a radio, the data layer and honest message pipeline | ✅ Built |
+| 3–6 | Adaptive shell and design system, rooms and QR invites, chat, map and location | ✅ Built, except quick replies. The exit proofs that need people outdoors wait for the field test |
+| 7–7.9 | Hardening, identity and privacy, sealed rooms, the two-phone bench test, two security reviews | ✅ Built. A full-afternoon field test and battery over 8 h are not yet measured |
+| 8 | v1.0 features | ✅ Built, except emoji reactions |
+| 9 | Release prep: accessibility and RTL pass, R8, store listing | Not started |
+| 10 | The iPhone app | ✅ Built. An iPhone and an Android phone in one room over real radios is still to be tested |
 
 ---
 
@@ -777,17 +792,61 @@ In dependency order: DMs (`add_contact` before every DM) → alerts → reaction
 fallback → Base/Router admin (roles, fixed position, favorites) → key rotation → Group + public
 relays mode → offline map packs → dark theme → diagnostics → 2.8 signing badge.
 
+**Status:** all built except reactions, on both apps. Diagnostics are the radio details screen,
+traceroute and the channel-congestion warning. The signing badge is "Signature: Verified" in the info
+of any message the firmware marked as signed, and the radio's details say whether it can sign
+("Signed messages").
+
 
 ## Stage 9 — Release prep
 
 Accessibility sweep (48 dp targets, TalkBack labels on every tick glyph, contrast), **RTL/Arabic
-pass**, R8 config, 16 KB page-alignment check on native libs (libsodium, MapLibre), Play listing,
+pass**, R8 config, 16 KB page-alignment check on native libs (SQLCipher, MapLibre), Play listing,
 no analytics confirmed.
 
-## Stage 10 — iOS
+## Stage 10 — iOS ✅ built
 
-Same specs, same test cases, same `protos/`; SwiftUI + SwiftProtobuf + CoreBluetooth + SwiftData +
-MapLibre.
+A one-to-one port of the Android app, from the same specs and the same `protos/`. Android stays the
+reference: when the two disagree, Android's code decides.
+
+### How it is built
+
+- **`ios/Packages/FirepitKit`**, a Swift package with one target per Android `core/` module:
+  `FirepitProtos` (SwiftProtobuf 1.38.1, generated from a mirrored copy of `protos/`), `FirepitModel`,
+  `FirepitProtocol`, `FirepitCrypto` (CryptoKit, Secure Enclave), `FirepitTransport` (CoreBluetooth)
+  and `FirepitData` (GRDB 7.11.1, Keychain). Tested on the Mac with `swift test`.
+- **`ios/Firepit`**, the SwiftUI app: `DesignSystem/` ports `core/designsystem`, `Features/` ports
+  `app/` (Chat, Rooms, Map, Location, Radio, Settings, Notifications, Privacy), with MapLibre Native
+  6.31.0 for maps. `AppContainer` wires everything by hand, in place of Hilt.
+- **Same names, same SQL.** Types and members keep their Kotlin names (`scripts/check-port-parity.py`,
+  run per file). The database runs Android's Room schema v12 and its exact DAO queries under GRDB
+  (`scripts/check-dao-parity.py`, `SchemaFixtureTests`), so both apps store data the same way.
+  SwiftData, the original plan, was dropped for this reason.
+- **Demo mode** (debug builds): `-demo` runs the app against a pretend radio with populated rooms, and
+  `-route <feature>.<screen>` opens one screen directly, so every screen can be reviewed without hardware.
+
+### Verified
+
+- Both crypto implementations open each other's output: room seals, key envelopes, direct messages,
+  invite codes and tokens, and Meshtastic channel links (`scripts/check-android-interop.sh`).
+- Two simulated phones on a simulated mesh run the room flows end to end: create, invite and
+  approve, sealed room texts and replies, sealed direct messages, rotating a member out, handovers,
+  leaving, receipts and person cards (`RoomEndToEndTests`, `SimulatedMesh`).
+- Colours match Android's tokens in both themes (`DesignSystemTests`); screens were reviewed against
+  Android's in light and dark.
+- The app installs and runs on a real iPhone.
+
+### Not verified
+
+- **An iPhone and an Android phone in the same room over real radios.** The tests say they will
+  interoperate, but no field test has shown it yet.
+- Hours of background Bluetooth on iOS, which wakes the app when it decides to, and battery use.
+
+### Where it differs
+
+What iOS allows differs from Android in places: screenshots cannot be blocked, the database has iOS
+file encryption rather than SQLCipher, the Keychain survives a reinstall, and there is no keyboard
+learning switch. `architecture.md` §10 and `security.md` §11 list them all.
 
 ---
 

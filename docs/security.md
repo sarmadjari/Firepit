@@ -9,9 +9,16 @@ LoRa mesh. There is no server and no account, and nothing Firepit says to
 anybody needs the internet. The one exception is map tiles (§1). Everything
 here is about what travels on the air and what sits on the phone.
 
-- **Platform:** Android, `minSdk 29`. iOS is not built yet.
+- **Platforms:** Android (`minSdk 29`) and iPhone (iOS 17). Both apps follow every rule
+  below and send the same bytes. They differ only in how each operating system
+  protects the phone itself (§4, §5, §11).
 - **Radio firmware:** Meshtastic 2.7 or newer. Older is refused, not degraded (§9).
-- **Wire formats:** `protos/meshchat/meshchat.proto`, generated with Wire.
+- **Wire formats:** `protos/meshchat/meshchat.proto`, generated with Wire on Android
+  and SwiftProtobuf on iOS.
+- **Code references** are to the Android app, the reference implementation, with
+  paths under `android/`. Each type named has a Swift twin of the same name in
+  `ios/Packages/FirepitKit`, except the per-platform storage covered in §4.
+  §10 lists the iOS files and tests.
 
 ---
 
@@ -42,9 +49,12 @@ Stated plainly, because a threat model that claims everything is worthless.
 - **Replayed sealed messages.** The sealing context binds a message to its room
   and sender but not to its packet, so someone holding the room PSK can
   re-broadcast a recorded sealed message and it shows as new.
-- **A compromised or unlocked phone.** The database and every key are encrypted
-  at rest (§4), so a copy of the app's files reads as noise. An attacker running
-  code as the app, or holding the unlocked phone, reads what the app reads.
+- **A compromised or unlocked phone.** On Android the database and every key are
+  encrypted at rest (§4), so a copy of the app's files reads as noise. On iPhone
+  the keys are in the Keychain, but the database has only iOS's own file
+  encryption, which a copy taken after the phone's first unlock no longer has
+  (§4). On either, an attacker running code as the app, or holding the unlocked
+  phone, reads what the app reads.
 - **Traffic analysis.** LoRa is broadcast. Who transmits, when, how often and
   how much is visible to anyone listening, regardless of encryption. Within a
   room every sealed packet asks for an acknowledgement, so that one header bit
@@ -72,7 +82,12 @@ Stated plainly, because a threat model that claims everything is worthless.
 ## 2. Primitives
 
 No cryptography is invented here. Everything is platform-provided, except
-SQLCipher, which is the standard for encrypting SQLite.
+SQLCipher on Android, which is the standard for encrypting SQLite. Android uses
+the Java cryptography APIs and the Android Keystore; iOS uses CryptoKit and the
+Security framework.
+
+**On the air: identical on both apps.** These have to be: a phone of either kind
+must open what the other sealed.
 
 | Purpose | Construction | Parameters |
 |---|---|---|
@@ -82,13 +97,21 @@ SQLCipher, which is the standard for encrypting SQLite.
 | Direct messages, radio layer | X25519 + AES-CCM | Meshtastic firmware PKI, 32-byte public keys; the outer layer only |
 | Invite tokens | HMAC-SHA256 | truncated to 8 bytes |
 | Key derivation | HMAC-SHA256 | context string + room id + generation |
-| Database at rest | SQLCipher 4 (AES-256, per page, HMAC-SHA512) | random 32-byte raw key, wrapped by the Keystore |
-| Secrets in preferences | Android Keystore AES-256-GCM | key never leaves secure hardware |
-| Randomness | `java.security.SecureRandom` | all keys, nonces, room ids |
+
+**On the phone: each platform's own.**
+
+| Purpose | Android | iPhone |
+|---|---|---|
+| Database at rest | SQLCipher 4 (AES-256 per page, HMAC-SHA512) under a random 32-byte key wrapped by the Keystore | iOS Data Protection, class `completeUntilFirstUserAuthentication`. No SQLCipher layer yet (§4) |
+| Room keys and other secrets | Wrapped by an Android Keystore AES-256-GCM key that never leaves secure hardware | Keychain, readable after first unlock, this device only, never synced to iCloud |
+| The phone key (P-256) | Wrapped by the Keystore, like the room keys | Created inside the Secure Enclave, which never releases the private half |
+| Randomness | `java.security.SecureRandom` | `SecRandomCopyBytes` and CryptoKit's generator |
 
 Implemented in `core/crypto/RoomCipher.kt`, `core/crypto/KeyEnvelope.kt`,
 `core/crypto/DirectSeal.kt`, `core/crypto/RoomCrypto.kt` and
-`core/database/DatabaseEncryption.kt`.
+`core/database/DatabaseEncryption.kt`; on iOS in `FirepitCrypto/RoomCipher.swift`,
+`FirepitCrypto/PhoneSeals.swift` (`KeyEnvelope`, `DirectSeal`) and
+`FirepitCrypto/RoomCrypto.swift`.
 
 **A peer's P-256 key is checked to be on the curve before it is used.** Agreeing
 on a point that is not is how a long-lived private key leaks a few bits at a
@@ -110,6 +133,10 @@ the sender's phone key can produce one that opens.
 
 > Verify: `RoomCipherTest`, `SealedTextTest`, `SealedRoomTextTest`, `SealedReceiptTest`,
 > `KeyEnvelopeTest`, `DirectSealTest`, `TrustRulesTest`
+>
+> iOS: `RoomSealingTests`, `PhoneSealTests`, `TrustRulesTests`, and `AndroidInteropTests`, which opens
+> what Android's code sealed and derives the same contexts, keys, tokens and invite codes.
+> `scripts/check-android-interop.sh` runs the reverse direction too: Android opens what iOS sealed
 
 ---
 
@@ -152,10 +179,16 @@ writing the room with no key.
 
 ## 4. Storage
 
-Room keys must be able to leave the phone — sealed to another phone's key in a
-grant or a rotation — so they cannot live inside the Android Keystore itself.
-Instead each is wrapped by an AES-256-GCM key that never leaves secure hardware,
-and only the wrapped form is written to preferences.
+Messages are stored opened, and so are positions, names, rosters, pins and
+receipts, so the phone has to protect them. Room keys must be able to leave the
+phone, sealed to another phone's key in a grant or a rotation, so they cannot
+live inside secure hardware itself. Each platform protects them as strongly as
+that allows.
+
+### Android
+
+Each key is wrapped by an AES-256-GCM key that never leaves secure hardware
+(the Android Keystore), and only the wrapped form is written to preferences.
 
 - `core/database/KeystoreWrapping.kt` — wrap/unwrap, one implementation
 - `core/data/RoomKeyStore.kt` — room keys, per generation
@@ -164,16 +197,15 @@ and only the wrapped form is written to preferences.
   somebody else's mesh PSK
 - `core/database/DatabaseEncryption.kt` — the database's key
 
-**The database is encrypted.** Messages are stored opened, and so are
-positions, names, rosters, pins and receipts, so the file itself is encrypted
-with SQLCipher under a random key the Keystore wraps. Android's own disk
-encryption only protects app files until the phone is first unlocked after a
-restart; a copy taken after that — a forensic extraction of a locked phone,
-malware with root, a backup the OS gets wrong — is noise without the Keystore.
-An unencrypted database from an older version is rewritten encrypted on first
-open and the plain file deleted; if that fails, it is deleted anyway rather
-than left readable. The key stays usable while the phone is locked, because
-messages arrive in a pocket.
+**The database is encrypted.** The file itself is encrypted with SQLCipher
+under a random key the Keystore wraps. Android's own disk encryption only
+protects app files until the phone is first unlocked after a restart; a copy
+taken after that — a forensic extraction of a locked phone, malware with root,
+a backup the OS gets wrong — is noise without the Keystore. An unencrypted
+database from an older version is rewritten encrypted on first open and the
+plain file deleted; if that fails, it is deleted anyway rather than left
+readable. The key stays usable while the phone is locked, because messages
+arrive in a pocket.
 
 If a wrapping key is gone — app data restored onto a different phone, or the
 Keystore reset — unwrapping returns null rather than throwing. What it
@@ -181,9 +213,48 @@ protected is lost, which is correct, but it is not a reason to crash. Removing
 the screen lock does not destroy these keys: they are not bound to user
 authentication.
 
+**Nothing leaves in a backup.** `allowBackup` is off and the extraction rules
+exclude every storage area from cloud backup and device transfer.
+
+### iPhone
+
+Paths are under `ios/Packages/FirepitKit/Sources/FirepitData/`.
+
+- `KeychainStore.swift` — every secret, as a Keychain item that is readable
+  after the phone's first unlock, belongs to this device only, and is never
+  synced to iCloud Keychain
+- `RoomKeyStore.swift`, `PrimaryBackup.swift` — room keys per generation, and
+  the radio's original channel, both in that store
+- `PhoneKeyStore.swift` — this phone's key pair, created inside the **Secure
+  Enclave**. The private half never leaves it, not even to the app; the Keychain
+  holds only a reference that the Enclave alone can use. (Simulators and tests,
+  which have no Enclave, use a software key.)
+- `FirepitDatabase.swift` — the database
+
+**The database relies on iOS file encryption, not SQLCipher.** Its folder and
+files use the Data Protection class `completeUntilFirstUserAuthentication`:
+encrypted by keys the Secure Enclave holds until the phone is first unlocked
+after a restart, readable afterwards. That keeps Android's promise that
+messages arrive in a pocket, since iOS may wake the app for Bluetooth while the
+phone is locked. What it lacks is Android's second layer: a copy of the files
+taken *after* the first unlock is readable. Adding SQLCipher would close this
+gap. It is the main open security item for iOS.
+
+**Backups.** The database folder is excluded from iCloud and device backups,
+and Keychain items marked "this device only" never restore onto another phone.
+Settings (the radio last used, preferences, an active sharing choice) are
+ordinary preferences and do go into the phone's own backups; they hold no keys
+and no messages.
+
+**Reinstalling.** Deleting the app removes its files, but iOS keeps the app's
+Keychain items, so a reinstall finds the old phone key and room keys. Android
+removes everything.
+
+### Both apps
+
 **Old generations are kept**, so a packet sealed just before a rotation that
 arrives after it still opens; the mesh delivers late. History itself is stored
-opened, in the encrypted database.
+opened, in the protected database.
 
 **Nothing is kept longer than asked.** The retention window deletes messages,
 and with them positions older than the window, nodes not heard in it that share
@@ -193,9 +264,6 @@ leaving a room takes its history, pins, roster and every key it had. Settings
 can erase the history outright. A room nobody has spoken in for the chosen
 lifetime is left automatically, judged on when it last had anything said,
 pinned or shared, which is recorded as it happens.
-
-**Nothing leaves in a backup.** `allowBackup` is off and the extraction rules
-exclude every storage area from cloud backup and device transfer.
 
 ---
 
@@ -278,14 +346,22 @@ Everything that arrives is attacker-controlled, so what is kept is decided in
   not enough: anyone can encrypt to us.
 
 **On the phone's own surfaces.** Notifications name nobody unless the owner
-turns that on, carry a public version for a secure lock screen, and are not
-bridged to a watch. Screens are kept out of screenshots, screen recordings and
-the Recents snapshot unless the owner allows it; the invite screen always is.
-Every text field asks the keyboard not to learn from it.
+turns that on. On Android they carry a public version for a secure lock screen
+and are not bridged to a watch. On iPhone a lock screen that hides previews
+shows "New message", and whether notifications reach an Apple Watch is the
+owner's own Watch setting. Android keeps screens out of screenshots, screen
+recordings and the Recents snapshot unless the owner allows it. iOS lets no app
+block screenshots, so the iPhone app covers itself in the app switcher and
+while the screen is recorded, mirrored or AirPlayed (`SecureWindow`). On both,
+the invite screen is always protected this way, whatever the setting. On
+Android every text field asks the keyboard not to learn from it; iOS offers no
+such request.
 
 > Verify: `MessagePrivacyTest`, `MeshPacketSafetyTest`, `PositionPrecisionTest`
 > (`PositionSharingTest`), `TrustRulesTest`, `MessageStatusRulesTest`, `ReceiptRulesTest`,
 > `ProtocolContractTest` (every sealed payload fits its packet at its limits)
+>
+> iOS: the same suites with an `s` (`MessagePrivacyTests`, `TrustRulesTests`, …)
 
 ---
 
@@ -478,8 +554,12 @@ token before granting anything.
 
 The invite screen always sets `FLAG_SECURE`, whatever the screenshot setting,
 so the code cannot be screenshotted or screen-recorded and cannot reach a photo
-backup (`app/privacy/SecureWindow.kt`). A camera pointed at the screen is still
-a camera — which is what the approval step is for.
+backup (`app/privacy/SecureWindow.kt`). On iPhone, where no app can block a
+screenshot, the invite screen always covers itself while the screen is recorded
+or mirrored and in the app switcher (`Firepit/Features/Privacy/SecureWindow.swift`);
+a screenshot taken deliberately on the phone itself is possible. Either way, a
+camera pointed at the screen is still a camera — which is what the approval
+step is for, and why a code stops working after about 30 seconds.
 
 > Verify: `InvitePrivacyTest` (asserts on encoded bytes that no 32-byte key
 > appears in an invite, and that a grant's key only opens for the joiner's
@@ -487,6 +567,10 @@ a camera — which is what the approval step is for.
 > `KeyFingerprintTest`, `TrustRulesTest`, `ProtocolContractTest` (a sealed
 > rotation and a sealed roster sync still fit one PKI packet), `PacketOriginTest`
 > (every hop pair, including the impossible ones)
+>
+> iOS: `InviteTests` (including that an invite has nowhere to put a room key and a
+> grant opens only for the joiner's phone), `ScanDisambiguationTests`,
+> `KeyFingerprintTests`, `TrustRulesTests`, `ProtocolContractTests`, `PacketOriginTests`
 
 ---
 
@@ -580,6 +664,16 @@ cd android
 ./gradlew :core:crypto:test --rerun-tasks
 ```
 
+```bash
+cd ios/Packages/FirepitKit
+swift test               # iOS protocol, crypto and data layers
+```
+
+```bash
+scripts/check-android-interop.sh   # each app opens what the other sealed
+scripts/verify-all.sh              # both apps, every test and every parity check
+```
+
 Worth reading in order:
 
 1. `core/protocol/MessagePrivacy.kt` — the carriage rule
@@ -594,7 +688,19 @@ Worth reading in order:
 10. `core/data/RoomKeyStore.kt`, `core/data/PhoneKeyStore.kt`,
     `core/database/DatabaseEncryption.kt` — storage
 
-Every `link.send` in the codebase is in `core/data`. No packet is constructed in
+On iOS the same reading order works in `ios/Packages/FirepitKit/Sources`:
+`FirepitProtocol/MessagePrivacy.swift`, `TrustRules.swift` and
+`MeshPacketBuilder.swift`; `FirepitCrypto/RoomCipher.swift` and
+`PhoneSeals.swift` (key envelopes and direct seals); `FirepitData/RoomRepository.swift`,
+`LocationRepository.swift` and `WaypointRepository.swift`;
+`FirepitProtocol/RadioSecurityCheck.swift`; and for storage
+`FirepitData/RoomKeyStore.swift`, `PhoneKeyStore.swift`, `KeychainStore.swift`
+and `FirepitDatabase.swift`. The cryptography tests are grouped differently
+(`RoomSealingTests`, `PhoneSealTests`, `InviteTests`, `AndroidInteropTests`);
+the protocol tests share Android's names with an `s`.
+
+Every `link.send` in the codebase is in `core/data` on Android and in
+`FirepitData` on iOS — the same six files on both. No packet is constructed in
 the UI layer, so there is no path around the rules above.
 
 To watch a real exchange:
@@ -603,8 +709,28 @@ To watch a real exchange:
 adb logcat -s FirepitRooms:I FirepitLink:I FirepitLocation:I
 ```
 
+On iPhone, open Console on a Mac with the phone connected and filter by
+subsystem `com.getfirepit.app`; the categories have the same names.
+
 No key material is ever logged. Log lines report absence ("no public key for X")
 but never contents.
+
+---
+
+## 11. Android and iPhone side by side
+
+Everything on the air is identical (§2, §5, §6). These are the differences in
+how each phone protects what it holds:
+
+| Area | Android | iPhone |
+|---|---|---|
+| Database at rest | SQLCipher under a Keystore-wrapped key; a copy of the files is noise | iOS file encryption only; a copy taken after the first unlock is readable (§4) |
+| Keys | Wrapped by the Keystore; the phone key too | Keychain, this device only; the phone key inside the Secure Enclave |
+| Backups | None | Database excluded; keys never restore elsewhere; settings included |
+| Reinstall | Removes everything | Keychain items survive and are found again |
+| Screenshots | Blocked unless allowed | Cannot be blocked; the app covers itself in the switcher and while recorded or mirrored |
+| Keyboard learning | Turned off in every field | No such switch on iOS |
+| Watch | Notifications not bridged | The owner's Apple Watch settings decide |
 
 ---
 

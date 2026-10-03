@@ -1,5 +1,10 @@
 # iOS UI porting rules (shared by every UI porting agent)
 
+> **Status:** the port is complete; every Android screen has its SwiftUI twin. These rules still apply to any new or
+> changed iOS screen: change the Android screen first, then port the change following this file. The steps about an
+> isolated copy, a dedicated simulator and a report are for porting agents working in parallel; when working directly
+> in the repository, skip them.
+>
 > Moved here from `refs/ui-agent-rules.md` in the 2026-09-30 reorganisation. Paths now point inside this repository;
 > `<copy>` is the agent's isolated working copy and `<UDID>` its dedicated simulator.
 

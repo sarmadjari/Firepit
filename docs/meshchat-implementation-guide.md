@@ -250,7 +250,7 @@ Your own node reports `DeviceMetrics.channel_utilization` and `air_util_tx` to t
 - Android: `BLUETOOTH_SCAN/CONNECT` runtime permissions (API 31+), a foreground service for the persistent Personal Node session, `CompanionDeviceManager` optional. Kable (used by the official app) or Nordic Android-BLE-Library both work. Bonding dialogs come from the OS.
 - iOS: CoreBluetooth with `bluetooth-central` background mode and state restoration (`CBCentralManagerOptionRestoreIdentifierKey`). Subscribe to FromNum; wait for the `didUpdateNotificationStateFor` confirmation before the handshake (Apple `BLEConnection.swift` "pending notify confirmations").
 - Both: reconnect with exponential backoff (1 s → 30 s), re-run the handshake on every reconnect, and treat a disconnect within ~10 s of a reboot-inducing admin write as expected (§6.7).
-- Toolchain (decided, see `meshchat-v1-scope.md` §4): Wire / SwiftProtobuf generated from protobufs tag v2.8.0, libsodium, MapLibre + OpenFreeMap with offline regions, Room / SwiftData, minimum iOS 17 / Android 10, no analytics SDKs.
+- Toolchain (decided, see `meshchat-v1-scope.md` §4): Wire / SwiftProtobuf generated from protobufs tag v2.8.0, platform cryptography only (no libsodium: invites are QR-only, §6.8), MapLibre + OpenFreeMap with offline regions, Room + SQLCipher on Android and GRDB with the same schema on iOS, minimum iOS 17 / Android 10, no analytics SDKs.
 
 ### 4.2 TCP, HTTP, serial (secondary transports)
 

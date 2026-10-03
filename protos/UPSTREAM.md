@@ -27,22 +27,25 @@ Verified present at this pin (the constants the app depends on):
 | `DeviceMetadata.has_xeddsa = 14` | `mesh.proto` |
 | `PRIVATE_APP = 256`, `MAX = 511` | `portnums.proto` — `MeshChatControl` travels on `PRIVATE_APP` |
 
-`ProtocolConstantsTest` in `:core:protocol` asserts these and fails the build if
-the pin moves underneath us.
+`ProtocolContractTest` in `:core:protocol` (Android) and `ProtocolContractTests` in
+`FirepitProtocolTests` (iOS) assert these, and fail the build if the pin moves
+underneath us.
 
 **To re-pin:** bump the tag, re-copy, re-run the tests, and re-verify every
 firmware behaviour cited in `docs/meshchat-implementation-guide.md` §2.2.
 
 ### `.options` files
 
-nanopb field-size limits used by the firmware. Wire ignores them (not `.proto`),
-but they are the authority for the app's own input validation — channel name
-≤ 11 bytes, `long_name` ≤ 23 bytes, `short_name` ≤ 4 bytes, payload ≤ 233 bytes.
+nanopb field-size limits used by the firmware. Wire and SwiftProtobuf ignore them
+(they are not `.proto`), but they are the authority for the app's own input
+validation — channel name ≤ 11 bytes, `long_name` ≤ 23 bytes, `short_name` ≤ 4
+bytes, payload ≤ 233 bytes.
 
 ## `meshchat/meshchat.proto` — ours
 
-App-level definitions only: invite payloads (QR + link, never transmitted) and
-`MeshChatControl` on `PRIVATE_APP` (256), one packet per event; the one periodic message is a sealed position, sent only while someone shares.
+App-level definitions only: the invite payload (shown as a QR code, never
+transmitted) and `MeshChatControl` on `PRIVATE_APP` (256), one packet per event;
+the one periodic message is a sealed position, sent only while someone shares.
 See `docs/meshchat-implementation-guide.md` §6.8.2 and §6.8.5.
 
 ## `meshchat-primary-key.txt` — the app-wide primary channel key
@@ -53,8 +56,9 @@ See `docs/meshchat-implementation-guide.md` §6.8.2 and §6.8.5.
 extract it. Its only job is to keep channel slot 0 — which carries names and
 battery telemetry between Firepit nodes and sets the frequency slot — off the
 stock public key, so Firepit nodes recognise each other and stranger nodes stay
-out of the NodeDB. The real secrets are the per-room PSKs, which are generated
-on-device and never leave it except inside an invite.
+out of the NodeDB. The real secrets are each room's keys, which are generated on
+the phone and never travel inside an invite: a new member receives them sealed
+to their own phone's key (`docs/security.md` §3, §6).
 
 Both the Android and iOS apps must embed this byte-for-byte. Rotating it is a
 breaking protocol change and requires a version bump, because nodes on the old

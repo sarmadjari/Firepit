@@ -144,7 +144,7 @@ Encryption is always on. Nothing to configure, no way to turn it off.
 
 - **Rooms:** sealed under a room key that only members' phones hold, inside Meshtastic's channel encryption. Words, positions, pins, names, receipts and roster changes all travel this way
 - **Direct messages:** sealed from one phone's key to the other's, inside Meshtastic's PKI. For somebody whose phone key is unknown — anyone not in a room with us — PKI alone, and the composer says so
-- **At rest:** the database is encrypted with SQLCipher under a key the Keystore wraps; room and phone keys are Keystore-wrapped too
+- **At rest:** Android encrypts the database with SQLCipher under a key the Keystore wraps, and wraps room and phone keys with the Keystore too. iOS keeps keys in the Keychain (the phone key inside the Secure Enclave) and relies on iOS file encryption for the database; adding SQLCipher there is the open item (`security.md` §4)
 - **Broadcast authenticity:** firmware 2.8+ signs broadcast messages with XEdDSA. Shown as a "verified" badge only when the node reports signing support
 
 **A custom E2E layer was first considered and rejected, and that decision has since been reversed.** The original reasoning was that native PKI DMs already give a pairwise layer, a second one costs bytes, and rooms had no key management. It does not survive the radio: a radio hands its private key and every channel key to any phone that connects, so anyone holding a member's radio — or pairing with it over Bluetooth — could read rooms, direct messages, positions and pins. A layer the radio never sees is the only thing that changes that. What exists now:
@@ -228,7 +228,7 @@ The cost is real and accepted: you cannot add someone who is not with you. That 
   - Cross-platform frameworks were ruled out: React Native has BLE issues under its New Architecture, JS bridge latency on binary protobuf data, and background BLE limitations. Native avoids all of it — each platform talks to BLE and parses protobuf with its own APIs
 - **Firmware target:** Meshtastic v2.7+ protobuf API (generated from the 2.8 protobufs, a superset; 2.8-only fields decode as defaults on 2.7)
 - **Transports:** BLE (primary), Wi-Fi/HTTP, Serial/USB
-- **Libraries (decided):** protobuf code generated from Meshtastic protobufs tag v2.8.0 (Wire on Android, SwiftProtobuf on iOS); libsodium for invite cryptography; MapLibre + OpenFreeMap tiles with offline regions (OS maps rejected: no third-party offline mode); Room (Android) / SwiftData (iOS) storage; no analytics or tracking SDKs. Minimum iOS 17 / Android 10. Details in `meshchat-v1-scope.md`
+- **Libraries (decided, as built):** protobuf code generated from Meshtastic protobufs tag v2.8.0 (Wire on Android, SwiftProtobuf on iOS); platform cryptography only (Java crypto and the Android Keystore; CryptoKit, Keychain and Secure Enclave on iOS), since libsodium was planned for a PIN-protected invite link that was dropped; MapLibre + OpenFreeMap tiles with offline regions (OS maps rejected: no third-party offline mode); Room + SQLCipher (Android) and GRDB running the same schema (iOS) for storage; no analytics or tracking SDKs. Minimum iOS 17 / Android 10. Details in `meshchat-v1-scope.md`; versions in `architecture.md` §11
 - **Test hardware:** LILYGO T-Echo (nRF52840, L76K GNSS, e-ink), RAK WisMesh Tag / LW010-R (nRF52840, AT6558R GNSS, IP66)
 
 ## 8. Constraints & bandwidth strategy
@@ -293,13 +293,13 @@ The cost is real and accepted: you cannot add someone who is not with you. That 
 | Live location | precision toggle per room for start/stop; duration tier change may restart the node; presets 15 min · 1 h · 8 h · Custom | guide D-6, UX U-6 |
 | Telemetry | device telemetry on, every 30 min, primary channel | guide D-7 |
 | Favorites | all room members favorited on the Personal node | guide D-8 |
-| Reactions | yes, six fixed emoji 👍 ❤️ 😂 😮 😢 🙏 | UX U-1 |
+| Reactions | yes, six fixed emoji 👍 ❤️ 😂 😮 😢 🙏 (not built yet) | UX U-1 |
 | Precision | every room precise (32 bits); per-room reduced precision deferred | UX U-2 |
 | Identity tag | 2 characters, default first + last initials, always editable, duplicate hint | UX §5.1, §7.1 |
 | Room avatar | eight fixed icons (tent default), no emoji | UX U-5 |
 | Nearby non-members | hidden (Diagnostics count only) | UX U-3 |
 | Location cards | text card + "Open map", no map snippet | UX U-4 |
 | Platform idioms | one design language (tokens, copy, flows); iOS uses HIG components, Android uses Material 3 components — mapping table in UX doc §9.6; reference renders `design/ios/firepit-ios-ui.pdf` and `design/android/firepit-android-ui.pdf` | UX §9.6 |
-| Tech stack | protobufs v2.8.0 + Wire/SwiftProtobuf; libsodium; MapLibre + OpenFreeMap; Room/SwiftData; real-device testing; no analytics; iOS 17+/Android 10+ | scope doc §4 |
+| Tech stack | protobufs v2.8.0 + Wire/SwiftProtobuf; platform cryptography (libsodium dropped with the invite link); MapLibre + OpenFreeMap; Room + SQLCipher on Android, GRDB with the same schema on iOS (chosen over SwiftData so both apps share one schema and the same SQL); real-device testing; no analytics; iOS 17+/Android 10+ | scope doc §4 |
 | MVP cut | Personal node, QR rooms, room text, map + share location + pins, light theme | scope doc §2 |
-| Still open | platform order (recommended Android first); Arabic in v1 or later | scope doc §6 |
+| Still open | Arabic in v1 or later (platform order settled: Android first, iOS ported from it) | scope doc §6 |

@@ -4,6 +4,9 @@ Firepit is a group chat and live map for small groups with no phone signal, runn
 Two native apps, one protocol, one repository: Android (Kotlin + Jetpack Compose) and iOS (Swift 6 + SwiftUI).
 The protocol's internal name, on the radio and in the protos, is **MeshChat**.
 
+New to the code? `docs/architecture.md` explains the whole system in plain language, and `docs/README.md` lists
+every document with what it answers.
+
 ## Source-of-truth hierarchy
 
 When sources disagree, resolve in this order. Never invent an answer.
@@ -14,6 +17,9 @@ When sources disagree, resolve in this order. Never invent an answer.
 4. **meshtastic.org docs** — concepts only; several pages are stale.
 5. **`docs/meshchat-implementation-guide.md`** — verified findings with citations.
 6. **`docs/meshchat-app-design.md`**, **`meshchat-ux-design.md`**, **`meshchat-v1-scope.md`** — product intent.
+
+`docs/security.md` states the security rules both apps implement, each with the code and test that hold it. A change
+that touches what is sealed, trusted or stored must keep it true.
 
 Between the two apps, **Android is the reference implementation**. The iOS app is a one-to-one port of it, and where
 they differ, Android's code decides behaviour and wire format.
@@ -59,9 +65,9 @@ they differ, Android's code decides behaviour and wire format.
 | `ios/Packages/FirepitKit` | Non-UI layers, one target per Android `core/` module: `FirepitProtos` (generated), `FirepitModel`, `FirepitProtocol`, `FirepitCrypto`, `FirepitTransport`, `FirepitData`. `Protos/` is a vendored copy of `protos/`. |
 | `ios/Firepit` | App target: `DesignSystem/` (port of `core/designsystem`) and `Features/` (port of `app/`). |
 | `protos/` | Vendored Meshtastic protos + `meshchat/meshchat.proto` + app-wide primary key. |
-| `docs/` | Design docs, `build-plan.md`, `security.md`, `ios-ui-porting-rules.md`. |
+| `docs/` | Start with `architecture.md`; `README.md` there indexes the rest: design docs, `build-plan.md`, `security.md`, `ios-ui-porting-rules.md`, the WisMesh Tag guide. |
 | `design/` | Brand (the icon both apps use), Figma exports, reference renders. See `design/README.md`. No build reads it. |
-| `scripts/` | Cross-platform checks and iOS tooling. `verify-all.sh` runs every check. |
+| `scripts/` | Cross-platform checks and iOS tooling. `verify-all.sh` runs the full gate. |
 | `archive/` | Not maintained and not built: the Android design prototype, the MeshChat-era design, the 2026-09-30 reorganisation record. |
 | `refs/` | Git-ignored: reference clones (`scripts/fetch-refs.sh`) and tool builds. |
 
@@ -134,7 +140,8 @@ xcodebuild test -project ios/Firepit.xcodeproj -scheme Firepit \
 ## Workflow
 
 - Small, verified steps: build and test after each change, then device test with two phones and two nodes
-  (scope doc §4.8). `scripts/verify-all.sh` runs every check for both apps before a push.
+  (scope doc §4.8). `scripts/verify-all.sh` runs the full gate for both apps before a push: both builds and
+  test suites, the protos copy, crypto interop in both directions and DAO parity.
 - Keep docs in sync: a behaviour change updates the relevant doc section in the same commit.
 - Commits: Conventional Commits with a scope, subject in plain English — `feat(android): …`, `fix(ios): …`,
   `docs: …`. Scopes: `android`, `ios`, `protos`, `design`, `docs`, `scripts`, `ci`, `repo`.
