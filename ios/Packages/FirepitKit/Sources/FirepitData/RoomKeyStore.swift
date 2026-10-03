@@ -32,8 +32,9 @@ public final class RoomKeyStore: Sendable {
     private let store: any SecretStore
     private let seen: SeenSeals
 
-    /// The wall clock, in milliseconds since 1970. Replaced only by tests.
-    public let clock: @Sendable () -> Int64
+    /// The phone's clock for sealing and opening, and real time for erasing (see ``KeyClock``). Replaced only by
+    /// tests.
+    public let time: any KeyTime
 
     /// Keys already read, so the Keychain is asked once per room rather than once per message.
     private let cached = Mutex<[String: HourKey]>([:])
@@ -44,11 +45,11 @@ public final class RoomKeyStore: Sendable {
     public init(
         store: any SecretStore = KeychainStore(service: "com.getfirepit.app.room-keys"),
         seen: SeenSeals = SeenSeals(file: nil),
-        clock: @escaping @Sendable () -> Int64 = { Int64((Date().timeIntervalSince1970 * 1_000).rounded(.down)) }
+        time: any KeyTime = KeyClock.system()
     ) {
         self.store = store
         self.seen = seen
-        self.clock = clock
+        self.time = time
     }
 
     /// True when this phone holds the key `roomId` seals with now, which is what makes a slot one of ours. Under the
@@ -94,8 +95,8 @@ public final class RoomKeyStore: Sendable {
             return nil
         }
         let sealingGeneration = generation ?? generationOf(roomId: roomId)
-        let now = RoomRatchet.hourOf(unixMillis: clock())
-        guard let held = advanced(roomId, sealingGeneration, now: now) else {
+        let now = RoomRatchet.hourOf(unixMillis: time.wallMillis())
+        guard let held = advanced(roomId, sealingGeneration, now: erasableHour()) else {
             return nil
         }
         let hour = RoomRatchet.currentHour(heldHour: held.hour, nowHour: now)
@@ -116,10 +117,11 @@ public final class RoomKeyStore: Sendable {
     /// Only messages sealed in the hours this phone still holds keys for open, and each one only once.
     public func open(roomId: Int32, generation: Int, sender: Int32, payload: Data) -> Opening {
         guard let tag = SealedText.hourTagOf(payload) else {
-            return .unreadable
+            return SealedText.isFirstFormat(payload) ? .outdated : .unreadable
         }
-        let now = RoomRatchet.hourOf(unixMillis: clock())
-        guard let held = advanced(roomId, generation, now: now) else {
+        let now = RoomRatchet.hourOf(unixMillis: time.wallMillis())
+        let erasable = erasableHour()
+        guard let held = advanced(roomId, generation, now: erasable) else {
             return .noKey
         }
         let hour = RoomRatchet.hourNear(tag: tag, near: RoomRatchet.currentHour(heldHour: held.hour, nowHour: now))
@@ -138,9 +140,13 @@ public final class RoomKeyStore: Sendable {
         }
         guard
             seen.firstSight(
-                roomId: roomId, generation: generation, sender: sender, hour: hour, nonce: nonce, nowHour: now)
+                roomId: roomId, generation: generation, sender: sender, hour: hour, nonce: nonce, nowHour: erasable)
         else {
             return .replayed
+        }
+        // Another phone sealed this in our hour: the room agrees with our clock.
+        if abs(hour - now) <= 1 {
+            time.agreed()
         }
         return .read(plain: plain)
     }
@@ -149,8 +155,8 @@ public final class RoomKeyStore: Sendable {
     /// handed. Never an earlier hour's, so they cannot read what was said before they had it.
     public func currentKey(roomId: Int32, generation: Int? = nil) -> HourKey? {
         let generation = generation ?? generationOf(roomId: roomId)
-        let now = RoomRatchet.hourOf(unixMillis: clock())
-        guard let held = advanced(roomId, generation, now: now) else {
+        let now = RoomRatchet.hourOf(unixMillis: time.wallMillis())
+        guard let held = advanced(roomId, generation, now: erasableHour()) else {
             return nil
         }
         let hour = RoomRatchet.currentHour(heldHour: held.hour, nowHour: now)
@@ -170,7 +176,7 @@ public final class RoomKeyStore: Sendable {
         gate.lock()
         defer { gate.unlock() }
         let previous = generationOf(roomId: roomId)
-        let now = RoomRatchet.hourOf(unixMillis: clock())
+        let now = erasableHour()
         try store.set(Self.encode(key), for: slot(roomId, generation))
         try store.remove(retired(roomId, generation))
         if generation < previous {
@@ -195,7 +201,7 @@ public final class RoomKeyStore: Sendable {
     /// A new key for `roomId`, starting this hour.
     @discardableResult
     public func generate(roomId: Int32, generation: Int = first) throws -> HourKey {
-        let key = HourKey(hour: RoomRatchet.hourOf(unixMillis: clock()), key: RoomCipher.generateKey())
+        let key = HourKey(hour: RoomRatchet.hourOf(unixMillis: time.wallMillis()), key: RoomCipher.generateKey())
         try remember(roomId: roomId, key: key, generation: generation)
         return key
     }
@@ -206,7 +212,7 @@ public final class RoomKeyStore: Sendable {
     /// moved on from goes entirely once late packets sealed under it have had time to arrive, unless it is in `owed`:
     /// a member who missed the move still holds it, and their new key has to be sealed under it.
     public func erase(owed: Set<RoomGeneration> = []) {
-        let now = RoomRatchet.hourOf(unixMillis: clock())
+        let now = erasableHour()
         let slots: [RoomGeneration]
         do {
             slots = try store.accounts().compactMap(Self.parseSlot)
@@ -248,7 +254,13 @@ public final class RoomKeyStore: Sendable {
         }
     }
 
-    /// The held key for one generation, first moved on so that nothing older than the hour just gone survives.
+    /// The hour old keys may be erased up to: real time, never a clock that jumped ahead.
+    private func erasableHour() -> Int {
+        RoomRatchet.hourOf(unixMillis: time.eraseMillis())
+    }
+
+    /// The held key for one generation, first moved on so that nothing older than the hour before `now` survives.
+    /// `now` is ``erasableHour()``, not the wall clock.
     private func advanced(_ roomId: Int32, _ generation: Int, now: Int) -> HourKey? {
         gate.lock()
         defer { gate.unlock() }
@@ -393,6 +405,8 @@ public enum Opening: Sendable, Equatable {
     case outOfHours(hour: Int, now: Int)
     /// Opened before: a copy of a message already read.
     case replayed
+    /// Sealed by a build from before hourly keys, which nobody on this one can open.
+    case outdated
     /// Not a seal this build reads, or one that was changed or made with another key.
     case unreadable
 }

@@ -72,6 +72,7 @@ public enum RoomCipher {
 /// which sealed under a key that never changed, is no longer read.
 public enum SealedText {
     private static let version: UInt8 = 0x02
+    private static let firstVersion: UInt8 = 0x01
     private static let header = 1
     private static let randomSize = RoomCipher.nonceSize - RoomRatchet.hourTagSize
 
@@ -98,6 +99,12 @@ public enum SealedText {
         let high = Int(payload[payload.startIndex + header])
         let low = Int(payload[payload.startIndex + header + 1])
         return (high << 8) | low
+    }
+
+    /// True for the first format, which builds from before hourly keys still send: it cannot be opened here, but it
+    /// says who needs to update.
+    public static func isFirstFormat(_ payload: Data) -> Bool {
+        payload.count >= header + RoomCipher.overhead && payload[payload.startIndex] == firstVersion
     }
 
     /// Different for every message ever sealed, so a second arrival of one is a copy.

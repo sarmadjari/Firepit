@@ -88,8 +88,23 @@ public final class RoomRepository: Sendable {
     /// When each member with a key still owed to them was last tried, so hearing them often costs one resend. */
     private let handoverTried = Mutex<[Int32: Int64]>([:])
 
+    /// When each member heard still sealing under an old key was last handed the new one, apart from `handoverTried`.
+    private let oldKeyRetried = Mutex<[Int32: Int64]>([:])
+
+    /// Handovers on their way right now, counted by room and member, so a retry never runs alongside one. Counted, so
+    /// whichever finishes first cannot clear the mark while another is still going.
+    private let handingOver = Mutex<[MemberInRoom: Int]>([:])
+
+    /// How often each member's radio has acknowledged a key handed to them, by room and member. A radio taking it
+    /// proves nothing about their app keeping it, so the handover stays owed until the app's own word (see
+    /// `settleHandover`); this only stops it being sent for ever to someone whose radio takes it every time.
+    private let handoverAcks = Mutex<[MemberInRoom: Int]>([:])
+
     /// When each sender was last told a sealed message of theirs would not open here. */
     private let refusedAt = Mutex<[Int32: Int64]>([:])
+
+    /// Who the room has been told is on an older build, once per room and sender while the app runs.
+    private let outdatedNoticed = Mutex<Set<MemberInRoom>>([])
 
     /// Invites we have issued, so a join hello can be tied back to a room.
     ///
@@ -447,7 +462,11 @@ public final class RoomRepository: Sendable {
         guard let pending = try? await handovers.all() else {
             return
         }
-        roomKeys.erase(owed: Set(pending.map { RoomGeneration(roomId: $0.roomId, generation: $0.heldGeneration) }))
+        roomKeys.erase(
+            owed: Set(
+                pending.flatMap { record in
+                    mayHold(record).map { RoomGeneration(roomId: record.roomId, generation: $0) }
+                }))
     }
 
     /// Rooms currently provisioned on the radio, lowest slot first. */
@@ -715,7 +734,8 @@ public final class RoomRepository: Sendable {
             roomName: room.name,
             generation: previous + 1,
             psk: RoomCrypto.generatePsk(),
-            firepitKey: HourKey(hour: RoomRatchet.hourOf(unixMillis: roomKeys.clock()), key: RoomCipher.generateKey())
+            firepitKey: HourKey(
+                hour: RoomRatchet.hourOf(unixMillis: roomKeys.time.wallMillis()), key: RoomCipher.generateKey())
         )
         let stillOwed = (try? await handovers.forRoom(roomId: roomId)) ?? []
         let owed: [PendingHandoverEntity] = try await history.whileRearranging {
@@ -756,8 +776,32 @@ public final class RoomRepository: Sendable {
             await noticeInRoom(slot: room.index, text: rotationNotice(removed: remove), roomId: roomId)
             return records
         }
+        // Just tried, so their radio's own acknowledgement of it does not set off a retry; and counted afresh for the
+        // key being handed now.
+        let handedAt = clock()
+        handoverTried.withLock { tried in
+            for record in owed {
+                tried[record.nodeNum] = handedAt
+            }
+        }
+        handoverAcks.withLock { acks in
+            for record in owed {
+                acks.removeValue(forKey: MemberInRoom(roomId: roomId, nodeNum: record.nodeNum))
+            }
+        }
         // Sent a moment apart and awaited together: one member out of range must not hold up everyone else's key for
         // the length of a timeout.
+        let inFlight = owed.map { MemberInRoom(roomId: roomId, nodeNum: $0.nodeNum) }
+        handingOver.withLock { counts in
+            for member in inFlight {
+                counts[member, default: 0] += 1
+            }
+        }
+        defer {
+            for member in inFlight {
+                doneHandingOver(member)
+            }
+        }
         let reached = await withTaskGroup(of: Int32?.self) { group in
             for (order, record) in owed.enumerated() {
                 group.addTask {
@@ -773,8 +817,11 @@ public final class RoomRepository: Sendable {
             }
             return reached
         }
-        for member in reached {
-            try? await handovers.delete(roomId: roomId, nodeNum: member)
+        // Still owed until their app seals something under the new key.
+        handoverAcks.withLock { acks in
+            for member in reached {
+                acks[MemberInRoom(roomId: roomId, nodeNum: member), default: 0] += 1
+            }
         }
         let keeping = Set(owed.map(\.nodeNum))
         return RotationResult(generation: keys.generation, reached: reached, missed: keeping.subtracting(reached))
@@ -839,42 +886,61 @@ public final class RoomRepository: Sendable {
         var inner = Meshchat_MeshChatControl()
         inner.version = InviteCodec.version
         inner.keyRotation = rotation
-        guard
-            let sealed = sealFor(
-                roomId: keys.roomId, myNodeNum: myNodeNum, control: inner,
-                generation: record.heldGeneration)
-        else {
-            return false
+        // Sealed under each generation they might hold, newest first: they only accept it under the one they hold
+        // now, and when a rotation came while an earlier key was on its way, that is not known here.
+        var confirmed = false
+        for held in mayHold(record).reversed() {
+            guard
+                let sealed = sealFor(roomId: keys.roomId, myNodeNum: myNodeNum, control: inner, generation: held)
+            else {
+                continue
+            }
+            var outer = Meshchat_MeshChatControl()
+            outer.sealedMessage = sealed
+            guard let payload = try? outer.serializedData(), payload.count <= Self.pkiPayloadBudget else {
+                return false
+            }
+            guard
+                let packet = try? MeshPacketBuilder.meshPacket(
+                    to: member,
+                    channel: 0,
+                    portNum: .privateApp,
+                    payload: payload,
+                    hopLimit: mesh.hopLimitForSending(),
+                    wantAck: true,
+                    pkiEncrypted: true,
+                    publicKey: radioKey
+                )
+            else {
+                continue
+            }
+            if await mesh.sendAwaitingAck(packet: packet, from: member, timeout: Self.handoverAckTimeout) {
+                confirmed = true
+            }
         }
-        var outer = Meshchat_MeshChatControl()
-        outer.sealedMessage = sealed
-        guard let payload = try? outer.serializedData(), payload.count <= Self.pkiPayloadBudget else {
-            return false
-        }
-        do {
-            let packet = try MeshPacketBuilder.meshPacket(
-                to: member,
-                channel: 0,
-                portNum: .privateApp,
-                payload: payload,
-                hopLimit: mesh.hopLimitForSending(),
-                wantAck: true,
-                pkiEncrypted: true,
-                publicKey: radioKey
-            )
-            return await mesh.sendAwaitingAck(packet: packet, from: member, timeout: Self.handoverAckTimeout)
-        } catch {
-            return false
-        }
+        return confirmed
+    }
+
+    /// Every generation a member owed `record` might be holding: the one they were last seen sealing under, up to the
+    /// one before the key they are owed. Usually just the first; more when a rotation came while an earlier key was on
+    /// its way to them.
+    private func mayHold(_ record: PendingHandoverEntity) -> Range<Int> {
+        record.heldGeneration..<max(record.heldGeneration, record.generation)
     }
 
     /// Tries again to hand `nodeNum` a key a rotation could not deliver.
     ///
     /// Hearing anything from them means they are back in range. At most once
     /// every retry interval per member, however chatty they are.
-    private func retryHandoversTo(nodeNum: Int32) {
+    ///
+    /// Once their radio has taken a key `maxUnconfirmedHandovers` times, only `stillOnOldKey` sends it again: them
+    /// sealing under the key they had is proof the new one never reached their app.
+    private func retryHandoversTo(nodeNum: Int32, stillOnOldKey: Bool = false) {
         let now = clock()
-        let shouldTry = handoverTried.withLock { tried -> Bool in
+        // Proof they lack the key keeps its own interval, so ordinary traffic heard just before it cannot swallow the
+        // one retry that would help.
+        let throttle = stillOnOldKey ? oldKeyRetried : handoverTried
+        let shouldTry = throttle.withLock { tried -> Bool in
             if let last = tried[nodeNum], now - last < Self.handoverRetryMillis {
                 return false
             }
@@ -884,6 +950,10 @@ public final class RoomRepository: Sendable {
         if !shouldTry {
             return
         }
+        // And the ordinary retry the same packet sets off afterwards has nothing left to do.
+        if stillOnOldKey {
+            handoverTried.withLock { $0[nodeNum] = now }
+        }
         tasks.withLock { jobs in
             jobs.append(
                 Task { [weak self] in
@@ -892,17 +962,49 @@ public final class RoomRepository: Sendable {
                     }
                     let owed = (try? await self.handovers.forNode(nodeNum: nodeNum)) ?? []
                     for record in owed {
-                        await self.retryHandover(owed: record, now: now)
+                        let acked = self.handoverAcks.withLock {
+                            $0[MemberInRoom(roomId: record.roomId, nodeNum: nodeNum)] ?? 0
+                        }
+                        if stillOnOldKey || acked < Self.maxUnconfirmedHandovers {
+                            await self.retryHandover(owed: record, now: now)
+                        }
                     }
                 })
         }
     }
 
     private func retryHandover(owed: PendingHandoverEntity, now: Int64) async {
+        let member = MemberInRoom(roomId: owed.roomId, nodeNum: owed.nodeNum)
+        let first = handingOver.withLock { counts -> Bool in
+            if counts[member] != nil {
+                return false
+            }
+            counts[member] = 1
+            return true
+        }
+        guard first else {
+            return
+        }
+        defer { doneHandingOver(member) }
+        await retryHandoverNow(owed: owed, now: now)
+    }
+
+    private func doneHandingOver(_ member: MemberInRoom) {
+        handingOver.withLock { counts in
+            if let count = counts[member], count > 1 {
+                counts[member] = count - 1
+            } else {
+                counts.removeValue(forKey: member)
+            }
+        }
+    }
+
+    private func retryHandoverNow(owed: PendingHandoverEntity, now: Int64) async {
         let memberStillPresent = (try? await memberDao.findEntity(roomId: owed.roomId, nodeNum: owed.nodeNum)) != nil
         let stillOwed = owed.generation == roomKeys.generationOf(roomId: owed.roomId) && memberStillPresent
         if !stillOwed {
-            try? await handovers.delete(roomId: owed.roomId, nodeNum: owed.nodeNum)
+            // This record only: a later rotation's, written meanwhile, stays.
+            try? await handovers.deleteUpTo(roomId: owed.roomId, nodeNum: owed.nodeNum, generation: owed.generation)
             return
         }
         guard let room = ChannelSlotManager.findByRoomId(channels: mesh.channels.value, roomId: owed.roomId),
@@ -917,12 +1019,33 @@ public final class RoomRepository: Sendable {
         let keys = NewKeys(
             roomId: owed.roomId, roomName: room.name, generation: owed.generation,
             psk: psk, firepitKey: key)
-        if await handOver(record: owed, keys: keys) {
-            try? await handovers.delete(roomId: owed.roomId, nodeNum: owed.nodeNum)
+        let handed = await handOver(record: owed, keys: keys)
+        // Only while still owed as tried: their app may have settled it while this was in flight, and a settled
+        // handover must stay settled.
+        let touched =
+            (try? await handovers.touch(
+                roomId: owed.roomId, nodeNum: owed.nodeNum, generation: owed.generation, at: now)) ?? 0
+        if handed, touched > 0 {
+            handoverAcks.withLock { $0[MemberInRoom(roomId: owed.roomId, nodeNum: owed.nodeNum), default: 0] += 1 }
+            log.info("handed a member the key for a room again; waiting for their app to use it")
+        }
+    }
+
+    /// What a member sealing under `generation` of `roomId` says about a key still owed to them: under the key they
+    /// were handed, or a later one, their app has it and the handover is done; under an older one it never arrived.
+    private func settleHandover(roomId: Int32, member: Int32, generation: Int) async {
+        guard let owed = (try? await handovers.forNode(nodeNum: member))?.first(where: { $0.roomId == roomId }) else {
+            return
+        }
+        if generation >= owed.generation {
+            let cleared =
+                (try? await handovers.deleteUpTo(roomId: roomId, nodeNum: member, generation: generation)) ?? 0
+            if cleared > 0 {
+                _ = handoverAcks.withLock { $0.removeValue(forKey: MemberInRoom(roomId: roomId, nodeNum: member)) }
+                log.info("a member confirmed the key for a room")
+            }
         } else {
-            var copy = owed
-            copy.lastTriedAt = now
-            try? await handovers.upsert(handover: copy)
+            retryHandoversTo(nodeNum: member, stillOnOldKey: true)
         }
     }
 
@@ -1016,6 +1139,27 @@ public final class RoomRepository: Sendable {
         mesh.refreshRoomKinds()
         let removed = Set(rotation.removed.map { Int32(bitPattern: $0) })
         await noticeInRoom(slot: slot, text: rotationNotice(removed: removed), roomId: roomId)
+        // Something sealed under the new key, so whoever handed it over knows our app has it, not only our radio.
+        await shareCardWith(roomId: roomId)
+    }
+
+    /// Says who is on a build from before hourly keys, rather than leave their messages failing to open without a
+    /// word. Once per room and sender.
+    private func noticeOutdated(roomId: Int32, sender: Int32) async {
+        let first = outdatedNoticed.withLock { $0.insert(MemberInRoom(roomId: roomId, nodeNum: sender)).inserted }
+        guard first else {
+            return
+        }
+        log.warning("sealed payload from \(sender) is from a build before hourly keys")
+        guard let slot = ChannelSlotManager.slotOf(channels: mesh.channels.value, roomId: roomId) else {
+            return
+        }
+        await noticeInRoom(slot: slot, text: outdatedNotice(sender: sender), roomId: roomId)
+    }
+
+    private func outdatedNotice(sender: Int32) -> String {
+        "\(MeshConstants.formatNodeId(sender)) is using an older version of Firepit. "
+            + "Their messages can't be opened here until they update."
     }
 
     private func rotationNotice(removed: Set<Int32>) -> String {
@@ -1221,7 +1365,9 @@ public final class RoomRepository: Sendable {
         if from == myNodeNum {
             return
         }
-        retryHandoversTo(nodeNum: from)
+        // Anything at all from somebody a new key never reached means they are back in range: try them again. After
+        // the packet, so one that confirms the key is counted first.
+        defer { retryHandoversTo(nodeNum: from) }
         if data.portnum == .privateApp {
             await handleControl(
                 packet: packet, payload: data.payload, myNodeNum: myNodeNum,
@@ -1354,6 +1500,15 @@ public final class RoomRepository: Sendable {
         case .replayed:
             log.warning("sealed payload from \(from) was opened before; ignored")
             return
+        case .outdated:
+            // Only on the room's own slot and from somebody in it: the version byte proves nothing, and anyone can
+            // address a packet to us.
+            let onItsSlot = firepitRoomFor(channel: Int(packet.channel)) == roomId
+            let isMember = (try? await memberDao.findEntity(roomId: roomId, nodeNum: from)) != nil
+            if onItsSlot && isMember {
+                await noticeOutdated(roomId: roomId, sender: from)
+            }
+            return
         case .unreadable:
             log.warning("sealed payload for a room would not open")
             return
@@ -1361,6 +1516,7 @@ public final class RoomRepository: Sendable {
         if generation == roomKeys.generationOf(roomId: roomId) {
             try? await memberDao.record(roomId: roomId, nodeNum: from, now: clock())
         }
+        await settleHandover(roomId: roomId, member: from, generation: generation)
         await handleControl(
             packet: packet, payload: plain, myNodeNum: myNodeNum,
             authenticated: true, sealedRoomId: roomId, sealedGeneration: generation)
@@ -1953,6 +2109,10 @@ public final class RoomRepository: Sendable {
     private static let maxRosterEntries = 10
     private static let handoverAckTimeout: Duration = .seconds(45)
     private static let handoverRetryMillis: Int64 = 10 * 60 * 1000
+
+    /// Times a member's radio may take a key without their app being heard to use it, before it is only sent again
+    /// on proof the app lacks it.
+    static let maxUnconfirmedHandovers = 3
     private static let handoverSpacingSeconds = 2
     private static let refusalGapMillis: Int64 = 60_000
     private static let channelsTimeout: Duration = .seconds(30)
@@ -2032,4 +2192,10 @@ extension Array {
         }
         return results
     }
+}
+
+/// One member of one room, for keeping count of what was handed to whom.
+private struct MemberInRoom: Hashable, Sendable {
+    let roomId: Int32
+    let nodeNum: Int32
 }

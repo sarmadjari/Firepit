@@ -170,8 +170,30 @@ class RoomRepository @Inject constructor(
     /** When each member with a key still owed to them was last tried, so hearing them often costs one resend. */
     private val handoverTried = ConcurrentHashMap<Int, Long>()
 
+    /**
+     * How often each member's radio has acknowledged a key handed to them, by
+     * room and member. A radio taking it proves nothing about their app keeping
+     * it, so the handover stays owed until the app's own word (see
+     * [settleHandover]); this only stops it being sent for ever to someone
+     * whose radio takes it every time.
+     */
+    private val handoverAcks = ConcurrentHashMap<Pair<Int, Int>, Int>()
+
+    /** When each member heard still sealing under an old key was last handed the new one, apart from [handoverTried]. */
+    private val oldKeyRetried = ConcurrentHashMap<Int, Long>()
+
+    /**
+     * Handovers on their way right now, counted by room and member, so a retry
+     * never runs alongside one. Counted, so whichever finishes first cannot
+     * clear the mark while another is still going.
+     */
+    private val handingOver = ConcurrentHashMap<Pair<Int, Int>, Int>()
+
     /** When each sender was last told a sealed message of theirs would not open here. */
     private val refusedAt = ConcurrentHashMap<Int, Long>()
+
+    /** Who the room has been told is on an older build, once per room and sender while the app runs. */
+    private val outdatedNoticed = ConcurrentHashMap.newKeySet<Pair<Int, Int>>()
 
     /**
      * Invites we have issued, so a join hello can be tied back to a room.
@@ -431,9 +453,16 @@ class RoomRepository @Inject constructor(
      * a member still owed a rotation holds: their new key is sealed under it.
      */
     private suspend fun eraseOldKeys() {
-        val owed = handovers.all().map { RoomGeneration(it.roomId, it.heldGeneration) }.toSet()
-        roomKeys.erase(owed)
+        roomKeys.erase(handovers.all().flatMap { record -> mayHold(record).map { RoomGeneration(record.roomId, it) } }.toSet())
     }
+
+    /**
+     * Every generation a member owed [record] might be holding: the one they
+     * were last seen sealing under, up to the one before the key they are
+     * owed. Usually just the first; more when a rotation came while an
+     * earlier key was on its way to them.
+     */
+    private fun mayHold(record: PendingHandoverEntity): IntRange = record.heldGeneration until record.generation
 
     /** Rooms currently provisioned on the radio, lowest slot first. */
     fun rooms(): List<RoomChannel> = ChannelSlotManager.rooms(mesh.channels.value)
@@ -741,7 +770,7 @@ class RoomRepository @Inject constructor(
             roomName = room.name,
             generation = previous + 1,
             psk = RoomCrypto.generatePsk(),
-            firepitKey = HourKey(RoomRatchet.hourOf(roomKeys.clock()), RoomCipher.generateKey()),
+            firepitKey = HourKey(RoomRatchet.hourOf(roomKeys.time.wallMillis()), RoomCipher.generateKey()),
         )
         // The store keeps its own copy of the new key; this one goes when the rotation is done.
         try {
@@ -785,17 +814,31 @@ class RoomRepository @Inject constructor(
                 owed
             }
 
+            // Just tried, so their radio's own acknowledgement of it does not set
+            // off a retry; and counted afresh for the key being handed now.
+            val handedAt = System.currentTimeMillis()
+            owed.forEach { record ->
+                handoverTried[record.nodeNum] = handedAt
+                handoverAcks.remove(roomId to record.nodeNum)
+            }
+
             // Sent a moment apart and awaited together: one member out of range
             // must not hold up everyone else's key for the length of a timeout.
-            val reached = coroutineScope {
-                owed.mapIndexed { order, record ->
-                    async {
-                        delay(HANDOVER_SPACING * order)
-                        record.nodeNum.takeIf { handOver(record, keys) }
-                    }
-                }.awaitAll().filterNotNull().toSet()
+            owed.forEach { record -> handingOver.merge(roomId to record.nodeNum, 1, Int::plus) }
+            val reached = try {
+                coroutineScope {
+                    owed.mapIndexed { order, record ->
+                        async {
+                            delay(HANDOVER_SPACING * order)
+                            record.nodeNum.takeIf { handOver(record, keys) }
+                        }
+                    }.awaitAll().filterNotNull().toSet()
+                }
+            } finally {
+                owed.forEach { record -> doneHandingOver(roomId to record.nodeNum) }
             }
-            reached.forEach { handovers.delete(roomId, it) }
+            // Still owed until their app seals something under the new key.
+            reached.forEach { member -> handoverAcks.merge(roomId to member, 1, Int::plus) }
 
             val keeping = owed.map { it.nodeNum }.toSet()
             Log.i(TAG, "rotated room $roomId to generation ${keys.generation}, ${reached.size}/${keeping.size} confirmed")
@@ -864,31 +907,36 @@ class RoomRepository @Inject constructor(
             ).toByteString(),
             key_hour = keys.firepitKey.hour,
         )
-        val sealed = sealFor(
-            keys.roomId,
-            myNodeNum,
-            MeshChatControl(version = InviteCodec.VERSION, key_rotation = rotation),
-            generation = record.heldGeneration,
-        ) ?: return false
-        val payload = MeshChatControl(sealed_message = sealed).encode()
-        if (payload.size > PKI_PAYLOAD_BUDGET) {
-            Log.w(TAG, "rotation for $member is ${payload.size} bytes, too big to send privately")
-            return false
+        // Sealed under each generation they might hold, newest first: they
+        // only accept it under the one they hold now, and when a rotation came
+        // while an earlier key was on its way, that is not known here.
+        var confirmed = false
+        for (held in mayHold(record).reversed()) {
+            val sealed = sealFor(
+                keys.roomId,
+                myNodeNum,
+                MeshChatControl(version = InviteCodec.VERSION, key_rotation = rotation),
+                generation = held,
+            ) ?: continue
+            val payload = MeshChatControl(sealed_message = sealed).encode()
+            if (payload.size > PKI_PAYLOAD_BUDGET) {
+                Log.w(TAG, "rotation for $member is ${payload.size} bytes, too big to send privately")
+                return false
+            }
+            val packet = MeshPacketBuilder.meshPacket(
+                to = member,
+                channel = 0,
+                portNum = PortNum.PRIVATE_APP,
+                payload = payload.toByteString(),
+                hopLimit = mesh.hopLimitForSending(),
+                pkiEncrypted = true,
+                publicKey = radioKey,
+                wantAck = true,
+            )
+            if (mesh.sendAwaitingAck(packet, member, HANDOVER_ACK_TIMEOUT)) confirmed = true
         }
-
-        val packet = MeshPacketBuilder.meshPacket(
-            to = member,
-            channel = 0,
-            portNum = PortNum.PRIVATE_APP,
-            payload = payload.toByteString(),
-            hopLimit = mesh.hopLimitForSending(),
-            pkiEncrypted = true,
-            publicKey = radioKey,
-            wantAck = true,
-        )
-        return mesh.sendAwaitingAck(packet, member, HANDOVER_ACK_TIMEOUT).also { confirmed ->
-            if (!confirmed) Log.w(TAG, "$member did not confirm the new key for room ${keys.roomId}")
-        }
+        if (!confirmed) Log.w(TAG, "$member did not confirm the new key for room ${keys.roomId}")
+        return confirmed
     }
 
     /**
@@ -897,24 +945,68 @@ class RoomRepository @Inject constructor(
      * Hearing anything from them means they are back in range. At most once
      * every [HANDOVER_RETRY] per member, however chatty they are. Keys are read
      * back from the radio and the key store, so nothing secret waits on disk.
+     *
+     * Once their radio has taken a key [MAX_UNCONFIRMED_HANDOVERS] times, only
+     * [stillOnOldKey] sends it again: them sealing under the key they had is
+     * proof the new one never reached their app.
      */
-    private fun retryHandoversTo(nodeNum: Int) {
+    private fun retryHandoversTo(nodeNum: Int, stillOnOldKey: Boolean = false) {
         val now = System.currentTimeMillis()
-        val last = handoverTried[nodeNum]
+        // Proof they lack the key keeps its own interval, so ordinary traffic
+        // heard just before it cannot swallow the one retry that would help.
+        val tried = if (stillOnOldKey) oldKeyRetried else handoverTried
+        val last = tried[nodeNum]
         if (last != null && now - last < HANDOVER_RETRY.inWholeMilliseconds) return
-        handoverTried[nodeNum] = now
+        tried[nodeNum] = now
+        // And the ordinary retry the same packet sets off afterwards has nothing left to do.
+        if (stillOnOldKey) handoverTried[nodeNum] = now
         scope.launch {
             runCatching {
-                handovers.forNode(nodeNum).forEach { owed -> retryHandover(owed, now) }
+                handovers.forNode(nodeNum).forEach { owed ->
+                    val acked = handoverAcks[owed.roomId to nodeNum] ?: 0
+                    if (stillOnOldKey || acked < MAX_UNCONFIRMED_HANDOVERS) retryHandover(owed, now)
+                }
             }.onFailure { cause -> Log.w(TAG, "could not retry handing $nodeNum a key", cause) }
         }
     }
 
+    /**
+     * What a member sealing under [generation] of [roomId] says about a key
+     * still owed to them: under the key they were handed, or a later one, their
+     * app has it and the handover is done; under an older one it never arrived.
+     */
+    private suspend fun settleHandover(roomId: Int, member: Int, generation: Int) {
+        val owed = handovers.forNode(member).firstOrNull { it.roomId == roomId } ?: return
+        if (generation >= owed.generation) {
+            if (handovers.deleteUpTo(roomId, member, generation) > 0) {
+                handoverAcks.remove(roomId to member)
+                Log.i(TAG, "$member confirmed the key for room $roomId")
+            }
+        } else {
+            retryHandoversTo(member, stillOnOldKey = true)
+        }
+    }
+
     private suspend fun retryHandover(owed: PendingHandoverEntity, now: Long) {
+        val member = owed.roomId to owed.nodeNum
+        if (handingOver.putIfAbsent(member, 1) != null) return
+        try {
+            retryHandoverNow(owed, now)
+        } finally {
+            doneHandingOver(member)
+        }
+    }
+
+    private fun doneHandingOver(member: Pair<Int, Int>) {
+        handingOver.computeIfPresent(member) { _, count -> (count - 1).takeIf { it > 0 } }
+    }
+
+    private suspend fun retryHandoverNow(owed: PendingHandoverEntity, now: Long) {
         val stillOwed = owed.generation == roomKeys.generationOf(owed.roomId) &&
             memberDao.findEntity(owed.roomId, owed.nodeNum) != null
         if (!stillOwed) {
-            handovers.delete(owed.roomId, owed.nodeNum)
+            // This record only: a later rotation's, written meanwhile, stays.
+            handovers.deleteUpTo(owed.roomId, owed.nodeNum, owed.generation)
             return
         }
         val room = ChannelSlotManager.findByRoomId(mesh.channels.value, owed.roomId) ?: return
@@ -934,11 +1026,12 @@ class RoomRepository @Inject constructor(
         } finally {
             key.key.fill(0)
         }
-        if (handed) {
-            handovers.delete(owed.roomId, owed.nodeNum)
-            Log.i(TAG, "handed ${owed.nodeNum} the key for room ${owed.roomId} they had missed")
-        } else {
-            handovers.upsert(owed.copy(lastTriedAt = now))
+        // Only while still owed as tried: their app may have settled it while
+        // this was in flight, and a settled handover must stay settled.
+        val stillOwedAsTried = handovers.touch(owed.roomId, owed.nodeNum, owed.generation, now) > 0
+        if (handed && stillOwedAsTried) {
+            handoverAcks.merge(owed.roomId to owed.nodeNum, 1, Int::plus)
+            Log.i(TAG, "handed ${owed.nodeNum} the key for room ${owed.roomId} again; waiting for their app to use it")
         }
     }
 
@@ -1024,7 +1117,25 @@ class RoomRepository @Inject constructor(
 
         noticeInRoom(slot, rotationNotice(rotation.removed.toSet()), roomId)
         Log.i(TAG, "took the new key for room $roomId, generation ${rotation.generation}")
+        // Something sealed under the new key, so whoever handed it over knows
+        // our app has it, not only our radio.
+        runCatching { shareCardWith(roomId) }.onFailure { cause -> Log.w(TAG, "could not confirm the new key", cause) }
     }
+
+    /**
+     * Says who is on a build from before hourly keys, rather than leave their
+     * messages failing to open without a word. Once per room and sender.
+     */
+    private suspend fun noticeOutdated(roomId: Int, sender: Int) {
+        if (!outdatedNoticed.add(roomId to sender)) return
+        Log.w(TAG, "sealed payload for room $roomId from $sender is from a build before hourly keys")
+        val slot = ChannelSlotManager.slotOf(mesh.channels.value, roomId) ?: return
+        noticeInRoom(slot, outdatedNotice(sender), roomId)
+    }
+
+    private fun outdatedNotice(sender: Int): String =
+        "${MeshConstants.formatNodeId(sender)} is using an older version of Firepit. " +
+            "Their messages can't be opened here until they update."
 
     private fun rotationNotice(removed: Set<Int>): String = when {
         removed.isEmpty() -> "The room's key was changed. Everyone still here has the new one."
@@ -1227,31 +1338,34 @@ class RoomRepository @Inject constructor(
         val myNodeNum = mesh.myNodeNum.value ?: return
         if (packet.from == myNodeNum) return
 
-        // Anything at all from somebody a new key never reached means they are
-        // back in range: try them again rather than leave them talking into a
-        // room only the removed member can still read.
-        retryHandoversTo(packet.from)
-
-        // Membership is not inferred from anything unsealed: on a room's slot
-        // that is somebody holding a member's radio, not a member. Opening a
-        // sealed message under the room's current key is what counts.
-        if (data.portnum == PortNum.PRIVATE_APP) {
-            handleControl(
-                packet,
-                data.payload.toByteArray(),
-                myNodeNum,
-                // Anyone on a shared channel can put bytes on it under any name.
-                authenticated = packet.pki_encrypted,
-            )
-        }
-
-        if (data.portnum == PortNum.TEXT_MESSAGE_APP) {
-            // Unsealed text is only kept as a direct message that came under
-            // PKI; on a room's slot it is dropped. A receipt goes where the
-            // message was kept.
-            if (packet.to == myNodeNum && packet.pki_encrypted) {
-                receipts.received(packet.channel, packet.id, peer = packet.from)
+        try {
+            // Membership is not inferred from anything unsealed: on a room's slot
+            // that is somebody holding a member's radio, not a member. Opening a
+            // sealed message under the room's current key is what counts.
+            if (data.portnum == PortNum.PRIVATE_APP) {
+                handleControl(
+                    packet,
+                    data.payload.toByteArray(),
+                    myNodeNum,
+                    // Anyone on a shared channel can put bytes on it under any name.
+                    authenticated = packet.pki_encrypted,
+                )
             }
+
+            if (data.portnum == PortNum.TEXT_MESSAGE_APP) {
+                // Unsealed text is only kept as a direct message that came under
+                // PKI; on a room's slot it is dropped. A receipt goes where the
+                // message was kept.
+                if (packet.to == myNodeNum && packet.pki_encrypted) {
+                    receipts.received(packet.channel, packet.id, peer = packet.from)
+                }
+            }
+        } finally {
+            // Anything at all from somebody a new key never reached means they
+            // are back in range: try them again rather than leave them talking
+            // into a room only the removed member can still read. After the
+            // packet, so one that confirms the key is counted first.
+            retryHandoversTo(packet.from)
         }
     }
 
@@ -1396,6 +1510,14 @@ class RoomRepository @Inject constructor(
                 Log.w(TAG, "sealed payload for room ${sealed.room_id} from ${packet.from} was opened before; ignored")
                 return
             }
+            Opening.Outdated -> {
+                // Only on the room's own slot and from somebody in it: the version
+                // byte proves nothing, and anyone can address a packet to us.
+                val inRoom = firepitRoomFor(packet.channel) == sealed.room_id &&
+                    memberDao.findEntity(sealed.room_id, packet.from) != null
+                if (inRoom) noticeOutdated(sealed.room_id, packet.from)
+                return
+            }
             Opening.Unreadable -> {
                 Log.w(TAG, "sealed payload for room ${sealed.room_id} would not open")
                 return
@@ -1408,6 +1530,7 @@ class RoomRepository @Inject constructor(
         if (generation == roomKeys.generationOf(sealed.room_id)) {
             memberDao.record(sealed.room_id, packet.from, System.currentTimeMillis())
         }
+        settleHandover(sealed.room_id, packet.from, generation)
         handleControl(
             packet,
             plain,
@@ -2046,6 +2169,12 @@ class RoomRepository @Inject constructor(
 
         /** Gap between handing successive members a new key, so they do not all transmit at once. */
         val HANDOVER_SPACING = 2.seconds
+
+        /**
+         * Times a member's radio may take a key without their app being heard
+         * to use it, before it is only sent again on proof the app lacks it.
+         */
+        const val MAX_UNCONFIRMED_HANDOVERS = 3
 
         /**
          * How often old hours' keys are looked for and destroyed. Well inside

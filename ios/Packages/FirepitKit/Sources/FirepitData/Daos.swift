@@ -683,6 +683,28 @@ public struct PendingHandoverDao: Sendable {
             try db.execute(sql: "DELETE FROM pending_handovers WHERE roomId = ?", arguments: [roomId])
         }
     }
+    /// Clears what is owed to a member up to `generation`, and no further: a later rotation's record, written
+    /// meanwhile, stays. How many it cleared.
+    @discardableResult
+    public func deleteUpTo(roomId: Int32, nodeNum: Int32, generation: Int) async throws -> Int {
+        try await writer.write { db in
+            try db.execute(
+                sql: "DELETE FROM pending_handovers WHERE roomId = ? AND nodeNum = ? AND generation <= ?",
+                arguments: [roomId, nodeNum, generation])
+            return db.changesCount
+        }
+    }
+    /// Notes another attempt, only while the record is still the one that was tried: one settled, or replaced by a
+    /// later rotation, meanwhile stays as it is. How many records it touched.
+    @discardableResult
+    public func touch(roomId: Int32, nodeNum: Int32, generation: Int, at: Int64) async throws -> Int {
+        try await writer.write { db in
+            try db.execute(
+                sql: "UPDATE pending_handovers SET lastTriedAt = ? WHERE roomId = ? AND nodeNum = ? AND generation = ?",
+                arguments: [at, roomId, nodeNum, generation])
+            return db.changesCount
+        }
+    }
 }
 
 private func mapStream<Input: Sendable, Output: Sendable>(

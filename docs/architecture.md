@@ -76,7 +76,9 @@ nothing recorded before the hour that preceded it. Each member also seals under 
 each sealed message opens only once, so a recording played back is ignored. None of this adds a byte to a message:
 the two bytes that say which hour sealed it ride inside the nonce that was always there. A new member is handed this
 hour's key, so they read from when they joined. The cost is that phones need clocks within about an hour of each
-other, which automatic time gives them ([security.md §3](security.md#3-key-hierarchy)).
+other, which automatic time gives them ([security.md §3](security.md#3-key-hierarchy)). A clock set wrong costs
+nothing permanent: keys are erased on the time that has really passed, measured by a clock nobody can set
+([security.md §8](security.md#8-time)).
 
 ---
 

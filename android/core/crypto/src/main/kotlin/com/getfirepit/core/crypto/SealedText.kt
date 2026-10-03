@@ -21,6 +21,7 @@ import com.getfirepit.core.protocol.MeshConstants
 object SealedText {
 
     private const val VERSION: Byte = 0x02
+    private const val FIRST_VERSION: Byte = 0x01
     private const val HEADER = 1
     private const val RANDOM_SIZE = RoomCipher.NONCE_SIZE - RoomRatchet.HOUR_TAG_SIZE
 
@@ -46,6 +47,13 @@ object SealedText {
         if (payload.size < HEADER + RoomCipher.OVERHEAD || payload[0] != VERSION) return null
         return ((payload[HEADER].toInt() and 0xFF) shl 8) or (payload[HEADER + 1].toInt() and 0xFF)
     }
+
+    /**
+     * True for the first format, which builds from before hourly keys still
+     * send: it cannot be opened here, but it says who needs to update.
+     */
+    fun isFirstFormat(payload: ByteArray): Boolean =
+        payload.size >= HEADER + RoomCipher.OVERHEAD && payload[0] == FIRST_VERSION
 
     /** Different for every message ever sealed, so a second arrival of one is a copy. */
     fun nonceOf(payload: ByteArray): ByteArray? =

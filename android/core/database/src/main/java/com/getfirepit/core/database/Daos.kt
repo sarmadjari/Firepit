@@ -628,6 +628,27 @@ interface PendingHandoverDao {
     @Query("DELETE FROM pending_handovers WHERE roomId = :roomId AND nodeNum = :nodeNum")
     suspend fun delete(roomId: Int, nodeNum: Int)
 
+    /**
+     * Notes another attempt, only while the record is still the one that was
+     * tried: one settled, or replaced by a later rotation, meanwhile stays as
+     * it is. How many records it touched.
+     */
+    @Query(
+        "UPDATE pending_handovers SET lastTriedAt = :at " +
+            "WHERE roomId = :roomId AND nodeNum = :nodeNum AND generation = :generation",
+    )
+    suspend fun touch(roomId: Int, nodeNum: Int, generation: Int, at: Long): Int
+
+    /**
+     * Clears what is owed to a member up to [generation], and no further: a
+     * later rotation's record, written meanwhile, stays. How many it cleared.
+     */
+    @Query(
+        "DELETE FROM pending_handovers " +
+            "WHERE roomId = :roomId AND nodeNum = :nodeNum AND generation <= :generation",
+    )
+    suspend fun deleteUpTo(roomId: Int, nodeNum: Int, generation: Int): Int
+
     @Query("DELETE FROM pending_handovers WHERE roomId = :roomId")
     suspend fun deleteRoom(roomId: Int)
 }

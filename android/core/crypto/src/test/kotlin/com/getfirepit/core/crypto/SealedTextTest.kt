@@ -4,6 +4,7 @@ import com.getfirepit.core.protocol.MeshConstants
 import com.getfirepit.core.protocol.MessagePrivacy
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -90,6 +91,10 @@ class SealedTextTest {
         val first = byteArrayOf(0x01) + RoomCipher.seal(key, "hello".encodeToByteArray(), context)
 
         assertNull(SealedText.open(key, first, context))
+        // Recognised, so the room can say who needs to update.
+        assertTrue(SealedText.isFirstFormat(first))
+        assertFalse(SealedText.isFirstFormat(SealedText.seal(key, hour, "hello".encodeToByteArray(), context)))
+        assertFalse(SealedText.isFirstFormat(byteArrayOf(0x01, 0x02)))
     }
 
     @Test

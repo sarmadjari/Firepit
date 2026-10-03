@@ -6,20 +6,27 @@ import FirepitProtos
 import Foundation
 import Testing
 
-/// A clock the test moves by hand.
-private final class HandClock: Sendable {
+/// Time the test moves by hand. The phone's clock can be set to run ahead of the time really passed.
+private final class HandClock: KeyTime {
     static let startHour = 491_234
     private let millis = Mutex<Int64>(Int64(startHour) * RoomRatchet.hourMillis + 60_000)
+    private let ahead = Mutex<Int64>(0)
 
-    func now() -> Int64 { millis.withLock { $0 } }
+    func wallMillis() -> Int64 { millis.withLock { $0 } + ahead.withLock { $0 } }
+
+    func eraseMillis() -> Int64 { millis.withLock { $0 } }
 
     func advance(hours: Int) {
         millis.withLock { $0 += Int64(hours) * RoomRatchet.hourMillis }
     }
+
+    func setAhead(hours: Int) {
+        ahead.withLock { $0 = Int64(hours) * RoomRatchet.hourMillis }
+    }
 }
 
 private func keyStore(_ clock: HandClock, secrets: InMemorySecretStore = InMemorySecretStore()) -> RoomKeyStore {
-    RoomKeyStore(store: secrets, clock: { clock.now() })
+    RoomKeyStore(store: secrets, time: clock)
 }
 
 private let room: Int32 = 4242
@@ -186,6 +193,22 @@ private func payload(of sealed: Meshchat_SealedMessage?) throws -> Data {
     store.erase(owed: [RoomGeneration(roomId: room, generation: 1)])
 
     #expect(store.seal(roomId: room, sender: sender, plaintext: Data("your key".utf8), generation: 1) != nil)
+}
+
+@Test func aClockSetAheadErasesNothingTheRoomStillNeeds() throws {
+    let clock = HandClock()
+    let store = keyStore(clock)
+    try store.generate(roomId: room)
+    let before = try payload(of: store.seal(roomId: room, sender: sender, plaintext: Data("before".utf8)))
+
+    clock.setAhead(hours: 5)
+    store.erase()
+    #expect(store.currentKey(roomId: room)?.hour == hour + 5)
+
+    // Put right again, the phone still reads what was sealed before the clock went wrong.
+    clock.setAhead(hours: 0)
+    #expect(
+        store.open(roomId: room, generation: 1, sender: sender, payload: before) == .read(plain: Data("before".utf8)))
 }
 
 @Test func nothingNewIsSealedOnceTheRoomMovedOnWithoutUs() throws {

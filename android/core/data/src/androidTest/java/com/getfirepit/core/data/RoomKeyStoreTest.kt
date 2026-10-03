@@ -31,7 +31,10 @@ class RoomKeyStoreTest {
     private val room = 4242
     private val sender = 7
     private val hour = 491_234
+
+    /** Real time. The phone's clock reads [ahead] of it, which is normally nothing. */
     private var now = hour * RoomRatchet.HOUR_MILLIS + 60_000
+    private var ahead = 0L
 
     @Before
     fun setUp() {
@@ -200,6 +203,20 @@ class RoomKeyStoreTest {
     }
 
     @Test
+    fun aClockSetAheadErasesNothingTheRoomStillNeeds() {
+        store.generate(room)
+        val before = store.seal(room, sender, "before".encodeToByteArray())!!.ciphertext.toByteArray()
+
+        ahead = 5 * RoomRatchet.HOUR_MILLIS
+        store.erase()
+        assertEquals(hour + 5, store.currentKey(room)?.hour)
+
+        // Put right again, the phone still reads what was sealed before the clock went wrong.
+        ahead = 0
+        assertTrue(store.open(room, 1, sender, before) is Opening.Read)
+    }
+
+    @Test
     fun eachReadGetsItsOwnCopy() {
         val key = store.generate(room)
         val first = store.currentKey(room)!!
@@ -209,7 +226,13 @@ class RoomKeyStoreTest {
         assertArrayEquals(key.key, store.currentKey(room)?.key)
     }
 
-    private fun storeAtNow() = RoomKeyStore(context).also { it.clock = { now } }
+    private fun storeAtNow() = RoomKeyStore(context).also {
+        it.time = object : KeyTime {
+            override fun wallMillis() = now + ahead
+
+            override fun eraseMillis() = now
+        }
+    }
 
     private fun ByteArray.toBase64() =
         android.util.Base64.encodeToString(this, android.util.Base64.NO_WRAP)

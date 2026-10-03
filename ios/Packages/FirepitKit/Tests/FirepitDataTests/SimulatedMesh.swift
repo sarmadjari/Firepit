@@ -183,11 +183,8 @@ final class SimulatedPhone: @unchecked Sendable {
         db = try FirepitDatabase.inMemory()
         radio = SimulatedRadio(nodeNum: nodeNum, radioKey: SimulatedMesh.radioKey(nodeNum))
         radio.mesh = mesh
-        let skew = clockSkewMillis
         // Room keys follow the phone's own clock: the mesh's, plus whatever this phone is out by.
-        roomKeys = RoomKeyStore(
-            store: InMemorySecretStore(),
-            clock: { [weak mesh] in currentEpochMillis() + (mesh?.clockOffsetMillis ?? 0) + skew.withLock { $0 } })
+        roomKeys = RoomKeyStore(store: InMemorySecretStore(), time: SimulatedKeyTime(mesh: mesh, skew: clockSkewMillis))
         phoneKeys = PhoneKeyStore(store: InMemorySecretStore(), source: SoftwarePhoneKeySource())
         messageDao = MessageDao(db)
         nodeDao = NodeDao(db)
@@ -271,6 +268,22 @@ final class SimulatedPhone: @unchecked Sendable {
     }
 }
 
+/// A simulated phone's clock, taken as right however far out it is: these scenarios are about clocks disagreeing
+/// between phones. A clock that jumps on one phone is `KeyClock`'s business, and its tests'.
+private final class SimulatedKeyTime: KeyTime, @unchecked Sendable {
+    private weak var mesh: SimulatedMesh?
+    private let skew: Mutex<Int64>
+
+    init(mesh: SimulatedMesh, skew: Mutex<Int64>) {
+        self.mesh = mesh
+        self.skew = skew
+    }
+
+    func wallMillis() -> Int64 { currentEpochMillis() + (mesh?.clockOffsetMillis ?? 0) + skew.withLock { $0 } }
+
+    func eraseMillis() -> Int64 { wallMillis() }
+}
+
 struct AirPacket: Sendable, Equatable {
     var from: Int32
     var to: Int32
@@ -288,6 +301,8 @@ final class SimulatedMesh: @unchecked Sendable {
         var air: [AirPacket] = []
         var directAcks = true
         var clockOffsetMillis: Int64 = 0
+        var lostAtApp: Set<Int32> = []
+        var silenced: Set<Int32> = []
     }
 
     init() {}
@@ -299,6 +314,29 @@ final class SimulatedMesh: @unchecked Sendable {
 
     func advanceClock(byMillis millis: Int64) {
         lock.withLock { $0.clockOffsetMillis += millis }
+    }
+
+    /// Phones whose radio acknowledges direct packets that their app then never gets: an app that crashed, or could
+    /// not store what arrived, at that moment.
+    func loseAtApp(_ nodeNum: Int32, _ lost: Bool = true) {
+        lock.withLock { state in
+            if lost {
+                state.lostAtApp.insert(nodeNum)
+            } else {
+                state.lostAtApp.remove(nodeNum)
+            }
+        }
+    }
+
+    /// Phones that still receive, and whose radio still acknowledges, but whose own packets reach nobody.
+    func silence(_ nodeNum: Int32, _ silent: Bool = true) {
+        lock.withLock { state in
+            if silent {
+                state.silenced.insert(nodeNum)
+            } else {
+                state.silenced.remove(nodeNum)
+            }
+        }
     }
 
     /// Whether a recipient's radio acknowledges direct packets. Off models an ack lost on the air.
@@ -354,6 +392,9 @@ final class SimulatedMesh: @unchecked Sendable {
                 )
             )
         }
+        if lock.withLock({ $0.silenced.contains(sender.nodeNum) }) {
+            return
+        }
         let delivered: Bool
         if packet.pkiEncrypted, Int32(bitPattern: packet.to) != broadcastNodeNum {
             delivered = deliverDirect(sender: sender, packet: packet)
@@ -377,6 +418,9 @@ final class SimulatedMesh: @unchecked Sendable {
     private func deliverDirect(sender: SimulatedRadio, packet: MeshPacket) -> Bool {
         let to = Int32(bitPattern: packet.to)
         guard let recipient = phone(to), recipient.radio.isOnline else { return false }
+        if lock.withLock({ $0.lostAtApp.contains(to) }) {
+            return true
+        }
         var delivered = packet
         delivered.channel = 0
         delivered.hopStart = delivered.hopLimit

@@ -1,6 +1,9 @@
 package com.getfirepit.core.data
 
 import android.content.Context
+import android.content.SharedPreferences
+import android.os.SystemClock
+import android.provider.Settings
 import android.util.Base64
 import androidx.core.content.edit
 import com.getfirepit.core.crypto.HourKey
@@ -13,6 +16,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import okio.ByteString.Companion.toByteString
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.abs
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -49,8 +53,19 @@ class RoomKeyStore @Inject constructor(
     /** Moving a key on is read, derive, write: two at once would each keep a different hour. */
     private val lock = Any()
 
-    /** The wall clock. Replaced only by tests. */
-    internal var clock: () -> Long = System::currentTimeMillis
+    /**
+     * The phone's clock for sealing and opening, and real time for erasing
+     * (see [KeyClock]). Replaced only by tests.
+     */
+    internal var time: KeyTime = KeyClock(
+        wall = System::currentTimeMillis,
+        monotonic = SystemClock::elapsedRealtime,
+        boot = {
+            runCatching { Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT).toString() }
+                .getOrNull()
+        },
+        anchors = PreferenceAnchors(context.getSharedPreferences("firepit_key_clock", Context.MODE_PRIVATE)),
+    )
 
     /**
      * True when this phone holds the key [roomId] seals with now, which is what makes a slot one of ours.
@@ -90,8 +105,8 @@ class RoomKeyStore @Inject constructor(
     fun seal(roomId: Int, sender: Int, plaintext: ByteArray, generation: Int? = null): SealedMessage? {
         if (generation == null && isSuperseded(roomId)) return null
         val sealingGeneration = generation ?: generationOf(roomId)
-        val now = RoomRatchet.hourOf(clock())
-        val held = advanced(roomId, sealingGeneration, now) ?: return null
+        val now = RoomRatchet.hourOf(time.wallMillis())
+        val held = advanced(roomId, sealingGeneration, erasableHour()) ?: return null
         val hour = RoomRatchet.currentHour(held.hour, now)
         val key = senderKey(roomId, sealingGeneration, held, hour, sender) ?: return null
         return try {
@@ -112,9 +127,11 @@ class RoomKeyStore @Inject constructor(
      * and each one only once.
      */
     fun open(roomId: Int, generation: Int, sender: Int, payload: ByteArray): Opening {
-        val tag = SealedText.hourTagOf(payload) ?: return Opening.Unreadable
-        val now = RoomRatchet.hourOf(clock())
-        val held = advanced(roomId, generation, now) ?: return Opening.NoKey
+        val tag = SealedText.hourTagOf(payload)
+            ?: return if (SealedText.isFirstFormat(payload)) Opening.Outdated else Opening.Unreadable
+        val now = RoomRatchet.hourOf(time.wallMillis())
+        val erasable = erasableHour()
+        val held = advanced(roomId, generation, erasable) ?: return Opening.NoKey
         val hour = RoomRatchet.hourNear(tag, RoomRatchet.currentHour(held.hour, now))
         if (!RoomRatchet.opens(held.hour, now, hour)) {
             held.key.fill(0)
@@ -127,7 +144,9 @@ class RoomKeyStore @Inject constructor(
             key.fill(0)
         } ?: return Opening.Unreadable
         val nonce = SealedText.nonceOf(payload) ?: return Opening.Unreadable
-        if (!seen.firstSight(roomId, generation, sender, hour, nonce, now)) return Opening.Replayed
+        if (!seen.firstSight(roomId, generation, sender, hour, nonce, erasable)) return Opening.Replayed
+        // Another phone sealed this in our hour: the room agrees with our clock.
+        if (abs(hour - now) <= 1) time.agreed()
         return Opening.Read(plain)
     }
 
@@ -137,8 +156,8 @@ class RoomKeyStore @Inject constructor(
      * they cannot read what was said before they had it.
      */
     fun currentKey(roomId: Int, generation: Int = generationOf(roomId)): HourKey? {
-        val now = RoomRatchet.hourOf(clock())
-        val held = advanced(roomId, generation, now) ?: return null
+        val now = RoomRatchet.hourOf(time.wallMillis())
+        val held = advanced(roomId, generation, erasableHour()) ?: return null
         val hour = RoomRatchet.currentHour(held.hour, now)
         val key = try {
             RoomRatchet.forward(held.key, roomId, generation, held.hour, hour)
@@ -151,7 +170,7 @@ class RoomKeyStore @Inject constructor(
     fun remember(roomId: Int, key: HourKey, generation: Int = FIRST) {
         synchronized(lock) {
             val previous = generationOf(roomId)
-            val now = RoomRatchet.hourOf(clock())
+            val now = erasableHour()
             preferences.edit {
                 putString(slot(roomId, generation), encode(key))
                 remove(retired(roomId, generation))
@@ -175,7 +194,7 @@ class RoomKeyStore @Inject constructor(
 
     /** A new key for [roomId], starting this hour. */
     fun generate(roomId: Int, generation: Int = FIRST): HourKey =
-        HourKey(RoomRatchet.hourOf(clock()), RoomCipher.generateKey()).also { remember(roomId, it, generation) }
+        HourKey(RoomRatchet.hourOf(time.wallMillis()), RoomCipher.generateKey()).also { remember(roomId, it, generation) }
 
     /**
      * Destroys every key that is no longer needed, in every room.
@@ -187,7 +206,7 @@ class RoomKeyStore @Inject constructor(
      * has to be sealed under it.
      */
     fun erase(owed: Set<RoomGeneration> = emptySet()) {
-        val now = RoomRatchet.hourOf(clock())
+        val now = erasableHour()
         val slots = preferences.all.keys.mapNotNull(::parseSlot)
         slots.forEach { held ->
             synchronized(lock) {
@@ -221,9 +240,13 @@ class RoomKeyStore @Inject constructor(
         }
     }
 
+    /** The hour old keys may be erased up to: real time, never a clock that jumped ahead. */
+    private fun erasableHour(): Int = RoomRatchet.hourOf(time.eraseMillis())
+
     /**
      * The held key for one generation, first moved on so that nothing older
-     * than the hour just gone survives, on disk or in memory.
+     * than the hour before [now] survives, on disk or in memory. [now] is
+     * [erasableHour], not the wall clock.
      */
     private fun advanced(roomId: Int, generation: Int, now: Int): HourKey? = synchronized(lock) {
         val held = held(roomId, generation) ?: return null
@@ -343,6 +366,32 @@ class RoomKeyStore @Inject constructor(
     }
 }
 
+/** Where [KeyClock] keeps its anchor. Nothing in it is secret. */
+private class PreferenceAnchors(private val preferences: SharedPreferences) : ClockAnchors {
+    override fun load(): ClockAnchor? {
+        if (!preferences.contains(WALL) || !preferences.contains(MONOTONIC)) return null
+        return ClockAnchor(
+            wallMillis = preferences.getLong(WALL, 0),
+            monotonicMillis = preferences.getLong(MONOTONIC, 0),
+            boot = preferences.getString(BOOT, null),
+        )
+    }
+
+    override fun save(anchor: ClockAnchor) {
+        preferences.edit {
+            putLong(WALL, anchor.wallMillis)
+            putLong(MONOTONIC, anchor.monotonicMillis)
+            putString(BOOT, anchor.boot)
+        }
+    }
+
+    private companion object {
+        const val WALL = "wall"
+        const val MONOTONIC = "monotonic"
+        const val BOOT = "boot"
+    }
+}
+
 /** One generation of one room's key. */
 data class RoomGeneration(val roomId: Int, val generation: Int)
 
@@ -362,6 +411,9 @@ sealed interface Opening {
 
     /** Opened before: a copy of a message already read. */
     data object Replayed : Opening
+
+    /** Sealed by a build from before hourly keys, which nobody on this one can open. */
+    data object Outdated : Opening
 
     /** Not a seal this build reads, or one that was changed or made with another key. */
     data object Unreadable : Opening

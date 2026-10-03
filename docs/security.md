@@ -50,10 +50,18 @@ Stated plainly, because a threat model that claims everything is worthless.
   invited again.
 - **Phones whose clocks are far apart.** Room keys follow the clock (§3), so
   a phone whose clock is more than about an hour away from the others' cannot
-  read their room messages, nor they its, until the clock is put right. A
-  clock set far ahead also destroys keys early, which cannot be undone; the
-  room's next rotation, or a new invite, recovers that phone. Phones that set
-  their time automatically are minutes apart at worst, even off the network.
+  read their room messages, nor they its, until the clock is put right. That
+  costs nothing permanent: keys are erased on the time that has really passed,
+  not on what a wrong clock claims (§8). Only a phone that starts up with its
+  clock already set far ahead has nothing to compare it with, and can erase
+  keys early; the room's next rotation, or a new invite, recovers it. Phones
+  that set their time automatically are minutes apart at worst, even off the
+  network.
+- **Phones on a build from before hourly keys.** Their messages cannot be
+  opened, nor they ours: reading the old format would mean keeping the old,
+  never-changing keys, which is what hourly keys exist to remove. The room
+  names, once, anybody whose messages arrive in the old format, so they can
+  update.
 - **A compromised or unlocked phone.** On Android the database and every key are
   encrypted at rest (§4), so a copy of the app's files reads as noise. On iPhone
   the keys are in the Keychain, but the database has only iOS's own file
@@ -138,6 +146,12 @@ believed twice. Every phone remembers the nonce of each room message it opened
 for as long as that message could still open, which is about three hours
 (`SeenSeals`), on disk, so restarting the app does not reset it. A copy is
 dropped however it arrives.
+
+**A message in the first format**, sealed by a build from before hourly keys,
+is recognised by its version byte and not opened (`SealedText.isFirstFormat`).
+The room shows one line naming the sender, so a phone left on the old build is
+spotted rather than heard as silence. Only for a member, on the room's own
+slot: the version byte proves nothing, and anyone can address a packet to us.
 
 **Sealed content is bound to its room and sender.** `SealedText.contextOf(roomId,
 senderNodeNum)` is passed as GCM additional authenticated data — authenticated
@@ -299,7 +313,8 @@ removes everything.
 ### Both apps
 
 **Room keys are destroyed as they age** (§3). Each generation keeps one hour's
-key, moved on every ten minutes. A generation the room has rotated away from is
+key, moved on every ten minutes, on real time rather than a clock that can be
+set wrong (§8). A generation the room has rotated away from is
 kept two hours more, so a packet sealed just before the rotation still opens
 when the mesh delivers it late, and then deleted; it stays only while a member
 who missed the rotation is still owed a key sealed under it. History itself is
@@ -557,15 +572,25 @@ A **rotation** removes somebody by moving everyone else to new keys. In order
    room can move it on — anyone can encrypt to a public key, so PKI alone proves
    nothing about membership. It is sealed under the generation *that member*
    holds, which is older than the one being replaced if they also missed an
-   earlier rotation, and carries every removal they missed. A member counts as
-   reached **only when their own radio acknowledges the packet**
+   earlier rotation, and carries every removal they missed. A member is
+   reported as reached when their own radio acknowledges the packet
    (`MeshRepository.sendAwaitingAck`); our radio accepting it proves nothing
    about where it went.
 4. Everyone owed the key is recorded (`pending_handovers`, no secrets) *before*
    the handovers go out, in the same all-or-nothing step as the notice and our
-   own key change, so closing the app mid-rotation strands nobody. A record is
-   cleared on confirmation; the rest are handed the key again the next time
-   anything is heard from them, at most every ten minutes.
+   own key change, so closing the app mid-rotation strands nobody.
+5. **A record is cleared only by the member's app**, never by their radio: by
+   anything they seal under the key they were handed, or a later one
+   (`settleHandover`). A member shares their card under the new key as soon as
+   they take it, so this is usually seconds. Until then they are handed the key
+   again whenever anything is heard from them, at most every ten minutes, and
+   up to three times their radio acknowledges; past that, only when they are
+   heard still sealing under the old key, which proves the new one never
+   reached their app. When another rotation comes before a member has
+   confirmed the last, theirs is sealed under each generation they might hold,
+   from the one they were last heard on to the newest; only the one they hold
+   opens it. Every such generation is kept while a record names it, so it can
+   always be sealed under.
 
 It is accepted only from a member, privately, sealed under the current
 generation, and moving forward (`TrustRules.rotationAcceptable`). The person
@@ -686,14 +711,29 @@ than as fact. `core/protocol/RadioClock.kt`:
 An unconfigured radio can sit at 1970 or drift by days. In testing, two radios
 were 305 and 282 seconds out.
 
-**Room keys follow the phone clock** (§3), never a radio's. A phone takes the
-current hour to be never earlier than the hour whose key it holds, so a clock
-set back neither reopens destroyed hours nor seals under one. A clock set far
-ahead destroys keys early; that is the price of erasing them on the clock
-rather than waiting for traffic. A message sealed outside the hours a phone can
-open is logged with both hours, which is how a wrong clock shows up.
+**Room keys follow the phone clock** (§3), never a radio's: a radio's clock is
+often set from the phone in the first place, and the app cannot tell a GPS fix
+from that. A phone takes the current hour to be never earlier than the hour
+whose key it holds, so a clock set back neither reopens destroyed hours nor
+seals under one.
 
-> Verify: `RadioClockTest`, `RoomRatchetTest`
+**Keys are erased on real time** (`KeyClock`). Sealing and opening follow the
+phone's clock, because that is what members agree on. Erasing follows the
+earlier of that clock and the time that has really passed since it was last
+seen keeping step, measured by the phone's monotonic clock, which nothing can
+set and which keeps counting while the phone sleeps. So a clock set ahead, by
+hand or by a network with the wrong time, erases nothing early: put right, the
+phone reads the room again. The anchor is kept across app restarts where the
+phone says which boot it is in (Android always; an iPhone may not tell apps,
+and then only while the app runs), and dropped when the phone itself
+restarts, when there is nothing to compare with and the clock is taken as it
+is. A fresh message from another member sealed within an hour of the phone's
+clock also counts as the clock being right, which is how a clock put right
+after the phone started is caught up with. The replay record is pruned on the
+same real time. A message sealed outside the hours a phone can open is logged with both
+hours, which is how a wrong clock shows up.
+
+> Verify: `RadioClockTest`, `RoomRatchetTest`, `KeyClockTest`; iOS `KeyClockTests`
 
 ---
 
@@ -743,8 +783,8 @@ Worth reading in order:
 7. `core/data/RoomRepository.kt` — invites, grants, rosters, rotation
 8. `core/data/LocationRepository.kt`, `core/data/WaypointRepository.kt` — sealed positions and pins
 9. `core/protocol/RadioSecurityCheck.kt` — what is checked on the radio itself
-10. `core/data/RoomKeyStore.kt`, `core/data/SeenSeals.kt`, `core/data/PhoneKeyStore.kt`,
-    `core/database/DatabaseEncryption.kt` — storage
+10. `core/data/RoomKeyStore.kt`, `core/data/KeyClock.kt`, `core/data/SeenSeals.kt`,
+    `core/data/PhoneKeyStore.kt`, `core/database/DatabaseEncryption.kt` — storage
 
 On iOS the same reading order works in `ios/Packages/FirepitKit/Sources`:
 `FirepitProtocol/MessagePrivacy.swift`, `TrustRules.swift` and
@@ -752,7 +792,7 @@ On iOS the same reading order works in `ios/Packages/FirepitKit/Sources`:
 and `PhoneSeals.swift` (key envelopes and direct seals); `FirepitData/RoomRepository.swift`,
 `LocationRepository.swift` and `WaypointRepository.swift`;
 `FirepitProtocol/RadioSecurityCheck.swift`; and for storage
-`FirepitData/RoomKeyStore.swift`, `SeenSeals.swift`, `PhoneKeyStore.swift`,
+`FirepitData/RoomKeyStore.swift`, `KeyClock.swift`, `SeenSeals.swift`, `PhoneKeyStore.swift`,
 `KeychainStore.swift` and `FirepitDatabase.swift`. The cryptography tests are
 grouped differently (`RoomSealingTests`, `RoomRatchetTests`, `PhoneSealTests`,
 `InviteTests`, `AndroidInteropTests`);

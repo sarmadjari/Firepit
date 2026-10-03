@@ -918,19 +918,30 @@ Done on both apps, byte for byte, with no change to any chat, receipt, position 
   recording kept past its hour, and a joiner. `scripts/check-android-interop.sh` opens each app's
   hourly keys and seals in the other.
 
-Still open from the rules below:
+Closed before Phase 2, after an independent review of the first pass:
 
-- The radio's GPS time is not yet used as a check. A clock set back is safe by construction (a phone
-  never takes the hour to be earlier than the one it holds keys for); a clock set far ahead erases
-  keys early, which `security.md` §1 states as a limit.
-- Android's `RoomKeyStoreTest` runs on a device and was compiled, not run, in this pass; the same
-  behaviour runs on iOS in `swift test`.
-- Every phone in a room has to run this build: a seal or grant from an earlier build does not open.
-- A handover counts as delivered when the member's radio acknowledges it, as before this stage, not
-  when their app has stored the key. With old generations now deleted, a member whose app failed at
-  that moment cannot be handed the key again and has to be invited again. An app-level confirmation,
-  sealed under the new key, would close this; it is a protocol change for a later phase.
-- An independent review before release.
+- **A wrong clock erases nothing early** (`KeyClock`). Erasing follows the earlier of the phone's
+  clock and the time really passed since it last kept step, measured by the monotonic clock, kept
+  across app restarts. The plan named the radio's GPS time as the check; it is not one here, because
+  Firepit takes positions from the phone and a radio's clock is often set from the phone, so the app
+  cannot tell GPS time from the phone's own.
+- **Handovers are settled by the member's app**, not their radio: by anything they seal under the
+  new key. A member shares their card as soon as they take one. Retries stop after three radio
+  acknowledgements unless the member is heard still sealing under the old key.
+- **A member on an older build is named in the room**, once, instead of their messages failing in
+  silence. Their messages still cannot open: reading the old format would keep the old keys alive.
+- **The rotation bookkeeping has no gap** the hourly erase could fall into, `holds()` runs under the
+  key store's lock, and temporary keys are wiped on Android.
+- **A second review of these fixes** found four more, now closed: the anchor is only kept across app
+  restarts where the phone gives a boot id, and a fresh message from the room re-anchors it; a
+  rotation coming before a member confirmed the last is sealed under every generation they might
+  hold; a retry in flight can no longer revive a settled handover (`touch` updates only the record
+  it tried); proof a member still holds the old key has its own retry interval.
+- **Android's `RoomKeyStoreTest` runs on a device**: 17 of 17 against the real Keystore, on the
+  Android 17 emulator.
+
+What remains is a rule for rollout, not a defect: every phone in a room needs this build. And before
+release, an independent review by a person, which no automated review replaces.
 
 ### Rules for every phase
 
@@ -940,8 +951,8 @@ Still open from the rules below:
 - Simulated-mesh scenarios: a member back after days away, late packets across the hour, phone clocks an
   hour apart, replayed copies, joiners, and recordings that stay closed once keys are deleted, even with
   the phone's own key.
-- A wrongly set clock must not make a phone delete keys it still needs; the radio's GPS time is used as a
-  check where there is one.
+- A wrongly set clock must not make a phone delete keys it still needs; the phone's monotonic clock is
+  the check (`KeyClock`).
 - `security.md` and `architecture.md` change in the same commit as the behaviour.
 - An independent review before release.
 

@@ -330,6 +330,65 @@ struct RoomEndToEndTests {
             })
     }
 
+    @Test func aKeyTheRadioTookButTheAppNeverKeptIsHandedOverAgain() async throws {
+        let (mesh, phones) = try await makeMesh(3)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await join(phones[1], invite: invite, approver: phones[0])
+        let invite2 = try await phones[0].roomRepository.buildInvite(roomId: room.id)
+        try await join(phones[2], invite: invite2, approver: phones[0])
+        let member = phones[1].radio.nodeNum
+
+        mesh.loseAtApp(member)
+        let result = try await phones[0].roomRepository.rotateRoom(roomId: room.id, remove: [phones[2].radio.nodeNum])
+        // Their radio said yes; their app never had it. Still owed.
+        #expect(result.reached.contains(member))
+        #expect(phones[1].roomKeys.generationOf(roomId: room.id) == 1)
+        #expect(!(try await phones[0].handovers.forNode(nodeNum: member)).isEmpty)
+
+        mesh.loseAtApp(member, false)
+        mesh.advanceClock(byMillis: 11 * 60 * 1000)
+        var data = DataMessage()
+        data.portnum = .textMessageApp
+        data.payload = Data("still here".utf8)
+        var packet = MeshPacket()
+        packet.from = UInt32(bitPattern: member)
+        packet.to = UInt32(bitPattern: broadcastNodeNum)
+        packet.channel = 0
+        packet.id = 777_010
+        packet.decoded = data
+        mesh.inject(packet: packet, to: phones[0].radio.nodeNum)
+
+        #expect(await waitUntil { phones[1].roomKeys.generationOf(roomId: room.id) == 2 })
+        // Their app sealing under the new key is what settles it.
+        #expect(await waitUntil { (try? await phones[0].handovers.forNode(nodeNum: member).isEmpty) == true })
+    }
+
+    @Test func aMemberWhoseConfirmationIsStillOnItsWayIsHandedTheNextKeyToo() async throws {
+        let (mesh, phones) = try await makeMesh(4)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await join(phones[1], invite: invite, approver: phones[0])
+        for joiner in phones[2...] {
+            try await join(
+                joiner, invite: try await phones[0].roomRepository.buildInvite(roomId: room.id), approver: phones[0])
+        }
+        let member = phones[1].radio.nodeNum
+
+        // They take the second key, but what they send to say so does not reach the phone that handed it over.
+        mesh.silence(member)
+        _ = try await phones[0].roomRepository.rotateRoom(roomId: room.id, remove: [phones[2].radio.nodeNum])
+        #expect(await waitUntil { phones[1].roomKeys.generationOf(roomId: room.id) == 2 })
+        #expect(!(try await phones[0].handovers.forNode(nodeNum: member)).isEmpty)
+
+        // Somebody else is removed straight after: they still get the third key.
+        _ = try await phones[0].roomRepository.rotateRoom(roomId: room.id, remove: [phones[3].radio.nodeNum])
+        #expect(await waitUntil { phones[1].roomKeys.generationOf(roomId: room.id) == 3 })
+
+        mesh.silence(member, false)
+        try await phones[1].meshRepository.sendText(channel: room.index, text: "got both")
+        #expect(await arrives("got both", at: phones[0], channel: room.index))
+        #expect(await waitUntil { (try? await phones[0].handovers.forNode(nodeNum: member).isEmpty) == true })
+    }
+
     @Test func leavingARoomForgetsItsKeysAndChannel() async throws {
         let (_, phones) = try await makeMesh(2)
         let (room, invite) = try await createAndInvite(phones[0])
@@ -493,6 +552,74 @@ struct RoomEndToEndTests {
         try await phones[0].meshRepository.sendText(channel: room.index, text: "fresh")
         #expect(await arrives("fresh", at: phones[1], channel: room.index))
         #expect(try await !storedTexts(phones[1], channel: room.index).contains { $0.text == "recorded" })
+    }
+
+    @Test func aMemberOnAnOlderBuildIsNamedOnceRatherThanFailingInSilence() async throws {
+        let (mesh, phones) = try await makeMesh(2)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await join(phones[1], invite: invite, approver: phones[0])
+        var words = Meshchat_MeshChatControl()
+        words.roomText = Meshchat_RoomText.with { $0.text = "from the old app" }
+        var old = Meshchat_SealedMessage()
+        old.roomID = UInt32(bitPattern: room.id)
+        old.generation = 1
+        // What a build from before hourly keys sends: version 1 under a key that never changed.
+        old.ciphertext =
+            Data([0x01])
+            + RoomCipher.seal(
+                key: RoomCipher.generateKey(), plaintext: try words.serializedData(),
+                context: SealedText.contextOf(roomId: room.id, senderNodeNum: phones[1].radio.nodeNum))
+        var outer = Meshchat_MeshChatControl()
+        outer.sealedMessage = old
+        let recording = AirPacket(
+            from: phones[1].radio.nodeNum, to: broadcastNodeNum, channel: room.index, portNum: .privateApp,
+            payload: try outer.serializedData(), pkiEncrypted: false)
+
+        playBack(recording, asPacket: 777_020, on: mesh, to: phones[0])
+        playBack(recording, asPacket: 777_021, on: mesh, to: phones[0])
+        try await phones[1].meshRepository.sendText(channel: room.index, text: "from the new app")
+        #expect(await arrives("from the new app", at: phones[0], channel: room.index))
+
+        let texts = try await storedTexts(phones[0], channel: room.index)
+        #expect(texts.filter { $0.text.contains("is using an older version of Firepit") }.count == 1)
+        #expect(!texts.contains { $0.text == "from the old app" })
+    }
+
+    @Test func nobodyOutsideTheRoomCanClaimSomebodyIsOnAnOlderBuild() async throws {
+        let (mesh, phones) = try await makeMesh(2)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await join(phones[1], invite: invite, approver: phones[0])
+        var old = Meshchat_SealedMessage()
+        old.roomID = UInt32(bitPattern: room.id)
+        old.ciphertext = Data([0x01]) + Data(repeating: 7, count: SealedText.overhead + 4)
+        var outer = Meshchat_MeshChatControl()
+        outer.sealedMessage = old
+        let payload = try outer.serializedData()
+
+        // A stranger on the room's slot, and anybody at all addressing a packet to us.
+        let stranger: Int32 = 0x0777_0777
+        playBack(
+            AirPacket(
+                from: stranger, to: broadcastNodeNum, channel: room.index, portNum: .privateApp, payload: payload,
+                pkiEncrypted: false),
+            asPacket: 777_030, on: mesh, to: phones[0])
+        var direct = MeshPacket()
+        direct.from = UInt32(bitPattern: stranger)
+        direct.to = UInt32(bitPattern: phones[0].radio.nodeNum)
+        direct.channel = 0
+        direct.id = 777_031
+        direct.pkiEncrypted = true
+        direct.decoded = DataMessage.with {
+            $0.portnum = .privateApp
+            $0.payload = payload
+        }
+        mesh.inject(packet: direct, to: phones[0].radio.nodeNum)
+        try await phones[1].meshRepository.sendText(channel: room.index, text: "all quiet")
+        #expect(await arrives("all quiet", at: phones[0], channel: room.index))
+
+        let everywhere = try await firstValue(phones[0].messageDao.observeChannel(channel: 0))
+            + storedTexts(phones[0], channel: room.index)
+        #expect(!everywhere.contains { $0.text.contains("older version of Firepit") })
     }
 
     @Test func somebodyLetInReadsNothingSealedTheHourBeforeTheyJoined() async throws {

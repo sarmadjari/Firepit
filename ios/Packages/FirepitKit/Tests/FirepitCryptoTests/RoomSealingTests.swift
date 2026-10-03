@@ -128,6 +128,10 @@ struct RoomSealingTests {
     @Test func theFirstFormatUnderAKeyThatNeverChangedIsNoLongerRead() {
         let first = Data([0x01]) + RoomCipher.seal(key: key, plaintext: Data("hello".utf8), context: context)
         #expect(opened(first) == nil)
+        // Recognised, so the room can say who needs to update.
+        #expect(SealedText.isFirstFormat(first))
+        #expect(!SealedText.isFirstFormat(sealed("hello")))
+        #expect(!SealedText.isFirstFormat(Data([0x01, 0x02])))
     }
 
     @Test func noiseOnThePortIsRefusedRatherThanCrashing() {
