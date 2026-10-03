@@ -165,7 +165,11 @@ allows only its own files). Light and dark follow the visitor's setting, using t
 ```bash
 python3 -m http.server 8000 --directory website   # preview at http://localhost:8000
 scripts/capture-site-screens.sh                    # refresh the app screenshots from the iOS demo mode
+scripts/make-site-qr.py                            # remake the demo invite codes
 ```
+
+The invite screen on the page is live, not a screenshot: like the app, its code refreshes every 8 seconds on the clock
+and counts down to it. Each code only says hello, in one of five languages, so scanning it is harmless and fun.
 
 Pushing a change under `website/` to `main` publishes it: the `Website` workflow
 (`.github/workflows/pages.yml`) uploads that folder to GitHub Pages, which serves it on the custom domain. Keep its
@@ -184,6 +188,7 @@ claims in line with the documents; it describes the same features in fewer words
 | `scripts/sync-ios-glyphs.py` | Copies the drawings both apps must show identically (room icons, radio roles, the map pin) from Android into iOS. `--check` reports drift |
 | `scripts/render-ios-app-icon.swift` | Renders the iOS app icon from `design/artwork/icon-app.svg` |
 | `scripts/capture-site-screens.sh` | Captures the website's app screenshots from the iOS demo mode, in light and dark, with no phone signal in the status bar |
+| `scripts/make-site-qr.py` | Makes the website's demo invite codes: five QR codes that say hello in English, Spanish, French, Arabic and Chinese (needs `segno`) |
 | `scripts/fetch-refs.sh` | Fetches the Meshtastic firmware and reference apps into `refs/` (git-ignored), to cite when firmware behaviour matters |
 
 ## Documentation

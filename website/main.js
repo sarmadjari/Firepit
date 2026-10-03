@@ -45,53 +45,102 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('resize', spy);
 
   playPacketStory(reduceMotion);
+  playInviteDemo();
 });
 
-// "How it works": one message from phone to phone, showing where each layer of encryption is added and removed.
-// Each step sets three attributes on the diagram and the stylesheet does the rest:
-//   stage   where the packet is (which link it travels, which stop acts on it)
-//   phase   which caption and which stop are highlighted
-//   content what the packet holds right now: words, sealed bytes, or sealed bytes inside the channel layer
+// "How it works": a short chat between you and Maya, showing where each layer of encryption is added and removed.
+// Every message makes the whole trip: sealed on the sender's phone with the room key, wrapped by the sender's radio in
+// the channel key, passed on by a radio that cannot open it, unwrapped by the other radio, opened on the other phone.
+// Maya's replies run the same path the other way. Each step sets attributes on the diagram and marks the stop or link
+// that is acting; the stylesheet does the rest.
 function playPacketStory(reduceMotion) {
   const flow = document.querySelector('.flow');
   if (!flow || reduceMotion) return;
 
-  const steps = [
-    ['plain', 'a', 'plain', 1100],
-    ['seal', 'a', 'sealed', 500],
-    ['bt1', 'a', 'sealed', 1200],
-    ['wrap', 'b', 'wrapped', 600],
-    ['lora1', 'b', 'wrapped', 1200],
-    ['relay', 'c', 'wrapped', 700],
-    ['lora2', 'c', 'wrapped', 1200],
-    ['unwrap', 'd', 'sealed', 600],
-    ['bt2', 'd', 'sealed', 1200],
-    ['open', 'e', 'plain', 2600],
-    ['rest', 'e', 'plain', 500],
+  const nodes = [...flow.querySelectorAll('.node')];
+  const links = [...flow.querySelectorAll('.link')];
+  const bubbles = [...flow.querySelectorAll('.bubble')];
+  const words = flow.querySelector('.v-plain .wire-text');
+  const sealedBytes = flow.querySelector('.v-sealed code');
+  const wrappedBytes = flow.querySelector('.v-wrapped code');
+
+  const chat = [
+    ['out', 'Meet at the trailhead at 9?'],
+    ['in', 'On my way, 10 min out 🥾'],
+    ['out', 'Grabbing water at the spring'],
+    ['in', 'Fire’s going. Bring snacks 🔥'],
+    ['out', 'Upper trail closes at 4'],
+    ['in', 'OK, lower loop it is'],
   ];
-  let index = 0;
+  // stop: which stop is in focus, counted from the sender (1 = sender's phone ... 5 = the other phone).
+  // act: what that stop does now. hop: which link the packet is on, counted from the sender.
+  const steps = [
+    { stage: 'plain', phase: 'a', content: 'plain', ms: 1200, stop: 1 },
+    { stage: 'seal', phase: 'a', content: 'sealed', ms: 500, stop: 1, act: 'room' },
+    { stage: 'hop', phase: 'a', content: 'sealed', ms: 1200, stop: 1, hop: 1 },
+    { stage: 'wrap', phase: 'b', content: 'wrapped', ms: 600, stop: 2, act: 'chan' },
+    { stage: 'hop', phase: 'b', content: 'wrapped', ms: 1200, stop: 2, hop: 2 },
+    { stage: 'relay', phase: 'c', content: 'wrapped', ms: 700, stop: 3, act: 'relay' },
+    { stage: 'hop', phase: 'c', content: 'wrapped', ms: 1200, stop: 3, hop: 3 },
+    { stage: 'unwrap', phase: 'd', content: 'sealed', ms: 600, stop: 4, act: 'chan' },
+    { stage: 'hop', phase: 'd', content: 'sealed', ms: 1200, stop: 4, hop: 4 },
+    { stage: 'open', phase: 'e', content: 'plain', ms: 2600, stop: 5, act: 'room' },
+    // Everything fades out before the next message, so the direction can change unseen.
+    { stage: 'rest', phase: '', content: '', ms: 600 },
+  ];
+
+  // What sealed bytes look like: new for every message, as real encryption would make them.
+  const randomHex = (count) => [...crypto.getRandomValues(new Uint8Array(count))]
+    .map((b) => b.toString(16).padStart(2, '0').toUpperCase()).join(' ') + ' …';
+
+  let message = 0;
+  let step = 0;
   let timer = 0;
   let inView = false;
 
   const show = () => {
-    const [stage, phase, content, ms] = steps[index];
-    flow.dataset.stage = stage;
-    flow.dataset.phase = phase;
-    flow.dataset.content = content;
+    const [dir, text] = chat[message];
+    const { stage, phase, content, ms, stop, act, hop } = steps[step];
+    const back = dir === 'in';
+
+    if (step === 0) {
+      bubbles.forEach((bubble) => { bubble.textContent = text; });
+      words.textContent = `“${text}”`;
+      sealedBytes.textContent = randomHex(12);
+      wrappedBytes.textContent = randomHex(12);
+    }
+    Object.assign(flow.dataset, { dir, stage, phase, content });
+
+    nodes.forEach((node) => node.classList.remove('is-current', 'is-act-room', 'is-act-chan', 'is-act-relay'));
+    links.forEach((link) => link.classList.remove('is-moving', 'is-back'));
+    if (stop) {
+      const node = nodes[back ? 5 - stop : stop - 1];
+      node.classList.add('is-current');
+      if (act) node.classList.add(`is-act-${act}`);
+    }
+    if (hop) {
+      const link = links[back ? 4 - hop : hop - 1];
+      link.classList.add('is-moving');
+      if (back) link.classList.add('is-back');
+    }
+
     timer = window.setTimeout(() => {
-      index = (index + 1) % steps.length;
+      step = (step + 1) % steps.length;
+      if (step === 0) message = (message + 1) % chat.length;
       show();
     }, ms);
   };
   const stop = () => window.clearTimeout(timer);
   const start = () => {
     stop();
-    index = 0;
+    message = 0;
+    step = 0;
     show();
   };
 
-  // The first frame shows straight away; the story plays from the start each time it scrolls into view.
-  [flow.dataset.stage, flow.dataset.phase, flow.dataset.content] = steps[0];
+  // The first frame shows straight away; the chat plays from the start each time it scrolls into view.
+  start();
+  stop();
   if ('IntersectionObserver' in window) {
     new IntersectionObserver(([entry]) => {
       inView = entry.isIntersecting;
@@ -103,5 +152,46 @@ function playPacketStory(reduceMotion) {
   }
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) stop(); else if (inView) start();
+  });
+}
+
+// The invite screen beside the steps: like the app, the code is replaced every 8 seconds, on the clock, and counts
+// down to it. A real invite would be pointless here, so each code just says hello, in turn in five languages
+// (scripts/make-site-qr.py makes them).
+function playInviteDemo() {
+  const screen = document.querySelector('.invite-screen');
+  if (!screen) return;
+  const codes = [...screen.querySelectorAll('.inv-qr')];
+  const seconds = screen.querySelector('.inv-secs');
+  const period = 8000; // RoomCrypto.rotationSeconds in the apps
+  let timer = 0;
+  let shown = -1;
+  let inView = false;
+
+  const tick = () => {
+    const now = Date.now();
+    const index = Math.floor(now / period) % codes.length;
+    if (index !== shown) {
+      codes.forEach((code, i) => code.classList.toggle('is-current', i === index));
+      shown = index;
+    }
+    seconds.textContent = String(Math.ceil((period - (now % period)) / 1000));
+    timer = window.setTimeout(tick, 1000 - (now % 1000) + 15);
+  };
+  const stop = () => window.clearTimeout(timer);
+  const restart = () => { stop(); tick(); };
+
+  restart();
+  stop();
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(([entry]) => {
+      inView = entry.isIntersecting;
+      if (inView && !document.hidden) restart(); else stop();
+    }).observe(screen);
+  } else {
+    restart();
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stop(); else if (inView) restart();
   });
 }

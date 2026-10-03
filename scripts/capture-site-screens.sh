@@ -15,7 +15,7 @@ SIM="${FIREPIT_SIMULATOR_ID:-$(xcrun simctl list devices booted | grep -oE '[0-9
 DERIVED="${FIREPIT_DERIVED_DATA:-/tmp/firepit-site-dd}"
 OUT=website/assets/screens
 WORK="$(mktemp -d)"
-ROUTES=(chat.room map.everyone rooms.invite)
+ROUTES=(chat.room map.everyone)
 WIDTH=660   # 2x the largest size the site shows a phone at
 command -v cwebp >/dev/null || { echo "cwebp not found: brew install webp" >&2; exit 1; }
 

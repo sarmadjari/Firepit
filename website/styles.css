@@ -443,10 +443,8 @@ h2 {
 .link-lora .pk {
   box-shadow: 0 0 0 2.5px var(--surface-2), 0 0 0 5px var(--infra), 0 0 24px 3px color-mix(in srgb, var(--infra) 45%, transparent);
 }
-.flow[data-stage="bt1"] .lk-1 .pk,
-.flow[data-stage="lora1"] .lk-2 .pk,
-.flow[data-stage="lora2"] .lk-3 .pk,
-.flow[data-stage="bt2"] .lk-4 .pk { animation: travel-x 1.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) both; }
+.link.is-moving .pk { animation: travel-x 1.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) both; }
+.link.is-moving.is-back .pk { animation-direction: reverse; }
 
 @keyframes travel-x {
   0% { left: 0; opacity: 0; scale: 0.5; }
@@ -459,37 +457,53 @@ h2 {
   100% { top: calc(100% - 24px); opacity: 0; scale: 0.5; }
 }
 
-/* What happens at each stop. */
+/* What happens at each stop. The script marks the stop that acts, whichever way the message is going. */
 
-.flow[data-stage="seal"] .nd-1 .node-ico,
-.flow[data-stage="open"] .nd-5 .node-ico { animation: ring-room 0.9s ease-out; }
-.flow[data-stage="wrap"] .nd-2 .node-ico,
-.flow[data-stage="unwrap"] .nd-4 .node-ico { animation: ring-chan 0.9s ease-out; border-color: var(--infra); color: var(--infra); }
-.flow[data-stage="relay"] .nd-3 .node-ico { animation: ring-relay 0.9s ease-out; border-color: var(--text-2); }
-.flow[data-phase="a"] .nd-1 small, .flow[data-phase="b"] .nd-2 small, .flow[data-phase="c"] .nd-3 small,
-.flow[data-phase="d"] .nd-4 small, .flow[data-phase="e"] .nd-5 small { color: var(--text); }
+.node.is-act-room .node-ico { animation: ring-room 0.9s ease-out; }
+.node.is-act-chan .node-ico { animation: ring-chan 0.9s ease-out; border-color: var(--infra); color: var(--infra); }
+.node.is-act-relay .node-ico { animation: ring-relay 0.9s ease-out; border-color: var(--text-2); }
+.node.is-current small { color: var(--text); }
+
+/* Captions for both directions: yours going out, Maya's coming in. */
+.when-in { display: none; }
+.flow[data-dir="in"] .when-in { display: inline; }
+.flow[data-dir="in"] .when-out { display: none; }
 
 @keyframes ring-room { from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 55%, transparent); } to { box-shadow: 0 0 0 18px transparent; } }
 @keyframes ring-chan { from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--infra) 55%, transparent); } to { box-shadow: 0 0 0 18px transparent; } }
 @keyframes ring-relay { from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--text-2) 45%, transparent); } to { box-shadow: 0 0 0 16px transparent; } }
 
-/* The message as words, before it is sealed and after it is opened. */
+/* The message as words: above the sender's phone before it is sealed, above the other phone once it is opened.
+   Tinted where it was written, plain where it arrived, like a chat. */
 
 .bubble {
-  position: absolute; left: 50%; top: -14px; translate: -50% -100%;
-  padding: 7px 12px; border-radius: 14px;
+  position: absolute; top: -16px; translate: 0 -100%;
+  padding: 7px 12px; border: 1px solid transparent; border-radius: 14px;
   font-size: 13px; line-height: 1.3; white-space: nowrap; color: var(--text);
+  background: var(--bubble-in); border-color: var(--line);
   box-shadow: var(--shadow-sm);
-  opacity: 0; scale: 0.6; transform-origin: 50% 100%;
+  opacity: 0; scale: 0.6;
   transition: opacity 0.35s var(--ease), scale 0.35s var(--ease), translate 0.45s var(--ease);
   pointer-events: none;
 }
-.bubble-out { background: var(--bubble-out); border-bottom-right-radius: 4px; }
-.bubble-in { background: var(--bubble-in); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
-.flow[data-stage="plain"] .bubble-out,
-.flow[data-stage="open"] .bubble-in,
-.flow[data-stage="rest"] .bubble-in { opacity: 1; scale: 1; }
-.flow[data-stage="seal"] .bubble-out { opacity: 0; scale: 0.3; translate: -50% 40%; }
+.bubble::after {
+  content: ""; position: absolute; bottom: -6px; width: 10px; height: 10px; rotate: 45deg;
+  background: inherit; border: inherit; border-top-color: transparent; border-left-color: transparent;
+}
+.bubble-you { left: 0; transform-origin: 64px 100%; }
+.bubble-you::after { left: 58px; }
+.bubble-maya { right: 0; transform-origin: calc(100% - 64px) 100%; }
+.bubble-maya::after { right: 58px; }
+
+.flow[data-dir="out"] .bubble-you,
+.flow[data-dir="in"] .bubble-maya { background: var(--bubble-out); border-color: transparent; }
+
+.flow[data-dir="out"][data-stage="plain"] .bubble-you,
+.flow[data-dir="in"][data-stage="plain"] .bubble-maya,
+.flow[data-dir="out"][data-stage="open"] .bubble-maya,
+.flow[data-dir="in"][data-stage="open"] .bubble-you { opacity: 1; scale: 1; }
+.flow[data-dir="out"][data-stage="seal"] .bubble-you,
+.flow[data-dir="in"][data-stage="seal"] .bubble-maya { opacity: 0; scale: 0.25; translate: 0 -40%; }
 
 /* Under the path: what the packet holds right now, what is happening, and the two keys. */
 
@@ -559,6 +573,38 @@ h2 {
 .showcase { display: grid; justify-items: center; gap: 26px; }
 .showcase .device { --w: clamp(220px, 22vw, 276px); grid-area: auto; }
 .showcase figcaption { max-width: 30ch; text-align: center; font-size: 14.5px; line-height: 1.55; color: var(--text-2); }
+
+/* The invite screen, live. The app's own layout in container units (1cqw = 1% of the 402 pt-wide screen), so it scales
+   with the phone frame: 16 pt margins, a white card with 24 pt corners, subheadline text, a callout key line. */
+
+.invite-screen {
+  container-type: inline-size;
+  aspect-ratio: 660 / 1435;
+  background: var(--surface); color: var(--text);
+  font-family: var(--font-body); text-align: center;
+}
+.sb {
+  position: absolute; top: 0; left: 0; right: 0; height: 15.8cqw;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 8.6cqw 0 14cqw;
+}
+.sb-time { font-size: 4.23cqw; font-weight: 600; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.sb-icons { display: flex; align-items: center; gap: 1.4cqw; }
+.sb-icons svg { fill: currentColor; }
+.sb-cell { width: 4.5cqw; opacity: 0.3; }
+.sb-wifi { width: 4cqw; opacity: 0.3; }
+.sb-battery { width: 6.7cqw; }
+
+.inv { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; gap: 3.98cqw; padding: 33cqw 3.98cqw 0; }
+.inv-title { position: absolute; top: 20.9cqw; left: 0; right: 0; translate: 0 -50%; font-size: 4.23cqw; font-weight: 600; }
+.inv-card { display: grid; width: 100%; aspect-ratio: 1; padding: 3.98cqw; border-radius: 5.97cqw; background: #FFFFFF; }
+.inv-qr { grid-area: 1 / 1; width: 100%; height: auto; opacity: 0; transition: opacity 0.12s linear; }
+.inv-qr.is-current { opacity: 1; }
+.inv-timer { display: inline-flex; align-items: center; gap: 1.5cqw; font-size: 3.73cqw; line-height: 1.33; color: var(--text-2); }
+.inv-timer svg { width: 1.05em; height: 1.05em; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; }
+.inv-secs { font-variant-numeric: tabular-nums; }
+.inv-help { font-size: 3.73cqw; line-height: 1.33; color: var(--text-2); }
+.inv-key { font-size: 3.98cqw; font-weight: 600; line-height: 1.31; }
 
 /* 04 Features */
 
@@ -673,10 +719,7 @@ h2 {
   .link-lora::before { border-top: 0; border-left: 2px dotted color-mix(in srgb, var(--infra) 60%, transparent); }
   .link-label { left: calc(50% + 26px); top: 50%; translate: 0 -50%; }
   .pk { left: calc(50% - 17px); top: 0; }
-  .flow[data-stage="bt1"] .lk-1 .pk,
-  .flow[data-stage="lora1"] .lk-2 .pk,
-  .flow[data-stage="lora2"] .lk-3 .pk,
-  .flow[data-stage="bt2"] .lk-4 .pk { animation-name: travel-y; }
+  .link.is-moving .pk { animation-name: travel-y; }
   .bubble { display: none; }
   .readout { grid-template-columns: 1fr; }
 }
