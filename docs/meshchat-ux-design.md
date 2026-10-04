@@ -179,14 +179,21 @@ flowchart TD
 ### 5.4 Chat in a room
 
 - Composer: `[＋] [Message] [⚡] [➤]`. ＋ opens: Drop a pin · Request someone's location · Share my location · Send alert. ⚡ opens quick replies (chips; editable in Settings). Send is a filled circle button, enabled when text is non-empty.
+  - Quick replies: one tap sends a chip at once, without touching what is typed, and answers the message being replied to if there is one. Defaults: On my way · Where are you? · Wait for me · I'm here · OK. Up to ten, each at most 40 bytes (IG §6.2.3).
+  - As built, the composer is `[Message] [⚡] [➤]`: pins, location and alerts live on the map and in room info.
 - Byte counter appears at 150 bytes ("50 left"); hard stop at 200 (IG §6.2.5). On 2.8 nodes, a subtle "long messages are sent unsigned" note appears past 165 — only when the node reports signing support.
 - Outgoing messages appear instantly with the clock glyph. Status glyph progression per §7.2. A sending queue spaces texts ≥ 2 s apart (IG §3.5) — the user can type freely; the app paces sends.
 - Long-press message: Reply (uses native `reply_id`), Copy, Message info, Delete for me. Reply renders a quoted block like WhatsApp.
+- Swipe a message towards the reading end to reply: it follows the finger a short way over a reply arrow, and a haptic marks the point where letting go replies.
 - Reactions (native `emoji` + `reply_id`): long-press a message → six fixed emoji 👍 ❤️ 😂 😮 😢 🙏, one tap, no picker. One packet each, and a reaction replaces an "ok" text, so airtime-neutral (U-1, locked).
+  - As built (both apps, 2026-10-04): a long press, or a right-click, opens the six in one row above Reply, Copy and Message info; a direct chat offers Copy. Reactions sit under their message as small pills, with a count when more than one person chose the same one and yours outlined; tapping someone else's adds yours. A mesh cannot take a reaction back, so a person's latest reaction to a message replaces their earlier one.
+  - A reaction is a nod, not news: it does not notify, does not count as unread, is never a list's preview line, and gets no receipts, since it shows no ticks. In a Firepit room or a sealed direct message the flag travels inside the seal (`RoomText.emoji`), so relays cannot tell it from words (IG §6.2.1).
+  - Whoever is reading the newest message keeps it in view when a reaction makes a message above it taller.
 - Date separators, day headers, system chips (joined, key rotated, live location started).
 - Header: room name · "7 members" · node status line (§7.4). Tap → Room info.
 
 **States:** no node connected (composer stays usable; banner "Not connected to your node — messages will send when reconnected"); mesh busy (banner when ChUtil > 40 % or after `DUTY_CYCLE_LIMIT`); message failed (red glyph, tap → retry / info); rate-limited (never shown — the queue handles it).
+- As built (both apps, 2026-10-04): a failed message (failed, or nobody heard it) offers **Send again** in its long-press menu, in rooms and direct chats, and in a room's Message info. The new attempt is a new packet and takes the failed copy's place at the bottom of the conversation, so there is only ever one copy.
 
 ### 5.5 Direct chat
 
@@ -709,7 +716,7 @@ When only the arrangement changes, the map is moved, not rebuilt, so no tiles re
   - Map side: filter chip · ◎ · ⬇ along the top, with ◫ in the top corner under the map's ⋮. Stacking the two keeps the top row free for notices and Show everyone on a map side only 280 wide.
 - **The layout glyph** is a split-view symbol from each platform's chrome icons (§9.6): two panes outlined in Firepit's 24 dp outlined set on Android, SF Symbols' `rectangle.split.2x1` on iOS.
 - **Motion:** changing arrangement moves the panes over 250 ms (emphasised deceleration). The map pane takes its new size once, at the end. While the divider is dragged, it follows the finger 1:1.
-  - As built: dragging shows a line where the divider will land, and both panes take their new width on release. Changing the arrangement is not animated yet, so it is also still under Reduce Motion.
+  - As built: dragging shows a line where the divider will land. On release, and when a side opens or closes, the chat side moves over 250 ms while the map takes its new size once: at the start when it grows, under the chat side, or at the end when it shrinks. Closing a side moves the panes first, then one pane shows. Reduce Motion (iOS) and removed animations (Android) make it instant.
 - **No new colours.** The divider is `outline` and the handle `text-2`.
 
 #### 6.11.12 Not in this stage
@@ -758,7 +765,7 @@ stateDiagram-v2
 
 Glyphs are stroke icons; the state is carried by colour **and** by the tooltip/label, never by colour alone.
 
-No blue ticks, no "read", no typing indicator. Message info (long-press) shows the timeline, hops, SNR, and on 2.8 "Signed · verified" when the packet carried a verified signature.
+No blue ticks, no "read", no typing indicator. Message info (long-press) shows the timeline, hops, SNR, and on 2.8 "Signed · verified" when the packet carried a verified signature. As built (both apps, 2026-10-04), a room message whose signature the radio verified also carries a small shield before its time, read out as "Signed by the sender's radio". It costs the message nothing: the radio signs it anyway. A message without one is not suspect, only unsigned: older radios do not sign, and a long message does not fit a signature.
 
 ### 7.3 Presence
 
@@ -839,9 +846,9 @@ Tokens (light / dark). **"Ember" palette**: a terracotta primary with warm neutr
 | `text` | `#1A1614` | `#F1ECE7` | 4.5:1+ on surfaces |
 | `text-2` | `#6B625C` | `#A39C95` | secondary |
 | `outline` | `#E8E0D9` | `#2E2926` | dividers, strokes |
-| `live` | `#2BB673` | `#4ED69A` | live markers, connected dot |
-| `stale` | `#A39E98` | `#6F6963` | stale markers, unknown |
-| `warn` | `#9A6B00` | `#F2C94C` | alerts, mesh busy, restarting (deep gold, distinct from the terracotta primary) |
+| `live` | `#22915C` | `#4ED69A` | live markers, connected dot |
+| `stale` | `#888179` | `#6F6963` | stale markers, unknown. Rings and icons only, never text: it is too faint to read at text sizes |
+| `warn` | `#895F00` | `#F2C94C` | alerts, mesh busy, restarting (deep gold, distinct from the terracotta primary) |
 | `danger` | `#C62B4A` | `#F27D8E` | failed, leave/remove (crimson, distinct from primary) |
 | `infra` | `#4A5B8C` | `#93A6DF` | Base/Router markers and tags |
 | `identity[0..11]` | 12 hues, S 50 %, L 42 % (light) / L 64 % (dark) | — | avatars, sender names, markers |

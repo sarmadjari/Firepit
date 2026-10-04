@@ -82,7 +82,7 @@ import com.getfirepit.core.protocol.OwnerName
 import com.getfirepit.core.protocol.Person
 import com.getfirepit.core.transport.LinkState
 
-enum class SettingsSection { DEVICES, NODES, OFFLINE_MAPS, PINS }
+enum class SettingsSection { DEVICES, NODES, OFFLINE_MAPS, PINS, QUICK_REPLIES }
 
 @Composable
 fun SettingsScreen(
@@ -115,6 +115,7 @@ fun SettingsScreen(
     val radioPrivacy by settingsViewModel.radioPrivacy.collectAsStateWithLifecycle()
     val canRestoreRadio by settingsViewModel.canRestoreRadio.collectAsStateWithLifecycle()
     val layoutChoice by shellViewModel.choice.collectAsStateWithLifecycle()
+    val quickReplies by settingsViewModel.quickReplies.collectAsStateWithLifecycle()
 
     // A sub-screen takes the whole display, same as an open chat does.
     LaunchedEffect(section) { onImmersiveChange(section != null) }
@@ -156,6 +157,14 @@ fun SettingsScreen(
             onBack = { section = null },
         )
 
+        SettingsSection.QUICK_REPLIES -> QuickRepliesScreen(
+            replies = quickReplies,
+            onChange = settingsViewModel::setQuickReplies,
+            onReset = settingsViewModel::resetQuickReplies,
+            onBack = { section = null },
+            modifier = modifier,
+        )
+
         null -> SettingsList(
             modifier = modifier,
             deviceSummary = radioState.link.summary(),
@@ -172,6 +181,7 @@ fun SettingsScreen(
             onChooseRetention = settingsViewModel::chooseRetention,
             roomLifetime = roomLifetime,
             onChooseRoomLifetime = settingsViewModel::chooseRoomLifetime,
+            quickReplyCount = quickReplies.size,
             showMessageText = showMessageText,
             onShowMessageText = settingsViewModel::setShowMessageText,
             allowScreenCapture = allowScreenCapture,
@@ -240,6 +250,7 @@ private fun SettingsList(
     onChooseRetention: (MessageRetention) -> Unit,
     roomLifetime: RoomLifetime,
     onChooseRoomLifetime: (RoomLifetime) -> Unit,
+    quickReplyCount: Int,
     showMessageText: Boolean,
     onShowMessageText: (Boolean) -> Unit,
     allowScreenCapture: Boolean,
@@ -385,6 +396,13 @@ private fun SettingsList(
                     onChoose = onChooseRoomLifetime,
                 )
             }
+            ListItem(
+                headlineContent = { Text("Quick replies") },
+                supportingContent = {
+                    Text(if (quickReplyCount == 1) "1 ready to send with ⚡" else "$quickReplyCount ready to send with ⚡")
+                },
+                modifier = Modifier.clickable { onOpen(SettingsSection.QUICK_REPLIES) },
+            )
             HorizontalDivider()
 
             SectionLabel("Privacy")

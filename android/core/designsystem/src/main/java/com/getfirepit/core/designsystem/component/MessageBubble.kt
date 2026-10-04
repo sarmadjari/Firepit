@@ -67,6 +67,8 @@ fun MessageBubble(
     /** Runs to paint, decided by the caller that owns the search. */
     highlight: List<IntRange> = emptyList(),
     isFirstInGroup: Boolean = true,    isLastInGroup: Boolean = true,
+    /** The sender's radio signed it and ours verified the signature (Meshtastic 2.8). */
+    signed: Boolean = false,
 ) {
     val dark = FirepitTheme.colors.isDark
     val shape = bubbleShapeFor(isOutgoing, isLastInGroup)
@@ -144,6 +146,14 @@ fun MessageBubble(
                         text = it,
                         style = MaterialTheme.typography.labelSmall,
                         color = FirepitTheme.colors.textSecondary,
+                    )
+                }
+                if (signed) {
+                    androidx.compose.material3.Icon(
+                        painter = androidx.compose.ui.res.painterResource(FirepitIcons.Signed),
+                        contentDescription = "Signed by the sender's radio",
+                        tint = FirepitTheme.colors.textSecondary,
+                        modifier = Modifier.size(12.dp),
                     )
                 }
                 Text(

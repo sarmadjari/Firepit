@@ -373,6 +373,7 @@ public final class MeshRepository: Sendable {
             var roomText = Meshchat_RoomText()
             roomText.text = text
             roomText.replyID = UInt32(bitPattern: attempt.replyId ?? 0)
+            roomText.emoji = UInt32(attempt.emoji ?? 0)
             inner.roomText = roomText
             let sealed = try phoneKeys.sealDirect(
                 peerPublic: peerPhoneKey,
@@ -410,7 +411,7 @@ public final class MeshRepository: Sendable {
                 ),
                 myNodeNum: myNodeNum
             )
-            try await messageDao.delete(id: oldId)
+            try await messageDao.deleteById(id: oldId)
             _ = directAttempts.withLock { $0.removeValue(forKey: oldId) }
             recordDirectAttempt(
                 packetId: Int32(bitPattern: packet.id),
@@ -683,6 +684,20 @@ public final class MeshRepository: Sendable {
         return ChannelKey.of(psk)
     }
 
+    /// Sends a message that failed once more, as a new packet, and lets the failed copy go: the conversation keeps one
+    /// copy, the new attempt, at the bottom where it now is (UX §5.4). Nothing changes when it cannot be sent.
+    public func sendAgain(_ message: ChatMessage) async throws {
+        guard message.isOutgoing, message.status.isFailure else { return }
+        try await sendText(
+            channel: message.channel,
+            text: message.text,
+            to: message.toNodeNum,
+            replyId: message.replyId,
+            reaction: Reactions.isReaction(message)
+        )
+        try await messageDao.deleteById(id: message.id)
+    }
+
     /**
      * Saves text sent by the UI, choosing the same carriage Android does.
      *
@@ -690,7 +705,12 @@ public final class MeshRepository: Sendable {
      * sealed to the peer phone when possible, then to the peer radio so relays
      * cannot read them. Meshtastic channels intentionally remain interoperable.
      */
-    public func sendText(channel: Int, text: String, to: Int32 = broadcastNodeNum, replyId: Int32? = nil) async throws {
+    /// `reaction`: one of the six reactions to `replyId` (UX §5.4), Meshtastic's `emoji`, sealed inside where the words
+    /// are.
+    public func sendText(
+        channel: Int, text: String, to: Int32 = broadcastNodeNum, replyId: Int32? = nil, reaction: Bool = false
+    ) async throws {
+        let emoji: Int32 = reaction ? Self.reactionEmoji : 0
         guard let myNodeNum = myNodeNum.value else {
             throw SendError.notConnected
         }
@@ -729,6 +749,7 @@ public final class MeshRepository: Sendable {
             peerPhoneKey: peerPhoneKey,
             myNodeNum: myNodeNum,
             replyId: replyId,
+            emoji: emoji,
             directRoom: directRoom
         )
         if case .sealedDirect(let nodeNum) = carriage {
@@ -739,6 +760,7 @@ public final class MeshRepository: Sendable {
                 channel: channel,
                 text: text,
                 replyId: replyId,
+                emoji: emoji == 0 ? nil : Int(emoji),
                 sentAt: sentAt
             )
         }
@@ -753,6 +775,7 @@ public final class MeshRepository: Sendable {
                 status: .queued,
                 isOutgoing: true,
                 replyId: replyId,
+                emoji: emoji == 0 ? nil : Int(emoji),
                 roomId: to == broadcastNodeNum ? conversationIdOf(channel: channel) : 0
             ),
             myNodeNum: myNodeNum
@@ -781,6 +804,7 @@ public final class MeshRepository: Sendable {
         peerPhoneKey: Data?,
         myNodeNum: Int32,
         replyId: Int32?,
+        emoji: Int32,
         directRoom: DirectSeal.RoomSecret?
     ) throws -> MeshPacket {
         switch carriage {
@@ -792,6 +816,7 @@ public final class MeshRepository: Sendable {
             var roomText = Meshchat_RoomText()
             roomText.text = text
             roomText.replyID = UInt32(bitPattern: replyId ?? 0)
+            roomText.emoji = UInt32(bitPattern: emoji)
             inner.roomText = roomText
             let sealed = try phoneKeys.sealDirect(
                 peerPublic: peerPhoneKey!,
@@ -824,7 +849,8 @@ public final class MeshRepository: Sendable {
                 wantAck: true,
                 pkiEncrypted: true,
                 publicKey: peerKey!,
-                replyId: replyId
+                replyId: replyId,
+                emoji: emoji == 0 ? nil : emoji
             )
         case .openChannel(let channel, _):
             return try MeshPacketBuilder.meshPacket(
@@ -834,13 +860,15 @@ public final class MeshRepository: Sendable {
                 payload: payload,
                 hopLimit: hopLimitForSending(),
                 wantAck: true,
-                replyId: replyId
+                replyId: replyId,
+                emoji: emoji == 0 ? nil : emoji
             )
         case .sealedRoom(let roomId, let channel):
             var inner = Meshchat_MeshChatControl()
             var roomText = Meshchat_RoomText()
             roomText.text = text
             roomText.replyID = UInt32(bitPattern: replyId ?? 0)
+            roomText.emoji = UInt32(bitPattern: emoji)
             inner.roomText = roomText
             guard
                 let message = roomKeys.seal(
@@ -1029,13 +1057,13 @@ public final class MeshRepository: Sendable {
      * Words that arrived sealed in roomId. Stored like any other message: the
      * encryption is how it travelled, and the database is encrypted in its turn.
      */
-    internal func saveSealedText(packet: MeshPacket, text: String, replyId: Int32?, roomId: Int32) async {
-        await saveText(packet: packet, text: sanitizeMeshText(text), replyId: replyId, emoji: nil, roomId: roomId)
+    internal func saveSealedText(packet: MeshPacket, text: String, replyId: Int32?, roomId: Int32, emoji: Int? = nil) async {
+        await saveText(packet: packet, text: sanitizeMeshText(text), replyId: replyId, emoji: emoji, roomId: roomId)
     }
 
     /// One person's words, sealed by their phone to ours and already opened.
-    internal func saveSealedDirectText(packet: MeshPacket, text: String, replyId: Int32?) async {
-        await saveText(packet: packet, text: sanitizeMeshText(text), replyId: replyId, emoji: nil, roomId: 0)
+    internal func saveSealedDirectText(packet: MeshPacket, text: String, replyId: Int32?, emoji: Int? = nil) async {
+        await saveText(packet: packet, text: sanitizeMeshText(text), replyId: replyId, emoji: emoji, roomId: 0)
     }
 
     private func saveText(
@@ -1278,4 +1306,6 @@ public final class MeshRepository: Sendable {
     private static let publicKeySize = 32
     private static let directAttemptTtlMillis: Int64 = 10 * 60 * 1000
     private static let maxDirectAttempts = 64
+    /// Meshtastic's value for "this text is a reaction" in `Data.emoji`, which other apps set too.
+    static let reactionEmoji: Int32 = 1
 }

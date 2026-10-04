@@ -20,9 +20,9 @@ struct DesignSystemTests {
         ("textPrimary", FirepitColors.textPrimary, 0x1A1614, 0xF1ECE7),
         ("textSecondary", FirepitColors.textSecondary, 0x6B625C, 0xA39C95),
         ("outline", FirepitColors.outline, 0xE8E0D9, 0x2E2926),
-        ("live", FirepitColors.live, 0x2BB673, 0x4ED69A),
-        ("stale", FirepitColors.stale, 0xA39E98, 0x6F6963),
-        ("warn", FirepitColors.warn, 0x9A6B00, 0xF2C94C),
+        ("live", FirepitColors.live, 0x22915C, 0x4ED69A),
+        ("stale", FirepitColors.stale, 0x888179, 0x6F6963),
+        ("warn", FirepitColors.warn, 0x895F00, 0xF2C94C),
         ("danger", FirepitColors.danger, 0xC62B4A, 0xF27D8E),
         ("infra", FirepitColors.infra, 0x4A5B8C, 0x93A6DF),
         ("mapGround", FirepitColors.mapGround, 0xEEEAE4, 0x1C1A17),
@@ -50,6 +50,22 @@ struct DesignSystemTests {
             }
         }
         #expect(contrast(resolved(FirepitColors.onPrimary, style), resolved(FirepitColors.primary, style)) >= 4.5)
+    }
+
+    @Test("Warnings read as text, and status marks stand out at 3:1", arguments: [UIUserInterfaceStyle.light, .dark])
+    func statusContrast(style: UIUserInterfaceStyle) {
+        func ratio(_ a: Color, _ b: Color) -> Double { contrast(resolved(a, style), resolved(b, style)) }
+        // Warnings and errors are written on the screen's surfaces.
+        for surface in [FirepitColors.surface, FirepitColors.surface2] {
+            #expect(ratio(FirepitColors.warn, surface) >= 4.5)
+            #expect(ratio(FirepitColors.danger, surface) >= 4.5)
+            // Live and stale are dots and rings, never text (UX §9.1): graphics, held to 3:1.
+            #expect(ratio(FirepitColors.live, surface) >= 3.0)
+            #expect(ratio(FirepitColors.stale, surface) >= 3.0)
+        }
+        // The ticks on a sent message: heard and delivered in live, failed in danger.
+        #expect(ratio(FirepitColors.live, FirepitColors.bubbleOut) >= 3.0)
+        #expect(ratio(FirepitColors.danger, FirepitColors.bubbleOut) >= 3.0)
     }
 
     @Test("Identity slot is floorMod(nodeNum, 12) on the signed node number, as on Android")

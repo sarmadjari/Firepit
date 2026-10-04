@@ -29,6 +29,8 @@ struct MessageBubble: View {
     var highlight: [Range<Int>] = []
     var isFirstInGroup = true
     var isLastInGroup = true
+    /// The sender's radio signed it and ours verified the signature (Meshtastic 2.8).
+    var signed = false
 
     @Environment(\.identitySlots) private var identitySlots
 
@@ -91,6 +93,11 @@ struct MessageBubble: View {
 
     private var timeAndStatus: some View {
         HStack(spacing: 4) {
+            if signed {
+                Image(icon: .signed)
+                    .imageScale(.small)
+                    .accessibilityLabel(Text("Signed by the sender's radio"))
+            }
             Text(verbatim: time)
             if let status {
                 StatusTick(status)

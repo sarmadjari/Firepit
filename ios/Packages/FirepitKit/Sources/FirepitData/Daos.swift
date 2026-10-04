@@ -41,6 +41,7 @@ public struct MessageDao: Sendable {
                 arguments: [peer, broadcast])
         }
     }
+    /// Newest message per person, for the Direct list. A reaction is not a message there (UX §5.4).
     public func observeDirectLatest(broadcast: Int32) -> AsyncStream<[MessageEntity]> {
         stream(writer) { db in
             try MessageEntity.fetchAll(
@@ -48,6 +49,7 @@ public struct MessageDao: Sendable {
                 sql: """
                     SELECT * FROM messages WHERE id IN (
                         SELECT id FROM messages WHERE toNodeNum != ?
+                        AND (COALESCE(emoji, 0) = 0 OR replyId IS NULL)
                         GROUP BY peerNodeNum HAVING sentAt = MAX(sentAt)
                     )
                     """, arguments: [broadcast])
@@ -103,15 +105,14 @@ public struct MessageDao: Sendable {
         try await execute("DELETE FROM messages WHERE roomId = ? AND toNodeNum = ?", [roomId, broadcast])
     }
     public func deleteAll() async throws { try await execute("DELETE FROM messages", []) }
+    /// One message, when a new attempt to send it takes its place.
+    public func deleteById(id: Int32) async throws { try await execute("DELETE FROM messages WHERE id = ?", [id]) }
     public func deleteUnfiled(slot: Int, broadcast: Int32) async throws {
         try await execute("DELETE FROM messages WHERE channel = ? AND roomId = 0 AND toNodeNum = ?", [slot, broadcast])
     }
     public func moveUnfiled(from: Int, to: Int, broadcast: Int32) async throws {
         try await execute(
             "UPDATE messages SET channel = ? WHERE channel = ? AND roomId = 0 AND toNodeNum = ?", [to, from, broadcast])
-    }
-    public func delete(id: Int32) async throws {
-        try await execute("DELETE FROM messages WHERE id = ?", [id])
     }
     public func upsert(message: MessageEntity) async throws { try await writer.write { db in try message.save(db) } }
     public func insertIfNew(message: MessageEntity) async throws -> Int64 {
@@ -145,6 +146,7 @@ public struct MessageDao: Sendable {
                 arguments: StatementArguments(names))
         }
     }
+    /// The newest message in each channel, for the list previews. A reaction is not a message there (UX §5.4).
     public func observeLatestPerChannel(broadcast: Int32) -> AsyncStream<[MessageEntity]> {
         stream(writer) { db in
             try MessageEntity.fetchAll(
@@ -152,6 +154,7 @@ public struct MessageDao: Sendable {
                 sql: """
                     SELECT * FROM messages WHERE id IN (
                         SELECT id FROM messages WHERE toNodeNum = ?
+                        AND (COALESCE(emoji, 0) = 0 OR replyId IS NULL)
                         GROUP BY channel HAVING sentAt = MAX(sentAt)
                     )
                     """, arguments: [broadcast])
@@ -415,6 +418,7 @@ public struct ChannelStateDao: Sendable {
                 sql: "UPDATE channel_state SET roomId = ? WHERE channel = ? AND roomId = 0", arguments: [roomId, slot])
         }
     }
+    /// Unread counts per channel. Reactions are not counted: they do not notify either (UX §5.4).
     public func observeUnread() -> AsyncStream<[UnreadCount]> {
         stream(writer) { db in
             try UnreadCount.fetchAll(
@@ -424,6 +428,7 @@ public struct ChannelStateDao: Sendable {
                     FROM messages m
                     LEFT JOIN channel_state s ON s.channel = m.channel
                     WHERE m.isOutgoing = 0 AND m.sentAt > COALESCE(s.lastReadAt, 0)
+                    AND (COALESCE(m.emoji, 0) = 0 OR m.replyId IS NULL)
                     GROUP BY m.channel
                     """)
         }

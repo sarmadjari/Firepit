@@ -1383,7 +1383,9 @@ public final class RoomRepository: Sendable {
         }
         if data.portnum == .textMessageApp,
             Int32(bitPattern: packet.to) == myNodeNum,
-            packet.pkiEncrypted
+            packet.pkiEncrypted,
+            // A reaction shows no ticks, so it gets no receipt.
+            !(data.emoji != 0 && data.replyID != 0)
         {
             await receipts.received(channel: Int(packet.channel), messageId: Int32(bitPattern: packet.id), peer: from)
         }
@@ -1436,9 +1438,13 @@ public final class RoomRepository: Sendable {
                     packet: packet,
                     text: room.text,
                     replyId: room.replyID == 0 ? nil : Int32(bitPattern: room.replyID),
-                    roomId: sealedRoomId
+                    roomId: sealedRoomId,
+                    emoji: room.emoji == 0 ? nil : Int(room.emoji)
                 )
-                await receipts.received(channel: Int(packet.channel), messageId: Int32(bitPattern: packet.id))
+                // A reaction shows no ticks, so it gets no receipt.
+                if room.emoji == 0 || room.replyID == 0 {
+                    await receipts.received(channel: Int(packet.channel), messageId: Int32(bitPattern: packet.id))
+                }
                 await noteActivity(roomId: sealedRoomId)
             }
         case .personCard(let card):
@@ -1564,9 +1570,13 @@ public final class RoomRepository: Sendable {
             await mesh.saveSealedDirectText(
                 packet: packet,
                 text: words.text,
-                replyId: words.replyID == 0 ? nil : Int32(bitPattern: words.replyID)
+                replyId: words.replyID == 0 ? nil : Int32(bitPattern: words.replyID),
+                emoji: words.emoji == 0 ? nil : Int(words.emoji)
             )
-            await receipts.received(channel: Int(packet.channel), messageId: Int32(bitPattern: packet.id), peer: from)
+            if words.emoji == 0 || words.replyID == 0 {
+                await receipts.received(
+                    channel: Int(packet.channel), messageId: Int32(bitPattern: packet.id), peer: from)
+            }
         case .receipt(let receipt):
             await receipts.handle(from: from, receipt: receipt)
         default:

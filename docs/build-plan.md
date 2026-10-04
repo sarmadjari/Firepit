@@ -19,13 +19,13 @@ RTL-ready from Stage 3) · invite-link domain deferred until Stage 8.
 | Stage | What it delivers | Status |
 |---|---|---|
 | 0–2 | Foundations, talking to a radio, the data layer and honest message pipeline | ✅ Built |
-| 3–6 | Adaptive shell and design system, rooms and QR invites, chat, map and location | ✅ Built, except quick replies. The exit proofs that need people outdoors wait for the field test |
+| 3–6 | Adaptive shell and design system, rooms and QR invites, chat, map and location | ✅ Built. The exit proofs that need people outdoors wait for the field test |
 | 7–7.9 | Hardening, identity and privacy, sealed rooms, the two-phone bench test, two security reviews | ✅ Built. A full-afternoon field test and battery over 8 h are not yet measured |
-| 8 | v1.0 features | ✅ Built, except emoji reactions |
-| 9 | Release prep: accessibility and RTL pass, R8, store listing | Not started |
+| 8 | v1.0 features | ✅ Built, emoji reactions last (2026-10-04) |
+| 9 | Release prep: accessibility and RTL pass, R8, store listing | ✅ Done 2026-10-04: accessibility, right to left, R8, 16 KB pages, store listing, no analytics. Left for release day: the release key and store submission |
 | 10 | The iPhone app | ✅ Built. An iPhone and an Android phone in one room over real radios is still to be tested |
-| 11 | Security within Meshtastic's limits: Signal-grade protections where the radio allows, with no message growing by a byte | In progress: Phases 1 and 2 done on both apps |
-| 12 | Large screens: the conversation and the map side by side on foldables, tablets and wide windows; the phone app in narrow ones | Built on both apps, 2026-10-04 (decisions U-8 to U-14, UX §11.4). Open: the chat-to-map actions, which need features not built yet; the iOS 27.1 fold APIs; motion when the arrangement changes; Figma frames; device runs on an iPhone Duo, a Flip and a TriFold |
+| 11 | Security within Meshtastic's limits: Signal-grade protections where the radio allows, with no message growing by a byte | In progress: Phases 1, 2 and 5 done on both apps; Phase 6's signed-message mark built |
+| 12 | Large screens: the conversation and the map side by side on foldables, tablets and wide windows; the phone app in narrow ones | Built on both apps, 2026-10-04 (decisions U-8 to U-14, UX §11.4). Open: the chat-to-map actions, which need features not built yet; the iOS 27.1 fold APIs; Figma frames; device runs on an iPhone Duo, a Flip and a TriFold |
 
 ---
 
@@ -317,10 +317,14 @@ the session through 70 s of confirmed Dozing with zero link transitions.
 
 ### Deferred from this stage
 
-- **Quick replies** — not built.
-- **Swipe-to-reply** — long-press works and carries an accessibility label, but there is no visible
-  affordance and swipe is the gesture people reach for. Best done alongside quick replies, since
-  both belong in the same gesture layer.
+- **Quick replies** — built 2026-10-04 on both apps. ⚡ beside the message box opens a row of chips,
+  and one tap sends one through the same paced queue as anything typed, without touching the draft;
+  a reply being written applies to it too. Five defaults ("On my way", "Where are you?", "Wait for
+  me", "I'm here", "OK"), up to ten, each at most 40 bytes, edited in Settings › Quick replies. The
+  rules are one pure `QuickReplies` object on both apps, with the same tests.
+- **Swipe-to-reply** — built 2026-10-04 on both apps. A message dragged towards the reading end follows
+  the finger a short way over a reply arrow; past the mark a haptic says letting go will reply. Long-press
+  and the Reply accessibility action still work.
 - Notification actions (reply from the shade, mark read) — the notification only opens the room.
 - Pre-existing incoming rows keep `REACHED_MESH`. Never rendered, so not worth a data migration.
 
@@ -798,7 +802,7 @@ In dependency order: DMs (`add_contact` before every DM) → alerts → reaction
 fallback → Base/Router admin (roles, fixed position, favorites) → key rotation → Group + public
 relays mode → offline map packs → dark theme → diagnostics → 2.8 signing badge.
 
-**Status:** all built except reactions, on both apps. Diagnostics are the radio details screen,
+**Status:** all built on both apps; reactions were the last, on 2026-10-04 (UX §5.4). Diagnostics are the radio details screen,
 traceroute and the channel-congestion warning. The signing badge is "Signature: Verified" in the info
 of any message the firmware marked as signed, and the radio's details say whether it can sign
 ("Signed messages").
@@ -809,6 +813,31 @@ of any message the firmware marked as signed, and the radio's details say whethe
 Accessibility sweep (48 dp targets, TalkBack labels on every tick glyph, contrast), **RTL/Arabic
 pass**, R8 config, 16 KB page-alignment check on native libs (SQLCipher, MapLibre), Play listing,
 no analytics confirmed.
+
+**Done (2026-10-04):**
+- **No analytics:** neither app has an analytics, crash-reporting or tracking library, and the only
+  network calls are map tiles from OpenFreeMap, which offline-only mode stops.
+- **Store listing:** `store-listing.md`, with the privacy answers from that audit.
+- **Tick glyphs:** every status glyph already had its spoken label on both apps.
+- **Contrast:** three light-theme tokens fell short of WCAG AA and are now the nearest passing shade
+  of the same hue: `live` #22915C (was 2.45:1 on the surface, now 3.73), `stale` #888179 (2.49, now
+  3.60) and `warn` #895F00 (4.39, now 5.31). `stale` is for rings and icons only; the four places
+  that used it for text now use the secondary text colour, and the congestion warning uses `warn`.
+  `DesignSystemTests` holds every pair: text at 4.5:1, rings, dots and ticks at 3:1.
+- **Touch targets:** the one target under 48 dp, the × that clears a room's search, is now a full
+  target on both apps.
+- **R8** shrinks the release build: the arm64 APK is 20.8 MB instead of 68.6 MB. Libraries bring
+  their own keep rules; `proguard-rules.pro` adds SQLCipher's, whose native code calls back by
+  name. Run on the Galaxy Fold: chats, map, Settings, Devices and Quick replies with no crash. A local
+  release build can be signed with the debug key to try it (`-Pfirepit.debugSignedRelease`); the store
+  build uses the release key.
+- **16 KB pages:** every native library (MapLibre, SQLCipher, CameraX, graphics) is 16 KB aligned in
+  the APK and in its ELF load segments, as Android 15 requires on 16 KB devices.
+- **Right to left:** both apps mirror. iOS was run in the demo world with right-to-left forced (the
+  room, the chat list): the back button, bubbles, quote bar, composer and list rows all mirror.
+  Android was run on the Galaxy Fold with Firepit set to Arabic: the bar's title and actions, the
+  filter chips, the tabs and the new-room button all swap sides. The words stay English: there is no
+  Arabic translation yet, which is a release decision rather than a layout one.
 
 ## Stage 10 — iOS ✅ built
 
@@ -850,9 +879,9 @@ reference: when the two disagree, Android's code decides.
 
 ### Where it differs
 
-What iOS allows differs from Android in places: screenshots cannot be blocked, the database has iOS
-file encryption rather than SQLCipher, the Keychain survives a reinstall, and there is no keyboard
-learning switch. `architecture.md` §10 and `security.md` §11 list them all.
+What iOS allows differs from Android in places: screenshots cannot be blocked, the Keychain survives
+a reinstall, and there is no keyboard learning switch. (The database used to have iOS file encryption
+only; since Stage 11 Phase 5 it is SQLCipher, as on Android.) `architecture.md` §10 and `security.md` §11 list them all.
 
 ---
 
@@ -896,6 +925,13 @@ random bytes are far more than a nonce needs.
    locked out at the next change. A contact's phone key changing raises an alert.
 5. **Phone storage.** The iPhone's database is encrypted with SQLCipher, as on Android, and key material is
    wiped from memory where the platforms allow.
+   - **Done 2026-10-04.** GRDB 7.11.1 is built on SQLCipher 4.19 from a local copy
+     (`ios/Packages/GRDB-SQLCipher`, following GRDB's own "GRDB+SQLCipher" instructions). The key is 32
+     random bytes in the Keychain (`AfterFirstUnlockThisDeviceOnly`), given to SQLCipher raw (`x'…'`), and
+     the bytes read from the Keychain are wiped once the key is formed. An old unencrypted database is
+     exported into an encrypted one on first open, keeping every row; checked on a simulator with a
+     database written by the previous build. `DatabaseEncryptionTests`, and every FirepitKit test now
+     runs on SQLCipher. Swift cannot promise a wiped `String`, so the key never becomes one.
 6. **Proof of sender, within the limits.** Meshtastic 2.8 radio signatures are shown per message, at no cost
    to the message. Phone keys learned in person always win over later announcements, which closes the gap
    where a member could name a false key for someone else.

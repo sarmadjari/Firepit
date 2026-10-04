@@ -30,11 +30,12 @@ interface MessageDao {
     )
     fun observeDirectEntities(peer: Int, broadcast: Int): Flow<List<MessageEntity>>
 
-    /** Newest message per person, for the Direct list. */
+    /** Newest message per person, for the Direct list. A reaction is not a message there (UX §5.4). */
     @Query(
         """
         SELECT * FROM messages WHERE id IN (
             SELECT id FROM messages WHERE toNodeNum != :broadcast
+            AND (COALESCE(emoji, 0) = 0 OR replyId IS NULL)
             GROUP BY peerNodeNum HAVING sentAt = MAX(sentAt)
         )
         """,
@@ -43,9 +44,6 @@ interface MessageDao {
 
     @Query("SELECT * FROM messages WHERE id = :id")
     suspend fun findEntity(id: Int): MessageEntity?
-
-    @Query("DELETE FROM messages WHERE id = :id")
-    suspend fun delete(id: Int)
 
     /** Enforces the retention setting on this phone's copy. */
     @Query(
@@ -96,6 +94,10 @@ interface MessageDao {
     @Query("DELETE FROM messages")
     suspend fun deleteAll()
 
+    /** One message, when a new attempt to send it takes its place. */
+    @Query("DELETE FROM messages WHERE id = :id")
+    suspend fun deleteById(id: Int)
+
     /**
      * Leaving a channel that has no id takes its history with it. Only rows
      * filed under no room: a room's own history is deleted by its id.
@@ -128,11 +130,12 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE isOutgoing = 1 AND status IN (:pending)")
     suspend fun pendingOutgoing(pending: List<MessageStatus>): List<MessageEntity>
 
-    /** The newest message in each channel, for the list previews. */
+    /** The newest message in each channel, for the list previews. A reaction is not a message there (UX §5.4). */
     @Query(
         """
         SELECT * FROM messages WHERE id IN (
             SELECT id FROM messages WHERE toNodeNum = :broadcast
+            AND (COALESCE(emoji, 0) = 0 OR replyId IS NULL)
             GROUP BY channel HAVING sentAt = MAX(sentAt)
         )
         """,
@@ -377,7 +380,8 @@ interface ChannelStateDao {
     /**
      * Unread counts per channel. Channels with no row yet are absent, so a
      * conversation is only "unread" once it has been opened at least once or
-     * has messages newer than its mark.
+     * has messages newer than its mark. Reactions are not counted: they do not
+     * notify either (UX §5.4).
      */
     @Query(
         """
@@ -385,6 +389,7 @@ interface ChannelStateDao {
         FROM messages m
         LEFT JOIN channel_state s ON s.channel = m.channel
         WHERE m.isOutgoing = 0 AND m.sentAt > COALESCE(s.lastReadAt, 0)
+        AND (COALESCE(m.emoji, 0) = 0 OR m.replyId IS NULL)
         GROUP BY m.channel
         """,
     )

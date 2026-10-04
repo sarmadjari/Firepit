@@ -1,17 +1,23 @@
 import Foundation
+import Security
 import GRDB
+
+/// Why the database key could not be made.
+public enum DatabaseKeyError: Error {
+    case noRandomBytes(OSStatus)
+    case wrongSize(Int)
+}
 
 /// Firepit's Room schema on iOS.
 ///
-/// Android encrypts the database with SQLCipher under a random key the Keystore wraps, and keeps that key usable while
-/// the phone is locked, "because messages arrive in a pocket" (docs/security.md). iOS keeps the same promise with Data
-/// Protection: the database directory and SQLite files are `.completeUntilFirstUserAuthentication`, encrypted by the
-/// Secure Enclave until the phone is first unlocked after a restart and readable afterwards, so the app can still store
-/// a message when iOS relaunches it in the background for Bluetooth while the phone is locked — a stricter class could
-/// not reopen the file then, and the message would be lost. The keys in the Keychain use the matching
-/// `AfterFirstUnlockThisDeviceOnly`. Android's extra SQLCipher layer, which also protects a copy of the files taken
-/// after first unlock, has no equivalent here yet. The directory is excluded from iCloud and device backups, matching
-/// Android's `allowBackup=false`.
+/// Encrypted with SQLCipher under a random 256-bit key, as Android's is (build plan, Stage 11 Phase 5). The key lives in
+/// the Keychain as `AfterFirstUnlockThisDeviceOnly`, Android's "because messages arrive in a pocket" (docs/security.md):
+/// usable while the phone is locked after its first unlock, so a message still lands when iOS relaunches the app in the
+/// background for Bluetooth, never copied to another device, and never in a backup. A copy of the files taken from the
+/// phone is unreadable without it.
+///
+/// Data Protection stays on underneath: the directory and SQLite files are `.completeUntilFirstUserAuthentication`, and
+/// excluded from iCloud and device backups, matching Android's `allowBackup=false`.
 ///
 /// iOS starts at Android schema v12. Historical Android migrations before it are deliberately not ported: the first
 /// migration below creates the exported v12 schema exactly enough for Room-compatible SQL and DAO semantics, and each
@@ -21,11 +27,15 @@ public enum FirepitDatabase {
     public static let v12IdentityHash = "ffeccfa0136713b833875de07074781d"
     public static let fileName = "firepit.db"
 
-    public static func open(at directory: URL) throws -> DatabasePool {
+    public static func open(at directory: URL, secrets: SecretStore = KeychainStore()) throws -> DatabasePool {
         try protectDatabaseDirectory(directory)
         let url = directory.appendingPathComponent(fileName, isDirectory: false)
+        let key = try databaseKey(in: secrets)
+        // A database from before encryption is moved over once, keeping every row.
+        if isPlaintext(url) { try encryptInPlace(url, key: key) }
         var configuration = Configuration()
         configuration.prepareDatabase { db in
+            try db.usePassphrase(key)
             try db.execute(sql: "PRAGMA foreign_keys = ON")
             try db.execute(sql: "PRAGMA journal_mode = WAL")
             try protectSQLiteFiles(for: url)
@@ -34,6 +44,61 @@ public enum FirepitDatabase {
         try migrator.migrate(pool)
         try protectSQLiteFiles(for: url)
         return pool
+    }
+
+    /// The account the database key is kept under in the Keychain.
+    static let keyAccount = "database.key"
+
+    /// The key in SQLCipher's raw form, `x'…'` with 64 hex digits, so it is used as it is: a random key needs none of
+    /// the slow stretching a typed password gets, and every connection opens without it.
+    static func databaseKey(in secrets: SecretStore) throws -> Data {
+        var raw = try secrets.data(for: keyAccount) ?? {
+            var fresh = Data(count: 32)
+            let status = fresh.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!) }
+            guard status == errSecSuccess else { throw DatabaseKeyError.noRandomBytes(status) }
+            try secrets.set(fresh, for: keyAccount)
+            return fresh
+        }()
+        defer { raw.resetBytes(in: 0..<raw.count) }
+        guard raw.count == 32 else { throw DatabaseKeyError.wrongSize(raw.count) }
+        let digits = Array("0123456789abcdef".utf8)
+        var literal = Data(capacity: 67)
+        literal.append(contentsOf: Array("x'".utf8))
+        for byte in raw {
+            literal.append(digits[Int(byte >> 4)])
+            literal.append(digits[Int(byte & 0x0F)])
+        }
+        literal.append(UInt8(ascii: "'"))
+        return literal
+    }
+
+    /// True for a database file written before encryption: plain SQLite files start with this header, and encrypted
+    /// ones start with random bytes.
+    static func isPlaintext(_ url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        let header = (try? handle.read(upToCount: 16)) ?? Data()
+        return header == Data("SQLite format 3\u{0}".utf8)
+    }
+
+    /// Copies an unencrypted database into an encrypted one with SQLCipher's export, then puts it in its place.
+    static func encryptInPlace(_ url: URL, key: Data) throws {
+        let files = FileManager.default
+        let encrypted = url.deletingLastPathComponent().appendingPathComponent("\(fileName).encrypting")
+        try? files.removeItem(at: encrypted)
+        let plain = try DatabaseQueue(path: url.path)
+        try plain.writeWithoutTransaction { db in
+            try db.execute(
+                sql: "ATTACH DATABASE ? AS encrypted KEY ?",
+                arguments: [encrypted.path, String(decoding: key, as: UTF8.self)])
+            try db.execute(sql: "SELECT sqlcipher_export('encrypted')")
+            try db.execute(sql: "DETACH DATABASE encrypted")
+        }
+        try plain.close()
+        for suffix in ["", "-wal", "-shm"] {
+            try? files.removeItem(atPath: url.path + suffix)
+        }
+        try files.moveItem(at: encrypted, to: url)
     }
 
     public static func inMemory() throws -> DatabaseQueue {
@@ -172,9 +237,9 @@ public struct FirepitDaos: Sendable {
         pendingHandoverDao = PendingHandoverDao(writer)
     }
 
-    /// The app's own database, protected and excluded from backup (see `FirepitDatabase.open`).
-    public static func open(at directory: URL) throws -> FirepitDaos {
-        FirepitDaos(writer: try FirepitDatabase.open(at: directory))
+    /// The app's own database, encrypted, protected and excluded from backup (see `FirepitDatabase.open`).
+    public static func open(at directory: URL, secrets: SecretStore = KeychainStore()) throws -> FirepitDaos {
+        FirepitDaos(writer: try FirepitDatabase.open(at: directory, secrets: secrets))
     }
 
     /// A database that exists only while the process runs.

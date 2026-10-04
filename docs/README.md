@@ -23,6 +23,7 @@ Which document answers which question, how current each one is, and where to sta
 | [build-plan.md](build-plan.md) | The staged plan the apps were built by, with what each stage proved and what broke along the way | **History and status.** The status table at the top says what is built |
 | [ios-ui-porting-rules.md](ios-ui-porting-rules.md) | Rules for porting an Android screen to SwiftUI: architecture, control mapping, look, text, accessibility, verification | **Process.** Use when adding or changing iOS screens |
 | [wismesh-tag-buttons.md](wismesh-tag-buttons.md) | The RAK WisMesh Tag radio: buttons, LED and buzzer signals, sharing a location from the Tag alone | **Hardware guide** |
+| [store-listing.md](store-listing.md) | Google Play and App Store text: names, descriptions, privacy answers, rating, screenshots | **Ready for release** once the main field tests pass |
 
 ## Elsewhere in the repository
 

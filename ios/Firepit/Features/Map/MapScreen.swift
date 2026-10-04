@@ -7,7 +7,8 @@ import SwiftUI
 /// The live Firepit map. Ported from android/app/…/map/MapScreen.kt.
 struct MapScreen: View {
     let app: AppContainer
-    let workspace: Workspace
+    /// Kept for the life of the view, as in `ChatsPane`.
+    @State private var workspace: Workspace
 
     @State private var model: MapViewModel
     @State private var sharingModel: SharingViewModel
@@ -25,7 +26,7 @@ struct MapScreen: View {
     /// The map side of the shell, whose models and camera outlive a change of layout.
     init(app: AppContainer, workspace: Workspace) {
         self.app = app
-        self.workspace = workspace
+        _workspace = State(initialValue: workspace)
         _model = State(initialValue: workspace.map)
         _sharingModel = State(initialValue: workspace.sharing)
     }

@@ -18,7 +18,8 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-protobuf.git", exact: "1.38.1"),
-        .package(url: "https://github.com/groue/GRDB.swift.git", exact: "7.11.1"),
+        // GRDB 7.11.1 on SQLCipher, so the phone database is encrypted as Android's is (Stage 11 Phase 5).
+        .package(path: "../GRDB-SQLCipher"),
     ],
     targets: [
         // Generated from Protos/ — meshtastic @ v2.8.0 and meshchat. Never edit by hand.
@@ -49,7 +50,7 @@ let package = Package(
             name: "FirepitData",
             dependencies: [
                 "FirepitModel", "FirepitProtocol", "FirepitCrypto", "FirepitTransport",
-                .product(name: "GRDB", package: "GRDB.swift"),
+                .product(name: "GRDB", package: "GRDB-SQLCipher"),
             ]
         ),
         .testTarget(

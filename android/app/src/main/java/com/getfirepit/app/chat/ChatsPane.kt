@@ -1,8 +1,10 @@
 package com.getfirepit.app.chat
 
+import android.content.ClipData
 import android.view.KeyCharacterMap
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -33,6 +35,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Badge
+import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -86,6 +89,8 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
@@ -129,6 +134,7 @@ import com.getfirepit.core.model.ChannelRole
 import com.getfirepit.core.model.ChatMessage
 import com.getfirepit.core.model.MeshNode
 import com.getfirepit.core.model.PaneLayouts
+import com.getfirepit.core.model.Reactions
 import com.getfirepit.core.model.Receipt
 import com.getfirepit.core.model.ReceiptState
 import com.getfirepit.core.protocol.Person
@@ -697,7 +703,7 @@ private fun NodeStatusLine(connected: Boolean, myNode: MeshNode?) {
                 }
             },
             style = MaterialTheme.typography.bodySmall,
-            color = if (connected) FirepitTheme.colors.textSecondary else FirepitTheme.colors.stale,
+            color = FirepitTheme.colors.textSecondary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -830,8 +836,12 @@ private fun DirectChat(
     val node = state.nodes[peer]
     val name = state.nameOf(peer)
     val items = remember(state.messages) { buildChatItems(state.messages) }
+    val scope = rememberCoroutineScope()
+    val clipboard = LocalClipboard.current
+    // The message whose reactions are open, from a long press or a right-click.
+    var menuFor by remember { mutableStateOf<Int?>(null) }
 
-    OpenAtNewest(conversation = peer, itemCount = items.size, listState = listState)
+    OpenAtNewest(conversation = peer, itemCount = items.size, listState = listState, reactions = state.reactions)
 
     Scaffold(
         topBar = {
@@ -882,21 +892,47 @@ private fun DirectChat(
                                 text = item.text,
                                 modifier = Modifier.padding(vertical = FirepitSpacing.s),
                             )
-                            is ChatItem.Bubble -> {
+                            is ChatItem.Bubble -> Column {
                                 val message = item.message
-                                MessageBubble(
-                                    text = message.text,
-                                    time = MessageTimestamp.bubbleFormat(message.shownAt()),
-                                    isOutgoing = message.isOutgoing,
-                                    senderName = null,
-                                    senderNodeNum = message.fromNodeNum,
-                                    status = message.status.takeIf { message.isOutgoing },
-                                    isFirstInGroup = item.isFirstInGroup,
-                                    isLastInGroup = item.isLastInGroup,
-                                    modifier = Modifier.padding(
-                                        top = if (item.isFirstInGroup) FirepitSpacing.s else 2.dp,
-                                    ),
-                                )
+                                Box {
+                                    MessageBubble(
+                                        text = message.text,
+                                        time = MessageTimestamp.bubbleFormat(message.shownAt()),
+                                        isOutgoing = message.isOutgoing,
+                                        senderName = null,
+                                        senderNodeNum = message.fromNodeNum,
+                                        status = message.status.takeIf { message.isOutgoing },
+                                        isFirstInGroup = item.isFirstInGroup,
+                                        isLastInGroup = item.isLastInGroup,
+                                        modifier = Modifier
+                                            .padding(top = if (item.isFirstInGroup) FirepitSpacing.s else 2.dp)
+                                            .onSecondaryClick { menuFor = message.id }
+                                            .combinedClickable(
+                                                onClick = {},
+                                                onLongClick = { menuFor = message.id },
+                                                onLongClickLabel = "React",
+                                            ),
+                                    )
+                                    ReactionMenu(
+                                        expanded = menuFor == message.id,
+                                        onDismiss = { menuFor = null },
+                                        onReact = { emoji -> viewModel.react(message, emoji) },
+                                        onCopy = {
+                                            scope.launch {
+                                                clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("Message", message.text)))
+                                            }
+                                        },
+                                        onSendAgain = { viewModel.sendAgain(message) }
+                                            .takeIf { message.isOutgoing && message.status.isFailure },
+                                    )
+                                }
+                                state.reactions[message.id]?.let { counts ->
+                                    ReactionRow(
+                                        counts = counts,
+                                        isOutgoing = message.isOutgoing,
+                                        onReact = { emoji -> viewModel.react(message, emoji) },
+                                    )
+                                }
                             }
                         }
                     }
@@ -967,6 +1003,9 @@ private fun ChannelChat(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var searching by rememberSaveable(channel.index) { mutableStateOf(false) }
+    // The message whose reactions and actions are open, from a long press or a right-click.
+    var menuFor by remember { mutableStateOf<Int?>(null) }
+    val clipboard = LocalClipboard.current
     LaunchedEffect(startSearch) {
         if (startSearch) {
             searching = true
@@ -984,6 +1023,7 @@ private fun ChannelChat(
         itemCount = items.size,
         listState = listState,
         autoScroll = !state.isSearching,
+        reactions = state.reactions,
     )
 
     Scaffold(
@@ -1101,55 +1141,81 @@ private fun ChannelChat(
                             modifier = Modifier.padding(vertical = FirepitSpacing.s),
                         )
 
-                        is ChatItem.Bubble -> {
+                        is ChatItem.Bubble -> SwipeToReply(onReply = { viewModel.startReply(item.message) }) {
                             val message = item.message
                             val parent = state.repliedTo(message)
-                            MessageBubble(
-                                text = message.text,
-                                time = MessageTimestamp.bubbleFormat(message.shownAt()),
-                                isOutgoing = message.isOutgoing,
-                                senderName = state.nameOf(message.fromNodeNum),
-                                senderNodeNum = message.fromNodeNum,
-                                status = message.status.takeIf { message.isOutgoing },
-                                // Only when it is worth knowing: a relayed
-                                // message may be slow or stale, a direct one is
-                                // unremarkable and said so on every bubble.
-                                footnote = receiptFootnote(receipts[message.id])
-                                    ?: message.hopsAway
-                                        ?.takeIf { it > 0 }
-                                        ?.let { hops -> "$hops hop${if (hops == 1) "" else "s"}" },
-                                quoted = parent?.let {
-                                    QuotedMessage(
-                                        senderName = state.nameOf(it.fromNodeNum),
-                                        senderNodeNum = it.fromNodeNum,
-                                        text = it.text,
+                            Column {
+                                Box {
+                                    MessageBubble(
+                                        text = message.text,
+                                        time = MessageTimestamp.bubbleFormat(message.shownAt()),
+                                        isOutgoing = message.isOutgoing,
+                                        senderName = state.nameOf(message.fromNodeNum),
+                                        senderNodeNum = message.fromNodeNum,
+                                        status = message.status.takeIf { message.isOutgoing },
+                                        // Only when it is worth knowing: a relayed
+                                        // message may be slow or stale, a direct one is
+                                        // unremarkable and said so on every bubble.
+                                        footnote = receiptFootnote(receipts[message.id])
+                                            ?: message.hopsAway
+                                                ?.takeIf { it > 0 }
+                                                ?.let { hops -> "$hops hop${if (hops == 1) "" else "s"}" },
+                                        quoted = parent?.let {
+                                            QuotedMessage(
+                                                senderName = state.nameOf(it.fromNodeNum),
+                                                senderNodeNum = it.fromNodeNum,
+                                                text = it.text,
+                                            )
+                                        },
+                                        onQuoteClick = parent?.let {
+                                            {
+                                                val index = items.indexOfFirst { row ->
+                                                    row is ChatItem.Bubble && row.message.id == it.id
+                                                }
+                                                if (index >= 0) scope.launch { listState.animateScrollToItem(index) }
+                                            }
+                                        },
+                                        isFirstInGroup = item.isFirstInGroup,
+                                        isLastInGroup = item.isLastInGroup,
+                                        signed = message.signed && !message.isOutgoing,
+                                        highlight = if (state.isSearching) {
+                                            highlightRanges(message.text, state.query)
+                                        } else {
+                                            emptyList()
+                                        },
+                                        // Tight inside a block, open between speakers.
+                                        modifier = Modifier
+                                            .padding(top = if (item.isFirstInGroup) FirepitSpacing.s else 2.dp)
+                                            .onSecondaryClick { menuFor = message.id }
+                                            .combinedClickable(
+                                                onClick = { viewModel.inspect(message) },
+                                                onLongClick = { menuFor = message.id },
+                                                onLongClickLabel = "React or reply",
+                                            ),
                                     )
-                                },
-                                onQuoteClick = parent?.let {
-                                    {
-                                        val index = items.indexOfFirst { row ->
-                                            row is ChatItem.Bubble && row.message.id == it.id
-                                        }
-                                        if (index >= 0) scope.launch { listState.animateScrollToItem(index) }
-                                    }
-                                },
-                                isFirstInGroup = item.isFirstInGroup,
-                                isLastInGroup = item.isLastInGroup,
-                                highlight = if (state.isSearching) {
-                                    highlightRanges(message.text, state.query)
-                                } else {
-                                    emptyList()
-                                },
-                                // Tight inside a block, open between speakers.
-                                modifier = Modifier
-                                    .padding(top = if (item.isFirstInGroup) FirepitSpacing.s else 2.dp)
-                                    .onSecondaryClick { viewModel.startReply(message) }
-                                    .combinedClickable(
-                                        onClick = { viewModel.inspect(message) },
-                                        onLongClick = { viewModel.startReply(message) },
-                                        onLongClickLabel = "Reply",
-                                    ),
-                            )
+                                    ReactionMenu(
+                                        expanded = menuFor == message.id,
+                                        onDismiss = { menuFor = null },
+                                        onReact = { emoji -> viewModel.react(message, emoji) },
+                                        onReply = { viewModel.startReply(message) },
+                                        onCopy = {
+                                            scope.launch {
+                                                clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("Message", message.text)))
+                                            }
+                                        },
+                                        onInfo = { viewModel.inspect(message) },
+                                        onSendAgain = { viewModel.sendAgain(message) }
+                                            .takeIf { message.isOutgoing && message.status.isFailure },
+                                    )
+                                }
+                                state.reactions[message.id]?.let { counts ->
+                                    ReactionRow(
+                                        counts = counts,
+                                        isOutgoing = message.isOutgoing,
+                                        onReact = { emoji -> viewModel.react(message, emoji) },
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -1176,6 +1242,7 @@ private fun ChannelChat(
             receipts = receipts,
             nameOf = state::nameOf,
             onDismiss = { viewModel.inspect(null) },
+            onSendAgain = { viewModel.sendAgain(message) },
         )
     }
 }
@@ -1197,7 +1264,7 @@ private fun CongestionNotice(load: ChannelLoad?) {
             "Channel is busy — messages may take longer"
         },
         style = MaterialTheme.typography.labelMedium,
-        color = if (congested) FirepitTheme.colors.stale else FirepitTheme.colors.textSecondary,
+        color = if (congested) FirepitTheme.colors.warn else FirepitTheme.colors.textSecondary,
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = FirepitSpacing.m, vertical = FirepitSpacing.xs),
@@ -1306,6 +1373,32 @@ private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
         val requester = remember { FocusRequester() }
         var acceptsFocus by remember(state.selected, state.directPeer) { mutableStateOf(false) }
 
+        // ⚡: ready-made replies, one tap each (UX §5.4). Sent through the same
+        // paced queue as anything typed, and never touching the draft.
+        val quickReplies by viewModel.quickReplies.collectAsStateWithLifecycle()
+        var showingQuick by remember(state.selected, state.directPeer) { mutableStateOf(false) }
+        AnimatedVisibility(visible = showingQuick && quickReplies.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = FirepitSpacing.s),
+                horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
+            ) {
+                quickReplies.forEach { reply ->
+                    FirepitChip(
+                        label = reply,
+                        selected = false,
+                        enabled = state.connected && state.hasPrivateTarget,
+                        onClick = {
+                            viewModel.sendQuickReply(reply)
+                            showingQuick = false
+                        },
+                    )
+                }
+            }
+        }
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1357,6 +1450,16 @@ private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
                     unfocusedBorderColor = FirepitTheme.colors.outline,
                 ),
             )
+            IconButton(
+                onClick = { showingQuick = !showingQuick },
+                modifier = Modifier.size(FirepitSpacing.minTouchTarget),
+            ) {
+                Icon(
+                    painter = painterResource(FirepitIcons.QuickReply),
+                    contentDescription = if (showingQuick) "Hide quick replies" else "Quick replies",
+                    tint = if (showingQuick) MaterialTheme.colorScheme.primary else FirepitTheme.colors.textSecondary,
+                )
+            }
             FilledIconButton(
                 onClick = viewModel::send,
                 enabled = state.canSend,
@@ -1406,6 +1509,10 @@ private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
  * The first landing jumps; later arrivals animate. Someone opening a room
  * asked for the conversation, not a scroll through it, but a message arriving
  * while they are reading is worth seeing move.
+ *
+ * A reaction makes its message taller without adding a row. Whoever was
+ * reading the newest message keeps it in view; whoever was reading further up
+ * stays where they were.
  */
 @Composable
 private fun OpenAtNewest(
@@ -1413,10 +1520,13 @@ private fun OpenAtNewest(
     itemCount: Int,
     listState: LazyListState,
     autoScroll: Boolean = true,
+    reactions: Map<Int, List<Reactions.Count>> = emptyMap(),
 ) {
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     var landed by remember(conversation) { mutableStateOf(false) }
+    // Read while composing, so from the layout before a reaction made a message taller.
+    val atNewest = !listState.canScrollForward
 
     // Switching rooms reuses the composer, so a cursor left in it from the last
     // one raises the keyboard over the messages the reader came to see.
@@ -1433,6 +1543,10 @@ private fun OpenAtNewest(
             listState.scrollToItem(itemCount - 1)
             landed = true
         }
+    }
+
+    LaunchedEffect(conversation, reactions) {
+        if (landed && atNewest && autoScroll && itemCount > 0) listState.animateScrollToItem(itemCount - 1)
     }
 }
 
@@ -1486,14 +1600,15 @@ private fun RoomSearchBar(query: String, onQuery: (String) -> Unit, onClose: () 
                             field()
                         }
                         if (query.isNotEmpty()) {
-                            Icon(
-                                painter = painterResource(FirepitIcons.Close),
-                                contentDescription = "Clear search",
-                                tint = FirepitTheme.colors.textSecondary,
-                                modifier = Modifier
-                                    .size(18.dp)
-                                    .clickable { onQuery("") },
-                            )
+                            // A full touch target round a small glyph: an 18 dp target was too easy to miss.
+                            IconButton(onClick = { onQuery("") }) {
+                                Icon(
+                                    painter = painterResource(FirepitIcons.Close),
+                                    contentDescription = "Clear search",
+                                    tint = FirepitTheme.colors.textSecondary,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
                         }
                     }
                 },
@@ -1527,6 +1642,7 @@ private fun MessageInfoSheet(
     receipts: List<Receipt>,
     nameOf: (Int) -> String,
     onDismiss: () -> Unit,
+    onSendAgain: () -> Unit,
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1552,6 +1668,9 @@ private fun MessageInfoSheet(
             if (message.isOutgoing) {
                 InfoRow("Status", message.status.label())
                 message.failureReason?.let { InfoRow("Reason", it) }
+                if (message.status.isFailure) {
+                    Button(onClick = onSendAgain, modifier = Modifier.fillMaxWidth()) { Text("Send again") }
+                }
             }
 
             message.hopsAway?.let { hops ->

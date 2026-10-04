@@ -23,11 +23,11 @@ nonisolated enum FirepitColors {
     /// Hairlines and unselected chip borders.
     static let outline = Color(light: 0xE8E0D9, dark: 0x2E2926)
     /// Live position markers and the connected node dot.
-    static let live = Color(light: 0x2BB673, dark: 0x4ED69A)
+    static let live = Color(light: 0x22915C, dark: 0x4ED69A)
     /// Stale positions and unknown state. Never the only signal — always paired with an age label.
-    static let stale = Color(light: 0xA39E98, dark: 0x6F6963)
+    static let stale = Color(light: 0x888179, dark: 0x6F6963)
     /// Alerts, mesh-busy, node-restarting. Deep gold, distinct from the terracotta primary.
-    static let warn = Color(light: 0x9A6B00, dark: 0xF2C94C)
+    static let warn = Color(light: 0x895F00, dark: 0xF2C94C)
     /// Failed sends, leave and remove. Crimson, distinct from the primary.
     static let danger = Color(light: 0xC62B4A, dark: 0xF27D8E)
     /// Base and Router node markers.

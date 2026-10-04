@@ -1363,8 +1363,8 @@ class RoomRepository @Inject constructor(
             if (data.portnum == PortNum.TEXT_MESSAGE_APP) {
                 // Unsealed text is only kept as a direct message that came under
                 // PKI; on a room's slot it is dropped. A receipt goes where the
-                // message was kept.
-                if (packet.to == myNodeNum && packet.pki_encrypted) {
+                // message was kept. A reaction shows no ticks, so it gets none.
+                if (packet.to == myNodeNum && packet.pki_encrypted && !(data.emoji != 0 && data.reply_id != 0)) {
                     receipts.received(packet.channel, packet.id, peer = packet.from)
                 }
             }
@@ -1451,8 +1451,9 @@ class RoomRepository @Inject constructor(
                 Log.w(TAG, "room text from ${packet.from} outside its room; ignored")
                 return@let
             }
-            mesh.saveSealedText(packet, room.text, room.reply_id.takeIf { it != 0 }, sealedRoomId)
-            receipts.received(packet.channel, packet.id)
+            mesh.saveSealedText(packet, room.text, room.reply_id.takeIf { it != 0 }, sealedRoomId, room.emoji.takeIf { it != 0 })
+            // A reaction shows no ticks, so it gets no receipt.
+            if (room.emoji == 0 || room.reply_id == 0) receipts.received(packet.channel, packet.id)
             noteActivity(sealedRoomId)
         }
 
@@ -1588,8 +1589,8 @@ class RoomRepository @Inject constructor(
         }
         val inner = runCatching { MeshChatControl.ADAPTER.decode(plain) }.getOrNull() ?: return
         inner.room_text?.let { words ->
-            mesh.saveSealedDirectText(packet, words.text, words.reply_id.takeIf { it != 0 })
-            receipts.received(packet.channel, packet.id, peer = packet.from)
+            mesh.saveSealedDirectText(packet, words.text, words.reply_id.takeIf { it != 0 }, words.emoji.takeIf { it != 0 })
+            if (words.emoji == 0 || words.reply_id == 0) receipts.received(packet.channel, packet.id, peer = packet.from)
         }
         inner.receipt?.let { receipt -> receipts.handle(packet.from, receipt) }
     }

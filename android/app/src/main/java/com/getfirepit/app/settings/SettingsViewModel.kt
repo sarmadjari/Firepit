@@ -34,7 +34,14 @@ class SettingsViewModel @Inject constructor(
     private val range: RangeRepository,
     private val admin: NodeAdminClient,
     private val mesh: MeshRepository,
+    private val quickReplyStore: QuickReplyStore,
 ) : ViewModel() {
+
+    val quickReplies: StateFlow<List<String>> = quickReplyStore.replies
+
+    fun setQuickReplies(replies: List<String>) = quickReplyStore.set(replies)
+
+    fun resetQuickReplies() = quickReplyStore.resetToDefaults()
 
     val theme: StateFlow<ThemeChoice> = themePreferences.choice
 

@@ -26,7 +26,9 @@ enum ChatRoute: Hashable {
 /// android/app/…/chat/ChatsPane.kt.
 struct ChatsPane: View {
     let app: AppContainer
-    let workspace: Workspace
+    /// Kept for the life of the view: a screen shown on its own is re-initialised whenever its parent redraws, and a
+    /// fresh workspace each time would empty its stack.
+    @State private var workspace: Workspace
 
     @State private var viewModel: ChatsViewModel
     @State private var rooms: RoomsViewModel
@@ -42,7 +44,7 @@ struct ChatsPane: View {
     /// The chat side of the shell, whose models and stack outlive a change of layout.
     init(app: AppContainer, workspace: Workspace) {
         self.app = app
-        self.workspace = workspace
+        _workspace = State(initialValue: workspace)
         _viewModel = State(initialValue: workspace.chats)
         _rooms = State(initialValue: workspace.rooms)
     }
@@ -419,7 +421,7 @@ private struct NodeStatusLine: View {
             LiveRing(size: 8, live: connected)
             Text(verbatim: ChatsCopy.nodeStatus(connected: connected, myNode: myNode))
                 .font(FirepitFont.bodySmall)
-                .foregroundStyle(connected ? FirepitColors.textSecondary : FirepitColors.stale)
+                .foregroundStyle(FirepitColors.textSecondary)
                 .lineLimit(1)
         }
         .accessibilityElement(children: .combine)
@@ -660,6 +662,7 @@ private struct ChannelChat: View {
         ConversationScroll(
             conversation: AnyHashable(index),
             items: buildChatItems(state.visibleMessages),
+            reactions: state.reactions,
             autoScroll: !state.isSearching
         ) { item, scrollTo in
             ChatRow(item: item) { message, isFirst, isLast in
@@ -765,38 +768,45 @@ private struct ChannelChat: View {
         scrollTo: @escaping (Int32) -> Void
     ) -> some View {
         let parent = state.repliedTo(message)
-        return MessageBubble(
-            text: message.text,
-            time: MessageTimestamp.bubbleFormat(message.shownAt()),
-            isOutgoing: message.isOutgoing,
-            senderName: state.nameOf(message.fromNodeNum),
-            senderNodeNum: message.fromNodeNum,
-            status: message.isOutgoing ? message.status : nil,
-            footnote: ChatsCopy.receiptFootnote(viewModel.receiptsOnScreen[message.id])
-                ?? ChatsCopy.hopsFootnote(message.hopsAway),
-            quoted: parent.map {
-                QuotedMessage(senderName: state.nameOf($0.fromNodeNum), senderNodeNum: $0.fromNodeNum, text: $0.text)
-            },
-            onQuoteTap: parent.map { parent in { scrollTo(parent.id) } },
-            highlight: state.isSearching ? highlightRanges(message.text, query: state.query) : [],
-            isFirstInGroup: isFirst,
-            isLastInGroup: isLast
-        )
-        .contentShape(.rect)
-        .onTapGesture { viewModel.inspect(message) }
-        .contextMenu {
-            Button {
-                viewModel.startReply(message)
-            } label: {
-                Label("Reply", systemImage: "arrowshape.turn.up.left")
+        return VStack(spacing: 0) {
+            MessageBubble(
+                text: message.text,
+                time: MessageTimestamp.bubbleFormat(message.shownAt()),
+                isOutgoing: message.isOutgoing,
+                senderName: state.nameOf(message.fromNodeNum),
+                senderNodeNum: message.fromNodeNum,
+                status: message.isOutgoing ? message.status : nil,
+                footnote: ChatsCopy.receiptFootnote(viewModel.receiptsOnScreen[message.id])
+                    ?? ChatsCopy.hopsFootnote(message.hopsAway),
+                quoted: parent.map {
+                    QuotedMessage(senderName: state.nameOf($0.fromNodeNum), senderNodeNum: $0.fromNodeNum, text: $0.text)
+                },
+                onQuoteTap: parent.map { parent in { scrollTo(parent.id) } },
+                highlight: state.isSearching ? highlightRanges(message.text, query: state.query) : [],
+                isFirstInGroup: isFirst,
+                isLastInGroup: isLast,
+                signed: message.signed && !message.isOutgoing
+            )
+            .contentShape(.rect)
+            .modifier(SwipeToReply { viewModel.startReply(message) })
+            .onTapGesture { viewModel.inspect(message) }
+            .contextMenu {
+                ReactionMenu(
+                    text: message.text,
+                    onReact: { emoji in viewModel.react(message, emoji: emoji) },
+                    onReply: { viewModel.startReply(message) },
+                    onInfo: { viewModel.inspect(message) },
+                    onSendAgain: message.isOutgoing && message.status.isFailure
+                        ? { viewModel.sendAgain(message) } : nil
+                )
             }
-            Button {
-                viewModel.inspect(message)
-            } label: {
-                Label("Message info", systemImage: FirepitIcon.info.systemName)
+            .accessibilityAction(named: Text("Reply")) { viewModel.startReply(message) }
+            if let counts = state.reactions[message.id] {
+                ReactionRow(counts: counts, isOutgoing: message.isOutgoing) { emoji in
+                    viewModel.react(message, emoji: emoji)
+                }
             }
         }
-        .accessibilityAction(named: Text("Reply")) { viewModel.startReply(message) }
     }
 }
 
@@ -845,19 +855,36 @@ private struct DirectChat: View {
         ConversationScroll(
             conversation: AnyHashable(peer),
             items: buildChatItems(state.messages),
+            reactions: state.reactions,
             autoScroll: true
         ) { item, _ in
             ChatRow(item: item) { message, isFirst, isLast in
-                MessageBubble(
-                    text: message.text,
-                    time: MessageTimestamp.bubbleFormat(message.shownAt()),
-                    isOutgoing: message.isOutgoing,
-                    senderName: nil,
-                    senderNodeNum: message.fromNodeNum,
-                    status: message.isOutgoing ? message.status : nil,
-                    isFirstInGroup: isFirst,
-                    isLastInGroup: isLast
-                )
+                VStack(spacing: 0) {
+                    MessageBubble(
+                        text: message.text,
+                        time: MessageTimestamp.bubbleFormat(message.shownAt()),
+                        isOutgoing: message.isOutgoing,
+                        senderName: nil,
+                        senderNodeNum: message.fromNodeNum,
+                        status: message.isOutgoing ? message.status : nil,
+                        isFirstInGroup: isFirst,
+                        isLastInGroup: isLast
+                    )
+                    .contentShape(.rect)
+                    .contextMenu {
+                        ReactionMenu(
+                            text: message.text,
+                            onReact: { emoji in viewModel.react(message, emoji: emoji) },
+                            onSendAgain: message.isOutgoing && message.status.isFailure
+                                ? { viewModel.sendAgain(message) } : nil
+                        )
+                    }
+                    if let counts = state.reactions[message.id] {
+                        ReactionRow(counts: counts, isOutgoing: message.isOutgoing) { emoji in
+                            viewModel.react(message, emoji: emoji)
+                        }
+                    }
+                }
             }
         } empty: {
             if viewModel.messagesLoaded && state.messages.isEmpty {
@@ -915,15 +942,26 @@ private struct ChatRow<Bubble: View>: View {
 ///
 /// The first landing jumps; later arrivals animate. Somebody opening a room asked for the conversation, not a scroll
 /// through it, but a message arriving while they read is worth seeing move. Autoscroll pauses during a search, where
-/// jumping to the newest message would fight the reader.
+/// jumping to the newest message would fight the reader. A reaction makes its message taller without adding one:
+/// whoever was reading the newest message keeps it in view, and whoever was reading further up stays where they were.
 private struct ConversationScroll<Row: View, Empty: View>: View {
     let conversation: AnyHashable
     let items: [ChatItem]
+    let reactions: [Int32: [Reactions.Count]]
     let autoScroll: Bool
     @ViewBuilder let row: (ChatItem, @escaping (Int32) -> Void) -> Row
     @ViewBuilder let empty: () -> Empty
 
     @State private var landed = false
+    /// Whether the newest message is on screen.
+    @State private var atNewest = false
+    /// The latest jump to the newest message, which the settling landing follows.
+    @State private var landing = Landing()
+
+    private struct Landing {
+        var count = 0
+        var animated = false
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -934,6 +972,8 @@ private struct ConversationScroll<Row: View, Empty: View>: View {
                             withAnimation { proxy.scrollTo(ChatItem.Key.message(id), anchor: .center) }
                         }
                         .id(item.id)
+                        .onAppear { if item.id == items.last?.id { atNewest = true } }
+                        .onDisappear { if item.id == items.last?.id { atNewest = false } }
                     }
                 }
                 .padding(.horizontal, FirepitSpacing.screenMargin)
@@ -945,6 +985,16 @@ private struct ConversationScroll<Row: View, Empty: View>: View {
             .onAppear { land(proxy, animated: false) }
             .onChange(of: items.last?.id) { land(proxy, animated: landed) }
             .onChange(of: autoScroll) { land(proxy, animated: true) }
+            .onChange(of: reactions) { if landed && atNewest { land(proxy, animated: true) } }
+            .task(id: autoScroll ? landing.count : -1) {
+                // A jump aims with estimated heights for the rows the lazy stack has not drawn, and rows drawn on the
+                // way can turn out taller. Once they are drawn, land exactly, without animation. A search starting
+                // in the meantime cancels it.
+                guard autoScroll, landing.count > 0 else { return }
+                try? await Task.sleep(for: landing.animated ? .milliseconds(450) : .milliseconds(60))
+                guard !Task.isCancelled, let last = items.last?.id else { return }
+                proxy.scrollTo(last, anchor: .bottom)
+            }
         }
     }
 
@@ -956,6 +1006,7 @@ private struct ConversationScroll<Row: View, Empty: View>: View {
             proxy.scrollTo(last, anchor: .bottom)
         }
         landed = true
+        landing = Landing(count: landing.count + 1, animated: animated)
     }
 }
 
@@ -993,7 +1044,7 @@ private struct CongestionNotice: View {
                     : "Channel is busy — messages may take longer"
             )
             .font(FirepitFont.labelMedium)
-            .foregroundStyle(congested ? FirepitColors.stale : FirepitColors.textSecondary)
+            .foregroundStyle(congested ? FirepitColors.warn : FirepitColors.textSecondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, FirepitSpacing.m)
             .padding(.vertical, FirepitSpacing.xs)
@@ -1050,6 +1101,9 @@ private struct Composer: View {
     /// straight to a value that refuses a keystroke keeps showing the keystroke; routing through local state makes
     /// the refusal visible.
     @State private var text = ""
+    /// ⚡: ready-made replies, one tap each (UX §5.4), sent through the same paced queue as anything typed and never
+    /// touching the draft.
+    @State private var showingQuick = false
 
     var body: some View {
         let state = viewModel.uiState
@@ -1057,6 +1111,22 @@ private struct Composer: View {
             CongestionNotice(load: state.channelLoad)
             if let parent = state.replyingTo {
                 ReplyBanner(parent: parent, name: state.nameOf(parent.fromNodeNum), cancel: viewModel.cancelReply)
+            }
+            if showingQuick && !viewModel.quickReplies.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: FirepitSpacing.xs) {
+                        ForEach(viewModel.quickReplies, id: \.self) { reply in
+                            FirepitChip(
+                                verbatim: reply, selected: false, enabled: state.connected && state.hasPrivateTarget
+                            ) {
+                                viewModel.sendQuickReply(reply)
+                                showingQuick = false
+                            }
+                        }
+                    }
+                    .padding(.horizontal, FirepitSpacing.s)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
             HStack(alignment: .bottom, spacing: FirepitSpacing.s) {
                 TextField("Message", text: $text, axis: .vertical)
@@ -1066,6 +1136,15 @@ private struct Composer: View {
                     .padding(.vertical, 12)
                     .background(FirepitColors.surface2, in: .rect(cornerRadius: 24))
                     .overlay { RoundedRectangle(cornerRadius: 24).strokeBorder(FirepitColors.outline) }
+                Button {
+                    withAnimation(.snappy) { showingQuick.toggle() }
+                } label: {
+                    Image(systemName: "bolt")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(showingQuick ? FirepitColors.primary : FirepitColors.textSecondary)
+                        .frame(width: FirepitSpacing.minTouchTarget, height: FirepitSpacing.minTouchTarget)
+                }
+                .accessibilityLabel(Text(showingQuick ? "Hide quick replies" : "Quick replies"))
                 Button(action: viewModel.send) {
                     Image(icon: .send)
                         .font(.system(size: 18, weight: .semibold))
@@ -1131,6 +1210,8 @@ private struct RoomSearchBar: View {
                     } label: {
                         Image(icon: .close).foregroundStyle(FirepitColors.textSecondary)
                     }
+                    // A 44-point target round a small glyph, without making the bar taller.
+                    .contentShape(.rect.inset(by: -13))
                     .accessibilityLabel(Text("Clear search"))
                 }
             }
@@ -1190,6 +1271,11 @@ private struct MessageInfoSheet: View {
                 }
                 ReceiptList(label: "Read by", receipts: receipts.filter { $0.state == .read }, nameOf: nameOf)
                 ReceiptList(label: "Received by", receipts: receipts.filter { $0.state == .received }, nameOf: nameOf)
+                if message.isOutgoing && message.status.isFailure {
+                    Section {
+                        Button("Send again") { viewModel.sendAgain(message) }
+                    }
+                }
                 Section {
                 } footer: {
                     Text(

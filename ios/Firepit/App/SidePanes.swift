@@ -13,12 +13,19 @@ enum Side {
 /// Both sides keep their place in the view tree for as long as the split lasts. Swapping sides flips the row's
 /// direction rather than reordering it, so neither side is rebuilt.
 ///
-/// Dragging the divider shows where it will land without resizing either side; both take their new width once, on
-/// release, because a map redrawn on every frame of a drag stutters.
+/// Dragging the divider shows where it will land without resizing either side. On release, and whenever a side opens
+/// or closes, the chat side moves to its new width over 250 ms (UX §6.11.11). The map takes its new size once: at the
+/// start when it grows, under the chat side that still covers it, or at the end when it shrinks, because a map
+/// redrawn on every frame stutters.
 struct SidePanes<Chat: View, Map: View>: View {
     let layout: PaneLayout.SideBySide
     let window: WindowShape
     let chatMin: Double
+    /// Where the chat side's width starts when the split opens: the whole window from Chat only, nothing from Map only.
+    var enterFrom: Double?
+    /// A side being closed: the chat side moves over it, then `onClosed` lets the shell show one pane.
+    var closing: Side?
+    var onClosed: () -> Void = {}
     let onSettle: (DividerSettle) -> Void
     let onReset: () -> Void
     let onSwapSides: () -> Void
@@ -26,34 +33,51 @@ struct SidePanes<Chat: View, Map: View>: View {
     @ViewBuilder let map: () -> Map
 
     @Environment(\.layoutDirection) private var direction
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The chat side's width the divider would leave if let go now; nil while untouched, and back to nil by
     /// itself when a drag is cancelled.
     @GestureState private var dragging: Double?
     @State private var landings = 0
+    /// What shows now, which moves towards the layout's widths.
+    @State private var chatShown: Double?
+    @State private var mapShown: Double?
 
     private var chatFirst: Bool { layout.mapSide == .end }
-    private var startWidth: Double { chatFirst ? layout.chatWidth : layout.mapWidth }
+    private var goal: Double {
+        switch closing {
+        case .map?: window.width
+        case .chat?: 0
+        case nil: layout.chatWidth
+        }
+    }
+    private var shownChat: Double { chatShown ?? enterFrom ?? layout.chatWidth }
+    private var shownMap: Double { mapShown ?? max(0, window.width - (enterFrom ?? layout.chatWidth) - layout.gap) }
+    private var startWidth: Double { chatFirst ? shownChat : window.width - shownChat }
 
     var body: some View {
-        HStack(spacing: 0) {
-            chat()
-                .frame(width: layout.chatWidth)
-                .environment(\.layoutDirection, direction)
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel(Text("Chat"))
-            if layout.gap > 0 {
-                FirepitColors.surface.frame(width: layout.gap)
-            }
+        // Each side is anchored to its own outer edge, the chat side on top, so a map wider than what shows slides
+        // under it rather than past the window.
+        ZStack {
             map()
-                .frame(width: layout.mapWidth)
+                .frame(width: shownMap)
                 // The keyboard belongs to the chat side: the map is covered, not squeezed (UX §6.11.8).
                 .ignoresSafeArea(.keyboard)
                 .environment(\.layoutDirection, direction)
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel(Text("Map"))
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            chat()
+                .frame(width: shownChat)
+                .environment(\.layoutDirection, direction)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel(Text("Chat"))
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        // Flipped, the row puts the map first without moving either view.
+        .background(FirepitColors.surface)
+        // Flipped, the chat side goes to the end and the map to the start without moving either view.
         .environment(\.layoutDirection, chatFirst ? direction : direction.flipped)
+        .onChange(of: goal, initial: true) { _, next in move(to: next) }
+        .onChange(of: window.width) { move(to: goal) }
         .overlay(alignment: .leading) {
             if layout.gap == 0 {
                 FirepitColors.outline
@@ -70,6 +94,26 @@ struct SidePanes<Chat: View, Map: View>: View {
             }
         }
         .sensoryFeedback(.impact(weight: .light), trigger: landings)
+    }
+
+    /// Moves the chat side to `next`, resizing the map once, and tells the shell when a side has finished closing.
+    private func move(to next: Double) {
+        let finalMap = max(0, window.width - next - layout.gap)
+        if next < shownChat { mapShown = finalMap }
+        let finish = {
+            mapShown = finalMap
+            if closing != nil { onClosed() }
+        }
+        guard !reduceMotion, abs(next - shownChat) > 0.5 else {
+            chatShown = next
+            finish()
+            return
+        }
+        withAnimation(.timingCurve(0.05, 0.7, 0.1, 1, duration: 0.25)) {
+            chatShown = next
+        } completion: {
+            finish()
+        }
     }
 
     /// Where the divider shows, measured from the start edge.

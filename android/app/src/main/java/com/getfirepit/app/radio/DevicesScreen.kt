@@ -334,7 +334,7 @@ private fun statusOf(radio: SavedRadio, state: RadioUiState): DeviceStatus {
     }
     return DeviceStatus(
         detail = listOfNotNull(where, signal?.let { "$it dBm" }).joinToString(" · "),
-        tone = if (connected) colors.textSecondary else colors.stale,
+        tone = colors.textSecondary,
         connected = connected,
         active = false,
     )

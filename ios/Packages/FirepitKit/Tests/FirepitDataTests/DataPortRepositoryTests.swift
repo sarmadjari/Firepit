@@ -492,6 +492,42 @@ func channelTextPacket(id: Int32, from node: Int32, text: String, channel: Int =
     #expect(try await eventually { try await h.messageDao.find(id: id)?.status == .failed })
 }
 
+/// UX §5.4: a failed message sent again goes out as a new packet and takes the failed copy's place.
+@Test func sendingAgainReplacesTheFailedCopy() async throws {
+    let h = try Harness()
+    _ = try h.roomKeys.generate(roomId: 42)
+    h.mesh.start()
+    await h.connect(makeSnapshot())
+    try await h.mesh.sendText(channel: 1, text: "hi", replyId: 7)
+    let id = Int32(bitPattern: h.link.sent.last!.packet.id)
+    h.link.push(queueStatus(id: id, res: 2))
+    #expect(try await eventually { try await h.messageDao.find(id: id)?.status == .failed })
+
+    let failed = try #require(try await h.messageDao.find(id: id))
+    try await h.mesh.sendAgain(failed)
+
+    let again = Int32(bitPattern: h.link.sent.last!.packet.id)
+    #expect(again != id)
+    #expect(try await h.messageDao.find(id: id) == nil)
+    let copy = try #require(try await h.messageDao.find(id: again))
+    #expect(copy.text == "hi")
+    #expect(copy.replyId == 7)
+    #expect(copy.status == .queued || copy.status == .sentToNode)
+}
+
+@Test func onlyAFailedMessageOfOursIsSentAgain() async throws {
+    let h = try Harness()
+    _ = try h.roomKeys.generate(roomId: 42)
+    h.mesh.start()
+    await h.connect(makeSnapshot())
+    try await h.mesh.sendText(channel: 1, text: "hi")
+    let sent = h.link.sent.count
+    let fine = try #require(try await h.messageDao.find(id: Int32(bitPattern: h.link.sent.last!.packet.id)))
+    try await h.mesh.sendAgain(fine)
+    #expect(h.link.sent.count == sent)
+    #expect(try await h.messageDao.find(id: fine.id) != nil)
+}
+
 @Test func implicitAckFromOurNodeMovesMessageToReachedMesh() async throws {
     let h = try Harness()
     _ = try h.roomKeys.generate(roomId: 42)

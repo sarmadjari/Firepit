@@ -1,5 +1,7 @@
 package com.getfirepit.app.chat
 
+import com.getfirepit.app.settings.QuickReplyStore
+import com.getfirepit.core.model.Reactions
 import com.getfirepit.core.protocol.ChannelLoad
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -38,7 +40,10 @@ data class ChatsUiState(
     val connected: Boolean = false,
     val channels: List<RoomChannel> = emptyList(),
     val selected: Int? = null,
+    /** The conversation's lines; reactions are not among them, see [reactions]. */
     val messages: List<ChatMessage> = emptyList(),
+    /** Reactions counted under the message they react to, by its id (UX §5.4). */
+    val reactions: Map<Int, List<Reactions.Count>> = emptyMap(),
     val nodes: Map<Int, MeshNode> = emptyMap(),
     /** How the people in our rooms name themselves, by node number. */
     val cards: Map<Int, PersonCard> = emptyMap(),
@@ -161,7 +166,11 @@ class ChatsViewModel @Inject constructor(
     private val receipts: ReceiptRepository,
     private val history: RoomHistory,
     rooms: RoomRepository,
+    quickReplyStore: QuickReplyStore,
 ) : ViewModel() {
+
+    /** What ⚡ offers above the composer (UX §5.4). */
+    val quickReplies: StateFlow<List<String>> = quickReplyStore.replies
 
     private val selected = MutableStateFlow<Int?>(null)
     private val directPeer = MutableStateFlow<Int?>(null)
@@ -233,7 +242,8 @@ class ChatsViewModel @Inject constructor(
             connected = connected,
             channels = channels,
             selected = selected,
-            messages = messages,
+            messages = messages.filterNot(Reactions::isReaction),
+            reactions = Reactions.countsByTarget(messages, repository.myNodeNum.value),
             nodes = self.nodes.associateBy(MeshNode::nodeNum),
             cards = self.cards,
             myNode = self.nodes.firstOrNull { it.nodeNum == repository.myNodeNum.value },
@@ -257,10 +267,10 @@ class ChatsViewModel @Inject constructor(
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatsUiState())
 
-    /** Receipts for the messages on screen, so a sender can see them arrive. */
+    /** Receipts for the messages on screen, so a sender can see them arrive. Reactions get none. */
     val receiptsOnScreen: StateFlow<Map<Int, List<Receipt>>> = messages
         .flatMapLatest { shown ->
-            receipts.observeAll(shown.filter { it.isOutgoing }.map { it.id })
+            receipts.observeAll(shown.filter { it.isOutgoing && !Reactions.isReaction(it) }.map { it.id })
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
@@ -275,12 +285,17 @@ class ChatsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     init {
-        // On screen and looked at is the only honest definition of read.
+        // On screen and looked at is the only honest definition of read. A
+        // reaction shows no ticks, so it is not reported.
         viewModelScope.launch {
             combine(messages, selected, directPeer, presence.foreground) {
                     shown, channel, peer, foreground ->
                 if (!foreground || (channel == null && peer == null)) null
-                else Triple(channel ?: 0, peer, shown.filterNot { it.isOutgoing }.map { it.id }.toSet())
+                else Triple(
+                    channel ?: 0,
+                    peer,
+                    shown.filterNot { it.isOutgoing || Reactions.isReaction(it) }.map { it.id }.toSet(),
+                )
             }.collect { open ->
                 open?.let { (channel, peer, ids) -> receipts.read(channel, ids, peer) }
             }
@@ -384,25 +399,58 @@ class ChatsViewModel @Inject constructor(
     }
 
     fun send() {
-        val peer = directPeer.value
-        val channel = selected.value
-        if (peer == null && channel == null) return
         val text = draft.value.trim()
         if (text.isEmpty()) return
-        val replyId = replyingTo.value?.id
+        if (!deliver(text, replyingTo.value?.id)) return
         draft.value = ""
         replyingTo.value = null
+    }
+
+    /**
+     * Sends a quick reply as it is, leaving anything half-typed in the composer
+     * alone. A reply being written answers a message, and so does this.
+     */
+    fun sendQuickReply(text: String) {
+        if (deliver(text, replyingTo.value?.id)) replyingTo.value = null
+    }
+
+    /**
+     * Reacts to [message] with one of the six (UX §5.4): one small packet of
+     * its own, sealed as the conversation's words are. Your latest reaction to
+     * a message is the one that counts, so choosing again replaces it.
+     */
+    fun react(message: ChatMessage, emoji: String) {
+        if (emoji !in Reactions.CHOICES) return
+        deliver(emoji, message.id, reaction = true)
+    }
+
+    /** A message that failed goes out again as a new attempt, which takes its place (UX §5.4). */
+    fun sendAgain(message: ChatMessage) {
+        if (!message.isOutgoing || !message.status.isFailure) return
+        if (inspecting.value?.id == message.id) inspecting.value = null
+        viewModelScope.launch {
+            runCatching { repository.sendAgain(message) }
+                .onFailure { cause -> error.value = cause.message ?: "Could not send" }
+        }
+    }
+
+    /** False when no conversation is open to send to. */
+    private fun deliver(text: String, replyId: Int?, reaction: Boolean = false): Boolean {
+        val peer = directPeer.value
+        val channel = selected.value
+        if (peer == null && channel == null) return false
         viewModelScope.launch {
             runCatching {
                 if (peer != null) {
                     // The channel index is ignored for a direct message: the
                     // firmware encrypts to the recipient's key and puts a
                     // channel hash of 0 on the wire.
-                    repository.sendText(channel = 0, text = text, replyId = replyId, to = peer)
+                    repository.sendText(channel = 0, text = text, replyId = replyId, to = peer, reaction = reaction)
                 } else {
-                    repository.sendText(channel = channel!!, text = text, replyId = replyId)
+                    repository.sendText(channel = channel!!, text = text, replyId = replyId, reaction = reaction)
                 }
             }.onFailure { cause -> error.value = cause.message ?: "Could not send" }
         }
+        return true
     }
 }

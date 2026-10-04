@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- A bolt: something said in one tap. -->
+    <path
+        android:pathData="M13.5,3 L5.5,13.5 L11.5,13.5 L10.5,21 L18.5,10.5 L12.5,10.5 Z"
+        android:fillColor="#00000000"
+        android:strokeWidth="1.8"
+        android:strokeColor="#FF000000"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

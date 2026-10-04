@@ -17,8 +17,17 @@ android {
 
     buildTypes {
         release {
+            // R8 shrinks and optimises the release build (build plan, Stage 9).
             optimization {
-                enable = false
+                enable = true
+                keepRules {
+                    files.add(file("proguard-rules.pro"))
+                }
+            }
+            // Only for trying a shrunk build on a phone before the release key exists:
+            // ./gradlew :app:installRelease -Pfirepit.debugSignedRelease
+            if (providers.gradleProperty("firepit.debugSignedRelease").isPresent) {
+                signingConfig = signingConfigs.getByName("debug")
             }
         }
     }

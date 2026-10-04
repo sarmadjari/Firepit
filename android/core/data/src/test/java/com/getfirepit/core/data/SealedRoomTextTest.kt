@@ -19,8 +19,8 @@ class SealedRoomTextTest {
     private val roomId = 0x0BADF00D
     private val sender = -1181562854
 
-    private fun wire(text: String, replyId: Int = 0, under: ByteArray = key): ByteArray {
-        val inner = MeshChatControl(room_text = RoomText(text = text, reply_id = replyId)).encode()
+    private fun wire(text: String, replyId: Int = 0, under: ByteArray = key, emoji: Int = 0): ByteArray {
+        val inner = MeshChatControl(room_text = RoomText(text = text, reply_id = replyId, emoji = emoji)).encode()
         val sealed = SealedText.seal(under, 491_234, inner, SealedText.contextOf(roomId, sender))
         return MeshChatControl(
             sealed_message = SealedMessage(room_id = roomId, ciphertext = sealed.toByteString()),
@@ -84,5 +84,29 @@ class SealedRoomTextTest {
     @Test
     fun `the same words never look the same twice`() {
         assertTrue(!wire("same").contentEquals(wire("same")))
+    }
+
+    /** UX §5.4: a reaction is Meshtastic's emoji flag, carried inside the seal so relays cannot tell it from words. */
+    @Test
+    fun `a reaction keeps its flag and target inside the seal`() {
+        val payload = wire("👍", replyId = 77, emoji = 1)
+        val out = open(payload)
+
+        assertEquals("👍", out?.text)
+        assertEquals(77, out?.reply_id)
+        assertEquals(1, out?.emoji)
+        assertTrue(
+            "the reaction leaked into the payload",
+            !payload.toString(Charsets.ISO_8859_1).contains("👍".toByteArray().toString(Charsets.ISO_8859_1)),
+        )
+    }
+
+    @Test
+    fun `words carry no reaction flag, and no extra byte for it`() {
+        assertEquals(0, open(wire("on my way"))?.emoji)
+        assertEquals(
+            MeshChatControl(room_text = RoomText(text = "on my way")).encode().size,
+            MeshChatControl(room_text = RoomText(text = "on my way", emoji = 0)).encode().size,
+        )
     }
 }

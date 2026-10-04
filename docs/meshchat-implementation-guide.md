@@ -357,6 +357,8 @@ MeshPacket{ to: 0xFFFFFFFF, channel: slot, id: rnd32, hop_limit: lora.hop_limit|
             decoded: Data{ portnum: TEXT_MESSAGE_APP, payload: utf8, reply_id: <optional packet id>, emoji: 0 } }
 ```
 
+**Reactions** are the same packet with one emoji as the payload, `reply_id` naming the message, and `emoji: 1`, which is how the Meshtastic apps send and read them (`refs/Meshtastic-Android/core/service/src/commonMain/kotlin/org/meshtastic/core/service/MessagingControllerImpl.kt`, `EMOJI_INDICATOR = 1`; `refs/Meshtastic-Apple/Meshtastic/Helpers/MeshPackets.swift`, `isEmoji = packet.decoded.emoji == 1`). In a Firepit room or a sealed DM the packet's own `emoji` stays 0 and `RoomText.emoji` carries the flag inside the seal, so relays cannot tell a reaction from words. Any non-zero `emoji` with a `reply_id` is taken as a reaction; one without a `reply_id` is shown as a message.
+
 **Firmware behaviour:** with `want_ack` the node retransmits up to 3× (`NUM_RELIABLE_RETX`) until it overhears a rebroadcast; then the phone receives `Routing{NONE}` from **our own nodenum** = implicit ACK ("entered the mesh"). If nobody rebroadcasts (isolated node, hop_limit 0, or everyone muted), the phone receives `Routing{MAX_RETRANSMIT}`. On 2.8 the firmware also signs the broadcast if the signed Data fits (~165-byte text budget, §7). Incoming text may arrive as `TEXT_MESSAGE_APP` or `TEXT_MESSAGE_COMPRESSED_APP` (the firmware converts before delivering to the phone, but handle both).
 
 **Status mapping (design: "must not imply delivery")**
@@ -714,6 +716,7 @@ message MeshChatControl {
   }
 }
 message SealedDirect { bytes ciphertext = 1; }        // DirectSeal: P-256 ECDH of both phones' keys + HKDF + AES-GCM
+message RoomText { string text = 1; fixed32 reply_id = 2; uint32 emoji = 3; }  // Data's text, reply_id and emoji, sealed
 message PositionQuery {}
 message JoinHello { fixed32 invite_id = 1; bytes token = 2; uint32 generation = 3; uint32 app_version = 4; bytes joiner_key = 5; bytes phone_key = 6; }
 message RoomGrant { enum Answer { GRANTED = 0; DECLINED = 1; } reserved 6, 8; Answer answer = 1; fixed32 invite_id = 2; fixed32 room_id = 3; string room_name = 4; bytes room_psk = 5; uint32 generation = 7; bytes sealed_key = 9; uint32 key_hour = 10; }
@@ -739,7 +742,7 @@ Rules: one packet per event, except the sealed position, which is sent at the be
 
 #### 6.8.7 Trust display
 
-- Room chat: "encrypted with the room key; anyone holding the key can read and could impersonate members" (2.7), plus "signed by sender" badge when `xeddsa_signed` (2.8).
+- Room chat: "encrypted with the room key; anyone holding the key can read and could impersonate members" (2.7), plus "signed by sender" badge when `xeddsa_signed` (2.8). As built: a small shield before the time of each room message the radio verified, and "Signature: Verified" in its info (UX §7.2).
 - DM: "end-to-end encrypted to this node's key". Show `is_key_manually_verified` if it ever becomes true.
 - Location requests are answered automatically by firmware with no prompt on the target (design accepts this; say so in the room info screen).
 
