@@ -21,6 +21,9 @@ object FirepitIcons {
 
     @DrawableRes val More: Int = R.drawable.ic_more
 
+    /** Two panes side by side: how a wide screen is arranged (UX §6.11.4). */
+    @DrawableRes val Split: Int = R.drawable.ic_split
+
     @DrawableRes val Add: Int = R.drawable.ic_add
 
     @DrawableRes val Mute: Int = R.drawable.ic_mute

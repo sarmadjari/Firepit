@@ -51,6 +51,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.layout.AnimatedPane
 import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldRole
+import androidx.compose.material3.adaptive.layout.PaneScaffoldDirective
 import androidx.compose.material3.adaptive.navigation.NavigableListDetailPaneScaffold
 import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaffoldNavigator
 import androidx.compose.runtime.Composable
@@ -86,7 +87,10 @@ import com.getfirepit.app.rooms.InviteScreen
 import com.getfirepit.app.rooms.JoinRoomScreen
 import com.getfirepit.app.rooms.RoomMembersScreen
 import com.getfirepit.app.rooms.RoomsViewModel
+import com.getfirepit.core.designsystem.adaptive.WideScreenActions
 import com.getfirepit.core.designsystem.adaptive.foldAwarePaneDirective
+import com.getfirepit.core.designsystem.adaptive.paneSheetMaxWidth
+import com.getfirepit.core.designsystem.adaptive.withinPane
 import com.getfirepit.core.designsystem.component.BackButton
 import com.getfirepit.core.designsystem.component.FirepitChip
 import com.getfirepit.core.designsystem.component.FirepitIcons
@@ -107,6 +111,7 @@ import com.getfirepit.core.designsystem.theme.identityColorFor
 import com.getfirepit.core.model.ChannelRole
 import com.getfirepit.core.model.ChatMessage
 import com.getfirepit.core.model.MeshNode
+import com.getfirepit.core.model.PaneLayouts
 import com.getfirepit.core.model.Receipt
 import com.getfirepit.core.model.ReceiptState
 import com.getfirepit.core.protocol.Person
@@ -120,13 +125,19 @@ import kotlinx.coroutines.launch
 /**
  * Chats as a list-detail pair. On a phone or folded cover screen the detail
  * replaces the list; on a tablet or unfolded book posture they sit side by
- * side, split at the hinge.
+ * side, split at the hinge. As the chat side of a wider layout it is told how
+ * to split by [paneDirective], measured by its pane rather than the window.
  */
 @OptIn(ExperimentalMaterial3AdaptiveApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun ChatsPane(
     modifier: Modifier = Modifier,
+    paneDirective: PaneScaffoldDirective = foldAwarePaneDirective(),
     onChatOpenChange: (Boolean) -> Unit = {},
+    /** True while Chats wants the whole window, beside the map or not: scanning an invite (UX §6.11.6). */
+    onWholeWindowChange: (Boolean) -> Unit = {},
+    /** False while the map beside it was touched last: back belongs to that side (UX §6.11.7). */
+    backEnabled: Boolean = true,
     /** A conversation asked for from outside Chats; opened once, then handed back through [onTargetOpened]. */
     openTarget: ChatTarget? = null,
     onTargetOpened: () -> Unit = {},
@@ -136,7 +147,7 @@ fun ChatsPane(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val roomsState by roomsViewModel.uiState.collectAsStateWithLifecycle()
     val navigator = rememberListDetailPaneScaffoldNavigator<Int>(
-        scaffoldDirective = foldAwarePaneDirective(),
+        scaffoldDirective = paneDirective,
     )
     val scope = rememberCoroutineScope()
 
@@ -164,6 +175,7 @@ fun ChatsPane(
     val chatCoversList = navigator.canNavigateBack()
     // Both the QR screens want the whole display, same as an open chat does.
     LaunchedEffect(chatCoversList, overlay) { onChatOpenChange(chatCoversList || overlay != null) }
+    LaunchedEffect(overlay) { onWholeWindowChange(overlay == RoomsOverlay.Join) }
 
     overlay?.let { current ->
         val dismiss = {
@@ -232,7 +244,7 @@ fun ChatsPane(
         )
     }
 
-    BackHandler(enabled = chatCoversList) {
+    BackHandler(enabled = backEnabled && chatCoversList) {
         scope.launch { navigator.navigateBack() }
     }
 
@@ -240,7 +252,9 @@ fun ChatsPane(
         navigator = navigator,
         modifier = modifier,
         listPane = {
-            AnimatedPane {
+            // Beside the conversation the list keeps to its own width (UX §9.3);
+            // alone, it fills the pane whatever this says.
+            AnimatedPane(modifier = Modifier.preferredWidth(PaneLayouts.LIST_WIDTH.dp)) {
                 ChannelList(
                     channels = state.channels,
                     connected = state.connected,
@@ -390,6 +404,7 @@ private fun ChannelList(
                     IconButton(onClick = onSearch) {
                         Icon(painterResource(FirepitIcons.Search), contentDescription = "Search messages")
                     }
+                    WideScreenActions(withSettings = true)
                     IconButton(onClick = { menuOpen = true }) {
                         Icon(painterResource(FirepitIcons.More), contentDescription = "More")
                     }
@@ -776,6 +791,7 @@ private fun DirectChat(
                         color = FirepitTheme.colors.textSecondary,
                     )
                 },
+                actions = { WideScreenActions() },
             )
         },
     ) { padding ->
@@ -957,6 +973,7 @@ private fun ChannelChat(
                                 contentDescription = "Search messages",
                             )
                         }
+                        WideScreenActions()
                         // Room actions live in Room info, so the bar stays narrow
                         // enough for the room's name and status to fit.
                         onShowMembers?.let { members ->
@@ -1413,7 +1430,12 @@ private fun MessageInfoSheet(
     nameOf: (Int) -> String,
     onDismiss: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss, shape = SheetShape) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.withinPane(),
+        sheetMaxWidth = paneSheetMaxWidth(),
+        shape = SheetShape,
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

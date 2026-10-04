@@ -69,6 +69,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.getfirepit.app.location.ShareLocationSheet
 import com.getfirepit.app.location.SharingBanner
 import com.getfirepit.app.location.SharingViewModel
+import com.getfirepit.core.designsystem.adaptive.LAYOUT_LABEL
+import com.getfirepit.core.designsystem.adaptive.LayoutMenu
+import com.getfirepit.core.designsystem.adaptive.LocalWideScreen
+import com.getfirepit.core.designsystem.adaptive.paneSheetMaxWidth
+import com.getfirepit.core.designsystem.adaptive.withinPane
 import com.getfirepit.core.designsystem.component.BackButton
 import com.getfirepit.core.designsystem.component.FirepitChip
 import com.getfirepit.core.designsystem.component.FirepitIcons
@@ -98,6 +103,8 @@ import org.maplibre.android.style.layers.Property
 @Composable
 fun MapScreen(
     modifier: Modifier = Modifier,
+    /** No navigation bar sits under the map, so its bottom strip clears the gesture bar itself. */
+    insetBottom: Boolean = false,
     onBack: () -> Unit = {},
     onOpenOfflineAreas: () -> Unit = {},
     viewModel: MapViewModel = hiltViewModel(),
@@ -228,15 +235,33 @@ fun MapScreen(
                 )
             }
 
-            MapControl(
-                icon = FirepitIcons.More,
-                description = "Map options",
-                onClick = { showingOptions = true },
+            Column(
+                verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .statusBarsPadding()
                     .padding(FirepitSpacing.m),
-            )
+            ) {
+                MapControl(
+                    icon = FirepitIcons.More,
+                    description = "Map options",
+                    onClick = { showingOptions = true },
+                )
+                // Under ⋮ rather than beside it: a map side can be 280dp wide,
+                // and the row across the top already holds a notice and
+                // Show everyone.
+                LocalWideScreen.current?.takeIf { it.canSplit }?.let { controls ->
+                    var layoutOpen by remember { mutableStateOf(false) }
+                    Box {
+                        MapControl(
+                            icon = FirepitIcons.Split,
+                            description = LAYOUT_LABEL,
+                            onClick = { layoutOpen = true },
+                        )
+                        LayoutMenu(controls = controls, expanded = layoutOpen, onDismiss = { layoutOpen = false })
+                    }
+                }
+            }
 
             // Online, the map waits to be asked before going to where people
             // are: the tiles it would fetch there tell the tile server the place.
@@ -282,6 +307,7 @@ fun MapScreen(
                         textAlign = TextAlign.Center,
                         modifier = Modifier
                             .fillMaxWidth()
+                            .then(if (insetBottom) Modifier.navigationBarsPadding() else Modifier)
                             .padding(vertical = FirepitSpacing.m),
                     )
                 }
@@ -479,7 +505,12 @@ private fun DropPinDialog(onDismiss: () -> Unit, onDrop: (String) -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PinSheet(pin: MapPin, canRemove: Boolean, onRemove: () -> Unit, onDismiss: () -> Unit) {
-    ModalBottomSheet(onDismissRequest = onDismiss, shape = SheetShape) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.withinPane(),
+        sheetMaxWidth = paneSheetMaxWidth(),
+        shape = SheetShape,
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -551,6 +582,8 @@ private fun MapOptionsSheet(
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        modifier = Modifier.withinPane(),
+        sheetMaxWidth = paneSheetMaxWidth(),
         shape = SheetShape,
         // Left unconsumed so the column below can clear the gesture bar itself.
         // Taking the default put the last action inside it, where a tap opened

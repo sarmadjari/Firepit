@@ -4,7 +4,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -17,8 +16,10 @@ import org.maplibre.android.maps.MapView
  * The MapLibre surface, driven by the host lifecycle.
  *
  * MapView holds a GL surface and needs every lifecycle callback forwarded or it
- * leaks the context. Fold and unfold recreate the composition, so the view is
- * keyed on the window's size and rebuilt rather than resized in place.
+ * leaks the context. The view lives exactly as long as its place in the
+ * composition and is resized in place, whether the window or the map's pane
+ * changes size. It used to be destroyed on every window resize while it was
+ * still on screen, and MapLibre crashed when that surface then resized.
  */
 @Composable
 fun MapLibreView(
@@ -27,13 +28,7 @@ fun MapLibreView(
     onMapReady: (MapLibreMap, MapView) -> Unit,
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
-    // Changes on rotation, fold and unfold alike, which is exactly when the
-    // surface has to be rebuilt.
-    val windowSize = LocalWindowInfo.current.containerSize
-
-    val mapView = remember(windowSize) {
-        MapViewHolder()
-    }
+    val mapView = remember { MapViewHolder() }
 
     DisposableEffect(lifecycleOwner, mapView) {
         val observer = LifecycleEventObserver { _, event ->
@@ -43,7 +38,11 @@ fun MapLibreView(
                 Lifecycle.Event.ON_RESUME -> view.onResume()
                 Lifecycle.Event.ON_PAUSE -> view.onPause()
                 Lifecycle.Event.ON_STOP -> view.onStop()
-                Lifecycle.Event.ON_DESTROY -> view.onDestroy()
+                Lifecycle.Event.ON_DESTROY -> {
+                    // Once only: leaving the composition after this must not destroy it again.
+                    view.onDestroy()
+                    mapView.view = null
+                }
                 else -> Unit
             }
         }

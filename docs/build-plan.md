@@ -1017,25 +1017,42 @@ The design is UX §6.11; this is how it gets built.
      rebuilding them: the MapLibre view, the scroll position and the draft all stay.
    - The chat side's list-detail scaffold gets a directive from the chat pane's own width, not the
      window's. Otherwise it would split again inside a 376 dp pane.
-   - **Divider:** Material 3 adaptive pane expansion: `rememberPaneExpansionState` with proportion
-     anchors at ⅓, ½ and ⅔ plus an offset anchor on the hinge, and a `VerticalDragHandle`. It sits in
-     `ThreePaneScaffold` / `SupportingPaneScaffold`, or in a small custom layout if nesting fights it.
-     - MapLibre's `SurfaceView` blocks the UI thread on every size change. So the map pane takes its new
-       size once, when a drag or animation ends (`boundsAnimationSpec = snap()` for that pane).
+   - **Divider:** a small custom layout (`SidePanes`). Material's pane expansion works inside one
+     scaffold, and the two sides here are separate screens. While dragging, a line shows where the
+     divider will land. On release both panes take their new width once, because MapLibre's
+     `SurfaceView` blocks the UI thread on every size change. It settles on ⅓, ½, ⅔ or the fold, by the
+     shared `PaneLayouts.settle`.
    - **Fold and posture** come from `currentWindowAdaptiveInfoV2().windowPosture` (hinge bounds,
      `isTabletop`). A separating fold locks the divider to it; tabletop stacks the panes.
    - **Navigation:** no rail with two or three panes. ⚙ on the chat list opens Settings across the
      window, and back acts on the side touched last.
    - **Keyboard:** `imePadding` moves from the shell to the chat side, and the map side ignores the
      keyboard.
-   - **Preferences** live in DataStore (`LayoutPreferences`: arrangement, map side, and the divider for
-     upright and wide windows).
+   - **Preferences** live in SharedPreferences like the app's other settings (`LayoutPreferences`:
+     arrangement, map side, and the divider for upright and wide windows). They are read synchronously,
+     so the first frame already has the user's layout.
    - **Narrow windows:** less chrome below 320 dp, and still usable at 220 dp.
    - **Mouse and keyboard:** hover, right-click for the long-press menu, Enter and Shift+Enter, Esc,
      Ctrl+F, and Tab between the sides.
    - **Moving between screens** still recreates the activity, as today (no `configChanges` shortcuts,
      CLAUDE.md). State lives in ViewModels and saved state, and the map's camera in its ViewModel.
      `movableContentOf` covers changes within one window; recreation covers moving between screens.
+   - **Built (2026-10-04):** the shell, the divider, Settings across the window, the layout menu in the
+     chat bars and among the map's controls, Settings › Appearance › Wide screens, and sheets kept to
+     their pane (`withinPane`, `paneSheetMaxWidth`). Checked on a Galaxy Z Fold flat, in book posture and
+     tabletop, and on an emulator at 701, 841 and 1400 dp.
+     - **Each pane is one node for the whole split,** placed by padding inside the window. The chat
+       growing to the whole window, for an invite scan or for typing in tabletop, keeps the same node, so
+       the composer keeps its focus and keyboard. Settings is a layer over the panes, so closing it finds
+       the conversation and the map as they were.
+     - **Insets per edge:** each side clears only the system bars on its outer edges. In tabletop, the map
+       ignores the navigation bar and the conversation ignores the status bar.
+     - **Found and fixed on the way:** `MapLibreView` was keyed on the window's size. The key never
+       rebuilt the view, but it destroyed it while it was still on screen, and MapLibre crashed in
+       `onSurfaceChanged` on the next resize. The view now lives as long as its place in the composition
+       and resizes in place.
+     - **Still to do in this phase:** the map's camera surviving recreation, chrome below 320 dp, and the
+       mouse and keyboard.
 3. **iOS shell.**
    - **A universal app:** iPhone and iPad (U-14). Build with the iOS 27.1 SDK so the iPhone Duo gets
      edge-to-edge drawing and toolbars at the side. The scene lifecycle iOS 27 requires is already in use.

@@ -578,7 +578,7 @@ Where the user chooses:
    - Drag it to share the width differently. Released, it settles on the nearest of ⅓, ½ or ⅔, or on the fold, with a light haptic as it lands.
    - Drag a pane below its minimum to close it, which chooses Chat only or Map only. The layout button brings the pane back.
    - Double-tap the divider to put it back on the fold, or in the middle when there is no fold.
-3. **Settings → Appearance → Wide screens:**
+3. **Settings → Appearance → Wide screens,** shown while the window is wide enough for two panes:
    - Layout: Chat and map · Chat only · Map only.
    - Map on the: Right · Left. Mirrored defaults in right-to-left languages, so the map starts on the left there.
    - Reset the divider.
@@ -699,8 +699,8 @@ When only the arrangement changes, the map is moved, not rebuilt, so no tiles re
 - **Top bars:** each pane keeps its own.
   - Chat list: 🔍 · ◫ · ⚙.
   - Conversation: ◫ before ⋮.
-  - Map side: filter chip · ◎ · ⬇ · ◫.
-- **The layout glyph** is the platform's own split-view symbol: Material's vertical split on Android, SF Symbols' `rectangle.split.2x1` on iOS. That follows §9.3: chrome icons are each platform's.
+  - Map side: filter chip · ◎ · ⬇ along the top, with ◫ in the top corner under the map's ⋮. Stacking the two keeps the top row free for notices and Show everyone on a map side only 280 wide.
+- **The layout glyph** is a split-view symbol from each platform's chrome icons (§9.6): two panes outlined in Firepit's 24 dp outlined set on Android, SF Symbols' `rectangle.split.2x1` on iOS.
 - **Motion:** changing arrangement moves the panes over 250 ms (emphasised deceleration). The map pane takes its new size once, at the end. While the divider is dragged, it follows the finger 1:1.
 - **No new colours.** The divider is `outline` and the handle `text-2`.
 

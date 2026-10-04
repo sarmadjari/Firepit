@@ -36,6 +36,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import com.getfirepit.core.designsystem.adaptive.paneSheetMaxWidth
+import com.getfirepit.core.designsystem.adaptive.withinPane
 import com.getfirepit.core.designsystem.component.FirepitIcons
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
@@ -223,7 +225,13 @@ fun ShareLocationSheet(
     // sheet asking about location sharing must not hide its own Stop button.
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet, shape = SheetShape) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.withinPane(),
+        sheetState = sheet,
+        sheetMaxWidth = paneSheetMaxWidth(),
+        shape = SheetShape,
+    ) {
         Column(
             verticalArrangement = Arrangement.spacedBy(FirepitSpacing.m),
             modifier = Modifier

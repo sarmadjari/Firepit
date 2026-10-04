@@ -40,8 +40,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -55,6 +57,8 @@ import com.getfirepit.app.radio.DevicesScreen
 import com.getfirepit.app.radio.NodesScreen
 import com.getfirepit.app.radio.RadioViewModel
 import androidx.compose.material3.Switch
+import com.getfirepit.app.ui.ShellViewModel
+import com.getfirepit.core.designsystem.adaptive.LocalWideScreen
 import com.getfirepit.core.designsystem.component.FirepitChip
 import com.getfirepit.core.designsystem.component.FirepitTopBar
 import com.getfirepit.core.designsystem.component.IdentityAvatar
@@ -65,6 +69,9 @@ import com.getfirepit.core.designsystem.theme.IDENTITY_CHOICES
 import com.getfirepit.core.designsystem.theme.identityColorFor
 import com.getfirepit.core.designsystem.theme.identityColorForSlot
 import com.getfirepit.core.designsystem.theme.onIdentityColorFor
+import com.getfirepit.core.model.LayoutChoice
+import com.getfirepit.core.model.MapSide
+import com.getfirepit.core.model.PaneArrangement
 import com.getfirepit.core.protocol.MessageAlerts
 import com.getfirepit.core.protocol.MessageRetention
 import com.getfirepit.core.protocol.RadioCapabilities
@@ -84,9 +91,12 @@ fun SettingsScreen(
     onSectionOpened: () -> Unit = {},
     onImmersiveChange: (Boolean) -> Unit = {},
     onMessage: (Int) -> Unit = {},
+    /** Set while Settings covers two panes: its bar gets a back arrow that returns to them. */
+    onClose: (() -> Unit)? = null,
     radioViewModel: RadioViewModel = hiltViewModel(),
     settingsViewModel: SettingsViewModel = hiltViewModel(),
     sharingViewModel: SharingViewModel = hiltViewModel(),
+    shellViewModel: ShellViewModel = hiltViewModel(),
 ) {
     var section by remember { mutableStateOf<SettingsSection?>(null) }
     var pickingRoom by remember { mutableStateOf(false) }
@@ -104,6 +114,7 @@ fun SettingsScreen(
     val rangeMode by settingsViewModel.rangeMode.collectAsStateWithLifecycle()
     val radioPrivacy by settingsViewModel.radioPrivacy.collectAsStateWithLifecycle()
     val canRestoreRadio by settingsViewModel.canRestoreRadio.collectAsStateWithLifecycle()
+    val layoutChoice by shellViewModel.choice.collectAsStateWithLifecycle()
 
     // A sub-screen takes the whole display, same as an open chat does.
     LaunchedEffect(section) { onImmersiveChange(section != null) }
@@ -178,6 +189,11 @@ fun SettingsScreen(
             onUseAsNodeName = settingsViewModel::useAsNodeName,
             onChooseIdentity = settingsViewModel::chooseIdentitySlot,
             onChooseTheme = settingsViewModel::chooseTheme,
+            layoutChoice = layoutChoice.takeIf { LocalWideScreen.current?.canSplit == true },
+            onArrange = shellViewModel::arrange,
+            onMapSide = shellViewModel::setMapSide,
+            onResetDivider = shellViewModel::resetDivider,
+            onClose = onClose,
             onOpen = { section = it },
         )
     }
@@ -241,6 +257,12 @@ private fun SettingsList(
     onUseAsNodeName: () -> Unit,
     onChooseIdentity: (Int?) -> Unit,
     onChooseTheme: (ThemeChoice) -> Unit,
+    /** Null unless the window is wide enough for two panes: the choices would change nothing. */
+    layoutChoice: LayoutChoice?,
+    onArrange: (PaneArrangement) -> Unit,
+    onMapSide: (MapSide) -> Unit,
+    onResetDivider: () -> Unit,
+    onClose: (() -> Unit)?,
     onOpen: (SettingsSection) -> Unit,
 ) {
     var confirmingErase by remember { mutableStateOf(false) }
@@ -271,7 +293,7 @@ private fun SettingsList(
 
     Scaffold(
         modifier = modifier,
-        topBar = { FirepitTopBar(title = "Settings") },
+        topBar = { FirepitTopBar(title = "Settings", onBack = onClose) },
     ) { padding ->
         Column(
             Modifier
@@ -410,6 +432,14 @@ private fun SettingsList(
                     onChoose = onChooseTheme,
                 )
             }
+            layoutChoice?.let { choice ->
+                WideScreenSettings(
+                    choice = choice,
+                    onArrange = onArrange,
+                    onMapSide = onMapSide,
+                    onResetDivider = onResetDivider,
+                )
+            }
             HorizontalDivider()
 
             SectionLabel("About")
@@ -430,6 +460,45 @@ private fun SettingsList(
             )
         }
     }
+}
+
+/** The physical side, as the setting names it, whatever the reading direction. */
+private enum class PhysicalSide(val label: String) { RIGHT("Right"), LEFT("Left") }
+
+/** Settings › Appearance › Wide screens (UX §6.11.4). */
+@Composable
+private fun WideScreenSettings(
+    choice: LayoutChoice,
+    onArrange: (PaneArrangement) -> Unit,
+    onMapSide: (MapSide) -> Unit,
+    onResetDivider: () -> Unit,
+) {
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val mapOnRight = (choice.mapSide == MapSide.END) != rtl
+    SectionLabel("Wide screens")
+    SettingsGroup {
+        SettingsChoice(
+            label = "Layout",
+            caption = "When the screen is wide enough for two: unfolded, a tablet, or a wide window.",
+            entries = PaneArrangement.entries,
+            selected = choice.arrangement,
+            labelOf = PaneArrangement::label,
+            onChoose = onArrange,
+        )
+        SettingsChoice(
+            label = "Map on the",
+            entries = PhysicalSide.entries,
+            selected = if (mapOnRight) PhysicalSide.RIGHT else PhysicalSide.LEFT,
+            labelOf = PhysicalSide::label,
+            onChoose = { side -> onMapSide(if ((side == PhysicalSide.RIGHT) != rtl) MapSide.END else MapSide.START) },
+            enabled = choice.arrangement == PaneArrangement.CHAT_AND_MAP,
+        )
+    }
+    ListItem(
+        headlineContent = { Text("Reset the divider") },
+        supportingContent = { Text("Back on the fold, or in the middle when there is no fold") },
+        modifier = Modifier.clickable(onClick = onResetDivider),
+    )
 }
 
 /**
