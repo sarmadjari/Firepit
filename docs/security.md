@@ -43,11 +43,13 @@ Stated plainly, because a threat model that claims everything is worthless.
   keep everything — words, positions and pins — and can seal anything claiming
   to come from another member. Rotation (§6) is the only recourse and it is not
   retroactive.
-- **A member lying about another member's phone key.** A member can announce a
-  false phone key for somebody else in the room (§6). The next rotation to that
-  person is sealed to the false key but still travels PKI to their own radio, so
-  the liar cannot read it — but that person misses the new key and has to be
-  invited again.
+- **A member lying about another member's phone key.** Any current member can
+  vouch for a false phone key for somebody whose key this phone has not checked
+  in person (§6). The next rotation to that person is sealed to the false key
+  but still travels PKI to their own radio, so the liar cannot read it — but
+  that person misses the new key and has to be invited again. Firepit leaves a
+  direct chat line saying the phone key changed, so the change is visible. A key
+  this phone checked in person is not replaced by a later announcement.
 - **Phones whose clocks are far apart.** Room keys follow the clock (§3), so
   a phone whose clock is more than about an hour away from the others' cannot
   read their room messages, nor they its, until the clock is put right. That
@@ -619,11 +621,14 @@ removing sees who confirmed and who has not yet.
 **Phone keys** arrive in the join hello, in the sealed `JOINED` event that
 introduces a newcomer, and in person cards, which every phone sends to its rooms
 even when nobody has chosen a name. They are learned on first sight and then
-kept (`TrustRules.shouldStorePhoneKey`). Only a join a person approved replaces
-one — our own approval, or the sealed `JOINED` from whoever gave it — which is
-how somebody who returns with a new phone stays reachable. A member whose phone
-key is unknown cannot be handed a new key, and is reported as not yet reached,
-like a member who is out of range.
+kept with their source (`TrustRules.shouldStorePhoneKey`). An in-person approval
+on this phone marks the key as in-person, and that key wins over later sealed
+`JOINED` events and cards. A new in-person key replaces the old one. A sealed
+`JOINED` from any current member can replace only a key that was not learned in
+person on this phone; a card never replaces. Any different key that is accepted writes a direct-chat notice:
+"Sam's phone key changed. If they did not get a new phone, check with them in
+person." A member whose phone key is unknown cannot be handed a new key, and is
+reported as not yet reached, like a member who is out of range.
 
 A **lost or lent radio** can be removed from every room it is in from the
 device list (`RoomRepository.removeFromAllRooms`), which rotates each of them

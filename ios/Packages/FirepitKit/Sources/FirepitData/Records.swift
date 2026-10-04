@@ -152,11 +152,10 @@ public struct MessageEntity: Codable, FetchableRecord, PersistableRecord, Sendab
     }
 
     public static func fromDomain(_ message: ChatMessage, myNodeNum: Int32) -> MessageEntity {
-        MessageEntity(
+        return MessageEntity(
             id: message.id, channel: message.channel, fromNodeNum: message.fromNodeNum,
             toNodeNum: message.toNodeNum,
-            peerNodeNum: message.isOutgoing
-                ? message.toNodeNum : (message.fromNodeNum != myNodeNum ? message.fromNodeNum : message.toNodeNum),
+            peerNodeNum: message.peerNode(myNodeNum: myNodeNum),
             text: message.text, sentAt: message.sentAt, rxTime: message.rxTime, status: message.status,
             failureReason: message.failureReason, isOutgoing: message.isOutgoing, rxSnr: message.rxSnr,
             rxRssi: message.rxRssi, hopsAway: message.hopsAway, replyId: message.replyId,
@@ -415,10 +414,12 @@ public struct PeerKeyEntity: Codable, FetchableRecord, PersistableRecord, Sendab
     public var nodeNum: Int32
     public var phoneKey: String
     public var learnedAt: Int64
-    public init(nodeNum: Int32, phoneKey: String, learnedAt: Int64) {
+    public var inPerson: Bool
+    public init(nodeNum: Int32, phoneKey: String, learnedAt: Int64, inPerson: Bool = false) {
         self.nodeNum = nodeNum
         self.phoneKey = phoneKey
         self.learnedAt = learnedAt
+        self.inPerson = inPerson
     }
 }
 

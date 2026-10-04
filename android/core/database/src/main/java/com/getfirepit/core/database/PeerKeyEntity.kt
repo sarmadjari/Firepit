@@ -1,6 +1,7 @@
 package com.getfirepit.core.database
 
 import androidx.room.Entity
+import androidx.room.ColumnInfo
 import androidx.room.PrimaryKey
 
 /**
@@ -16,4 +17,5 @@ data class PeerKeyEntity(
     /** Base64 of the 33-byte compressed point. */
     val phoneKey: String,
     val learnedAt: Long,
+    @ColumnInfo(defaultValue = "0") val inPerson: Boolean = false,
 )

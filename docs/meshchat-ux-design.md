@@ -201,6 +201,8 @@ flowchart TD
 - Prerequisite handled silently: the peer's public key must be known to our node (IG §6.2.2). If not yet: "Waiting for Sam's node to say hello…" with the Message button disabled and an automatic NodeInfo request (once). Usually resolved within seconds after a join.
 - Delivery: ✓✓ appears only when the peer's node ACKs (real delivery to the device, not to the person — the tooltip says "Delivered to Sam's node").
 - Header subtitle: "T-Echo · 78 % · good signal · heard 3 min ago" (no "online").
+- If Sam's stored phone key changes, the direct chat gets a notice line, shown in the conversation and as the Direct list preview but not notified:
+  "Sam's phone key changed. If they did not get a new phone, check with them in person."
 
 ### 5.6 Alerts
 
@@ -943,6 +945,7 @@ Rules: platform-native navigation and gestures always win over visual parity; co
 | Approve request | (there is none) Invite = access |
 | Repeater | Router |
 | Restart required | Your node restarts for about 10 seconds |
+| Key changed | Sam's phone key changed. If they did not get a new phone, check with them in person. |
 
 ---
 

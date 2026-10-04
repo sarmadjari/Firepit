@@ -40,7 +40,7 @@ internal class Converters {
         RoomActivityEntity::class,
         PendingHandoverEntity::class,
     ],
-    version = 13,
+    version = 14,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -297,6 +297,13 @@ abstract class FirepitDatabase : RoomDatabase() {
             }
         }
 
+        /** Records whether a phone key was checked in person on this phone. */
+        private val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL("ALTER TABLE peer_keys ADD COLUMN inPerson INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         private const val NAME = "firepit.db"
 
         /** Every upgrade, oldest first; the migration test runs them against the exported schemas. */
@@ -313,6 +320,7 @@ abstract class FirepitDatabase : RoomDatabase() {
             MIGRATION_10_11,
             MIGRATION_11_12,
             MIGRATION_12_13,
+            MIGRATION_13_14,
         )
 
         /** Opens the database encrypted; see [DatabaseEncryption] for why and how. */

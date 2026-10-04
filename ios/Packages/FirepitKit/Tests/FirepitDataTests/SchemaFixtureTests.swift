@@ -24,7 +24,7 @@ private struct Field: Decodable {
 }
 
 private func fixtureSchema() throws -> RoomSchema {
-    let url = Bundle.module.url(forResource: "room-schema-13", withExtension: "json", subdirectory: "Fixtures")!
+    let url = Bundle.module.url(forResource: "room-schema-14", withExtension: "json", subdirectory: "Fixtures")!
     return try JSONDecoder().decode(RoomSchema.self, from: Data(contentsOf: url))
 }
 
@@ -104,4 +104,34 @@ private func fixtureSchema() throws -> RoomSchema {
             sql: "SELECT lastOpenedGeneration FROM room_members WHERE roomId = 42 AND nodeNum = 7")
     }
     #expect(generation == 3)
+}
+
+@Test func v13DatabaseMigratesPhoneKeyProvenanceAndKeepsKeys() throws {
+    var configuration = Configuration()
+    configuration.prepareDatabase { db in try db.execute(sql: "PRAGMA foreign_keys = ON") }
+    let queue = try DatabaseQueue(configuration: configuration)
+    try queue.write { db in
+        for sql in FirepitDatabase.createStatements { try db.execute(sql: sql) }
+        try db.execute(sql: "ALTER TABLE room_members ADD COLUMN lastOpenedGeneration INTEGER")
+        try db.execute(sql: "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)")
+        try db.execute(
+            sql: "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, ?)",
+            arguments: [FirepitDatabase.v13IdentityHash])
+        try db.execute(sql: "CREATE TABLE IF NOT EXISTS grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY)")
+        try db.execute(sql: "INSERT INTO grdb_migrations (identifier) VALUES ('create_v12')")
+        try db.execute(sql: "INSERT INTO grdb_migrations (identifier) VALUES ('v13_member_evidence')")
+        try db.execute(sql: "INSERT INTO peer_keys (nodeNum, phoneKey, learnedAt) VALUES (7, 'abc', 100)")
+    }
+
+    try FirepitDatabase.migrator.migrate(queue)
+
+    let key = try queue.read { db in
+        try PeerKeyEntity.fetchOne(db, sql: "SELECT * FROM peer_keys WHERE nodeNum = 7")
+    }
+    #expect(key?.phoneKey == "abc")
+    #expect(key?.inPerson == false)
+    let hash = try queue.read { db in
+        try String.fetchOne(db, sql: "SELECT identity_hash FROM room_master_table WHERE id = 42")
+    }
+    #expect(hash == FirepitDatabase.identityHash)
 }

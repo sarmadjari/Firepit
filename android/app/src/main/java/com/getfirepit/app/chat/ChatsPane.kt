@@ -586,8 +586,8 @@ private fun ChannelList(
                 }
 
                 if (showDirect) {
-                    items(directLatest, key = { "direct-${it.peerOf(myNodeNum)}" }) { message ->
-                        val peer = message.peerOf(myNodeNum)
+                    items(directLatest, key = { directListKey(it, myNodeNum) }) { message ->
+                        val peer = message.directListPeer(myNodeNum)
                         DirectRow(
                             peer = peer,
                             node = nodes[peer],
@@ -607,9 +607,10 @@ private fun ChannelList(
     }
 }
 
-/** Whoever is not us. Outgoing names the recipient, incoming names the sender. */
-private fun ChatMessage.peerOf(myNodeNum: Int?): Int =
-    if (isOutgoing || fromNodeNum == myNodeNum) toNodeNum else fromNodeNum
+internal fun ChatMessage.directListPeer(myNodeNum: Int?): Int = peerNode(myNodeNum)
+
+internal fun directListKey(message: ChatMessage, myNodeNum: Int?): String =
+    "direct-${message.directListPeer(myNodeNum)}"
 
 @Composable
 private fun DirectRow(

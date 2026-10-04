@@ -209,15 +209,61 @@ class TrustRulesTest {
     // --- phone keys ----------------------------------------------------------
 
     @Test
-    fun `a phone key is learned once and then kept`() {
-        assertTrue(TrustRules.shouldStorePhoneKey(known = null, incoming = bobPhone, vouched = false))
-        assertFalse(TrustRules.shouldStorePhoneKey(known = bobPhone, incoming = bobPhone, vouched = true))
-        assertFalse(TrustRules.shouldStorePhoneKey(known = bobPhone, incoming = evePhone, vouched = false))
-    }
+    fun `phone key provenance rule table`() {
+        val sources = TrustRules.PhoneKeySource.entries
 
-    @Test
-    fun `only an approved join replaces a phone key`() {
-        assertTrue(TrustRules.shouldStorePhoneKey(known = bobPhone, incoming = evePhone, vouched = true))
+        sources.forEach { source ->
+            val decision = TrustRules.shouldStorePhoneKey(
+                known = null,
+                knownInPerson = false,
+                incoming = bobPhone,
+                source = source,
+            )
+            assertEquals("first sight $source", true, decision.store)
+            assertEquals("first sight provenance $source", source == TrustRules.PhoneKeySource.IN_PERSON, decision.inPerson)
+            assertEquals("first sight is not a replacement $source", false, decision.replaced)
+        }
+
+        sources.forEach { source ->
+            listOf(false, true).forEach { knownInPerson ->
+                val decision = TrustRules.shouldStorePhoneKey(
+                    known = bobPhone,
+                    knownInPerson = knownInPerson,
+                    incoming = bobPhone,
+                    source = source,
+                )
+                assertEquals("same key stores only to mark in-person: $source/$knownInPerson",
+                    source == TrustRules.PhoneKeySource.IN_PERSON && !knownInPerson,
+                    decision.store,
+                )
+                assertEquals(
+                    "same key provenance $source/$knownInPerson",
+                    knownInPerson || source == TrustRules.PhoneKeySource.IN_PERSON,
+                    decision.inPerson,
+                )
+                assertEquals("same key never replaces $source/$knownInPerson", false, decision.replaced)
+            }
+        }
+
+        sources.forEach { source ->
+            listOf(false, true).forEach { knownInPerson ->
+                val decision = TrustRules.shouldStorePhoneKey(
+                    known = bobPhone,
+                    knownInPerson = knownInPerson,
+                    incoming = evePhone,
+                    source = source,
+                )
+                val shouldStore = source == TrustRules.PhoneKeySource.IN_PERSON ||
+                    (source == TrustRules.PhoneKeySource.VOUCHED && !knownInPerson)
+                assertEquals("different key store $source/$knownInPerson", shouldStore, decision.store)
+                assertEquals(
+                    "different key provenance $source/$knownInPerson",
+                    if (shouldStore) source == TrustRules.PhoneKeySource.IN_PERSON else knownInPerson,
+                    decision.inPerson,
+                )
+                assertEquals("different key replaced $source/$knownInPerson", shouldStore, decision.replaced)
+            }
+        }
     }
 
     // --- pins ----------------------------------------------------------------

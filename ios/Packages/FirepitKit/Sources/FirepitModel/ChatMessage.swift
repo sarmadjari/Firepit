@@ -2,6 +2,8 @@ import Foundation
 
 /// Broadcast destination; the same value the firmware uses for "everyone" (0xFFFFFFFF as a signed 32-bit int).
 public let broadcastNodeNum: Int32 = -1
+/// No real node has zero, so it marks a local notice line.
+public let noticeNodeNum: Int32 = 0
 
 /// Milliseconds since the Unix epoch, the unit every Firepit timestamp uses (Android's `System.currentTimeMillis()`).
 public func currentEpochMillis() -> Int64 {
@@ -75,4 +77,11 @@ public struct ChatMessage: Hashable, Sendable, Identifiable {
     }
 
     public var isDirect: Bool { toNodeNum != broadcastNodeNum }
+    public var isNotice: Bool { fromNodeNum == noticeNodeNum }
+
+    /// The other person in a direct conversation, matching the database's peerNodeNum.
+    public func peerNode(myNodeNum: Int32?) -> Int32 {
+        if isOutgoing { return toNodeNum }
+        return fromNodeNum != myNodeNum && fromNodeNum != noticeNodeNum ? fromNodeNum : toNodeNum
+    }
 }

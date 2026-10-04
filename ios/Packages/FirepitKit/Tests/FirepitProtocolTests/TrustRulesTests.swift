@@ -208,14 +208,47 @@ import Testing
                 sealedUnderCurrent: true, addressedToUs: false, queryRoom: Self.room, sharingWithRoom: Self.room))
     }
 
-    @Test func aPhoneKeyIsLearnedOnceAndThenKept() {
-        #expect(TrustRules.shouldStorePhoneKey(known: nil, incoming: bobPhone, vouched: false))
-        #expect(!TrustRules.shouldStorePhoneKey(known: bobPhone, incoming: bobPhone, vouched: true))
-        #expect(!TrustRules.shouldStorePhoneKey(known: bobPhone, incoming: evePhone, vouched: false))
-    }
+    @Test func phoneKeyProvenanceRuleTable() {
+        for source in TrustRules.PhoneKeySource.allCases {
+            let decision = TrustRules.shouldStorePhoneKey(
+                known: nil,
+                knownInPerson: false,
+                incoming: bobPhone,
+                source: source
+            )
+            #expect(decision.store)
+            #expect(decision.inPerson == (source == .inPerson))
+            #expect(!decision.replaced)
+        }
 
-    @Test func onlyAnApprovedJoinReplacesAPhoneKey() {
-        #expect(TrustRules.shouldStorePhoneKey(known: bobPhone, incoming: evePhone, vouched: true))
+        for source in TrustRules.PhoneKeySource.allCases {
+            for knownInPerson in [false, true] {
+                let decision = TrustRules.shouldStorePhoneKey(
+                    known: bobPhone,
+                    knownInPerson: knownInPerson,
+                    incoming: bobPhone,
+                    source: source
+                )
+                #expect(decision.store == (source == .inPerson && !knownInPerson))
+                #expect(decision.inPerson == (knownInPerson || source == .inPerson))
+                #expect(!decision.replaced)
+            }
+        }
+
+        for source in TrustRules.PhoneKeySource.allCases {
+            for knownInPerson in [false, true] {
+                let decision = TrustRules.shouldStorePhoneKey(
+                    known: bobPhone,
+                    knownInPerson: knownInPerson,
+                    incoming: evePhone,
+                    source: source
+                )
+                let shouldStore = source == .inPerson || (source == .vouched && !knownInPerson)
+                #expect(decision.store == shouldStore)
+                #expect(decision.inPerson == (shouldStore ? source == .inPerson : knownInPerson))
+                #expect(decision.replaced == shouldStore)
+            }
+        }
     }
 
     private func pin(

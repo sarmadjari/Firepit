@@ -561,6 +561,9 @@ interface PersonCardDao {
     @Query("SELECT * FROM person_cards")
     fun observeAllEntities(): Flow<List<PersonCardEntity>>
 
+    @Query("SELECT * FROM person_cards WHERE nodeNum = :nodeNum")
+    suspend fun findEntity(nodeNum: Int): PersonCardEntity?
+
     @Upsert
     suspend fun upsert(card: PersonCardEntity)
 

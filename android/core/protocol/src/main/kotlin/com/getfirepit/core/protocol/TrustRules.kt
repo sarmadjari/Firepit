@@ -173,20 +173,46 @@ object TrustRules {
         sharingWithRoom: Int?,
     ): Boolean = sealedUnderCurrent && addressedToUs && sharingWithRoom != null && sharingWithRoom == queryRoom
 
+    enum class PhoneKeySource {
+        /** This phone approved the join after an in-person fingerprint check. */
+        IN_PERSON,
+
+        /** A sealed JOINED roster event from the member who let the newcomer in. */
+        VOUCHED,
+
+        /** A person card, or any other announcement that carries a phone key. */
+        ANNOUNCED,
+    }
+
+    data class PhoneKeyDecision(
+        val store: Boolean,
+        val inPerson: Boolean,
+        val replaced: Boolean,
+    )
+
     /**
-     * Whether to store a phone key for a node.
+     * Whether to store a phone key for a node, and whether it has in-person
+     * provenance.
      *
-     * Learned on first sight and then kept, so a card cannot quietly replace
-     * somebody's key. Only [vouched] — a join a person approved, in front of
-     * them — may replace one; that is how somebody who returns with a new phone
-     * stays reachable. A false key gains nobody anything to read, since a
-     * rotation still travels PKI to the member's own radio; at worst that
-     * member misses one key.
+     * First sight is kept. The same key is kept as-is, except that seeing it in
+     * person marks it as in-person. A different in-person key replaces any old
+     * one; a vouched key replaces only one that was not learned in person; a
+     * plain announcement never replaces.
      */
-    fun shouldStorePhoneKey(known: ByteString?, incoming: ByteString, vouched: Boolean): Boolean = when {
-        known == null -> true
-        known == incoming -> false
-        else -> vouched
+    fun shouldStorePhoneKey(
+        known: ByteString?,
+        knownInPerson: Boolean,
+        incoming: ByteString,
+        source: PhoneKeySource,
+    ): PhoneKeyDecision = when {
+        known == null -> PhoneKeyDecision(store = true, inPerson = source == PhoneKeySource.IN_PERSON, replaced = false)
+        known == incoming && source == PhoneKeySource.IN_PERSON && !knownInPerson ->
+            PhoneKeyDecision(store = true, inPerson = true, replaced = false)
+        known == incoming -> PhoneKeyDecision(store = false, inPerson = knownInPerson, replaced = false)
+        source == PhoneKeySource.IN_PERSON -> PhoneKeyDecision(store = true, inPerson = true, replaced = true)
+        source == PhoneKeySource.VOUCHED && !knownInPerson ->
+            PhoneKeyDecision(store = true, inPerson = false, replaced = true)
+        else -> PhoneKeyDecision(store = false, inPerson = knownInPerson, replaced = false)
     }
 
     /**

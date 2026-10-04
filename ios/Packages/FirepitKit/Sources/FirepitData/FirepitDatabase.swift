@@ -23,7 +23,8 @@ public enum DatabaseKeyError: Error {
 /// migration below creates the exported v12 schema exactly enough for Room-compatible SQL and DAO semantics, and each
 /// later one is Android's own (v13 adds what each member last sealed under).
 public enum FirepitDatabase {
-    public static let identityHash = "affe4bac2480fa9d507233b5d82c4aee"
+    public static let identityHash = "8cdd837f47622fbda07f7ccc99aec08f"
+    public static let v13IdentityHash = "affe4bac2480fa9d507233b5d82c4aee"
     public static let v12IdentityHash = "ffeccfa0136713b833875de07074781d"
     public static let fileName = "firepit.db"
 
@@ -123,6 +124,12 @@ public enum FirepitDatabase {
         }
         migrator.registerMigration("v13_member_evidence") { db in
             try db.execute(sql: "ALTER TABLE room_members ADD COLUMN lastOpenedGeneration INTEGER")
+            try db.execute(
+                sql: "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, ?)",
+                arguments: [v13IdentityHash])
+        }
+        migrator.registerMigration("v14_key_provenance") { db in
+            try db.execute(sql: "ALTER TABLE peer_keys ADD COLUMN inPerson INTEGER NOT NULL DEFAULT 0")
             try db.execute(
                 sql: "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, ?)",
                 arguments: [identityHash])

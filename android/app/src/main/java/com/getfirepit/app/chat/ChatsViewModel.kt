@@ -294,7 +294,7 @@ class ChatsViewModel @Inject constructor(
                 else Triple(
                     channel ?: 0,
                     peer,
-                    shown.filterNot { it.isOutgoing || Reactions.isReaction(it) }.map { it.id }.toSet(),
+                    shown.filterNot { it.isOutgoing || it.isNotice || Reactions.isReaction(it) }.map { it.id }.toSet(),
                 )
             }.collect { open ->
                 open?.let { (channel, peer, ids) -> receipts.read(channel, ids, peer) }
