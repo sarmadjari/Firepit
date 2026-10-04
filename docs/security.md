@@ -95,7 +95,7 @@ Stated plainly, because a threat model that claims everything is worthless.
 ## 2. Primitives
 
 No cryptography is invented here. Everything is platform-provided, except
-SQLCipher on Android, which is the standard for encrypting SQLite. Android uses
+SQLCipher on both apps, which is the standard for encrypting SQLite. Android uses
 the Java cryptography APIs and the Android Keystore; iOS uses CryptoKit and the
 Security framework.
 
@@ -116,7 +116,7 @@ must open what the other sealed.
 
 | Purpose | Android | iPhone |
 |---|---|---|
-| Database at rest | SQLCipher 4 (AES-256 per page, HMAC-SHA512) under a random 32-byte key wrapped by the Keystore | iOS Data Protection, class `completeUntilFirstUserAuthentication`. No SQLCipher layer yet (§4) |
+| Database at rest | SQLCipher 4 (AES-256 per page, HMAC-SHA512) under a random 32-byte key wrapped by the Keystore | SQLCipher 4 under a random 32-byte key in the Keychain (`AfterFirstUnlockThisDeviceOnly`), over iOS Data Protection (§4) |
 | Room keys and other secrets | Wrapped by an Android Keystore AES-256-GCM key that never leaves secure hardware | Keychain, readable after first unlock, this device only, never synced to iCloud |
 | The phone key (P-256) | Wrapped by the Keystore, like the room keys | Created inside the Secure Enclave, which never releases the private half |
 | Randomness | `java.security.SecureRandom` | `SecRandomCopyBytes` and CryptoKit's generator |
@@ -291,14 +291,19 @@ Paths are under `ios/Packages/FirepitKit/Sources/FirepitData/`.
   which have no Enclave, use a software key.)
 - `FirepitDatabase.swift` — the database
 
-**The database relies on iOS file encryption, not SQLCipher.** Its folder and
-files use the Data Protection class `completeUntilFirstUserAuthentication`:
-encrypted by keys the Secure Enclave holds until the phone is first unlocked
-after a restart, readable afterwards. That keeps Android's promise that
-messages arrive in a pocket, since iOS may wake the app for Bluetooth while the
-phone is locked. What it lacks is Android's second layer: a copy of the files
-taken *after* the first unlock is readable. Adding SQLCipher would close this
-gap. It is the main open security item for iOS.
+**The database is encrypted with SQLCipher,** as Android's is (Stage 11, Phase 5).
+The key is 32 random bytes kept in the Keychain as `AfterFirstUnlockThisDeviceOnly`
+and handed to SQLCipher in its raw form, so no password stretching runs on each
+open. A copy of the files taken from the phone is noise without it. Usable while
+the phone is locked after its first unlock, which keeps Android's promise that
+messages arrive in a pocket, since iOS may wake the app for Bluetooth then.
+Underneath, the folder and files still use the Data Protection class
+`completeUntilFirstUserAuthentication`. A database from before this build is
+copied into an encrypted one with `sqlcipher_export` the first time the new build
+opens it, keeping every row. GRDB is built on SQLCipher from a local copy
+(`ios/Packages/GRDB-SQLCipher`), following GRDB's own instructions.
+`DatabaseEncryptionTests` holds it: the file is not readable SQLite, the same key
+reopens it, another key cannot, and an old database keeps its rows.
 
 **Backups.** The database folder is excluded from iCloud and device backups,
 and Keychain items marked "this device only" never restore onto another phone.
@@ -823,7 +828,7 @@ how each phone protects what it holds:
 
 | Area | Android | iPhone |
 |---|---|---|
-| Database at rest | SQLCipher under a Keystore-wrapped key; a copy of the files is noise | iOS file encryption only; a copy taken after the first unlock is readable (§4) |
+| Database at rest | SQLCipher under a Keystore-wrapped key; a copy of the files is noise | SQLCipher under a Keychain key; a copy of the files is noise (§4) |
 | Keys | Wrapped by the Keystore; the phone key too | Keychain, this device only; the phone key inside the Secure Enclave |
 | Backups | None | Database excluded; keys never restore elsewhere; settings included |
 | Reinstall | Removes everything | Keychain items survive and are found again |

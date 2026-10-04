@@ -879,9 +879,9 @@ reference: when the two disagree, Android's code decides.
 
 ### Where it differs
 
-What iOS allows differs from Android in places: screenshots cannot be blocked, the database has iOS
-file encryption rather than SQLCipher, the Keychain survives a reinstall, and there is no keyboard
-learning switch. `architecture.md` §10 and `security.md` §11 list them all.
+What iOS allows differs from Android in places: screenshots cannot be blocked, the Keychain survives
+a reinstall, and there is no keyboard learning switch. (The database used to have iOS file encryption
+only; since Stage 11 Phase 5 it is SQLCipher, as on Android.) `architecture.md` §10 and `security.md` §11 list them all.
 
 ---
 
@@ -925,6 +925,13 @@ random bytes are far more than a nonce needs.
    locked out at the next change. A contact's phone key changing raises an alert.
 5. **Phone storage.** The iPhone's database is encrypted with SQLCipher, as on Android, and key material is
    wiped from memory where the platforms allow.
+   - **Done 2026-10-04.** GRDB 7.11.1 is built on SQLCipher 4.19 from a local copy
+     (`ios/Packages/GRDB-SQLCipher`, following GRDB's own "GRDB+SQLCipher" instructions). The key is 32
+     random bytes in the Keychain (`AfterFirstUnlockThisDeviceOnly`), given to SQLCipher raw (`x'…'`), and
+     the bytes read from the Keychain are wiped once the key is formed. An old unencrypted database is
+     exported into an encrypted one on first open, keeping every row; checked on a simulator with a
+     database written by the previous build. `DatabaseEncryptionTests`, and every FirepitKit test now
+     runs on SQLCipher. Swift cannot promise a wiped `String`, so the key never becomes one.
 6. **Proof of sender, within the limits.** Meshtastic 2.8 radio signatures are shown per message, at no cost
    to the message. Phone keys learned in person always win over later announcements, which closes the gap
    where a member could name a false key for someone else.

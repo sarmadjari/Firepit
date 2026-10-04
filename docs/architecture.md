@@ -206,7 +206,7 @@ Same features, screens, wording and encryption. These differences come from what
 | Keyboard learning | Turned off in every text field | No such switch exists on iOS |
 | Running in the background | A foreground service keeps the radio connected, with a notification | iOS wakes the app for the radio when it decides to |
 | Bluetooth pairings | Lists radios the phone has paired | iOS does not show apps the phone's pairings; only radios Firepit found are listed |
-| Message database at rest | Encrypted with SQLCipher under a key the Keystore protects | Protected by iOS file encryption, which opens after the first unlock following a restart. Adding SQLCipher would match Android. |
+| Message database at rest | Encrypted with SQLCipher under a key the Keystore protects | Encrypted with SQLCipher under a key in the Keychain, over iOS file encryption |
 | Reinstalling | Uninstalling wipes everything | iOS keeps the Keychain, so the phone key and room keys survive a reinstall |
 | Large screens | Chat and map side by side from 600 dp wide, three panes from 1200, map above conversation when half-folded across the screen; the divider locks to a fold (UX §6.11) | The same rule on iPhone and iPad, now one universal app. The iOS 27.0 SDK reports no fold, so the divider never locks and nothing stacks until the iOS 27.1 SDK. Settings opens as a sheet, and sheets on iPad are the system's form sheets rather than kept to one pane |
 | Reading state | Leaving a chat keeps it selected (counted as read) | Leaving a chat stops counting it as read |
@@ -221,7 +221,7 @@ Same features, screens, wording and encryption. These differences come from what
 | Minimum OS | Android 10 (API 29) | iOS 17, iPhone |
 | Protobufs | Wire 7.1 | SwiftProtobuf 1.38.1 |
 | Bluetooth | Kable 0.45 | CoreBluetooth |
-| Database | Room 2.8 + SQLCipher 4.19 | GRDB 7.11 |
+| Database | Room 2.8 + SQLCipher 4.19 | GRDB 7.11 on SQLCipher 4.19 (`Packages/GRDB-SQLCipher`) |
 | Cryptography | Platform (JCA), Android Keystore | CryptoKit, Keychain, Secure Enclave |
 | Map | MapLibre Android 13.6 | MapLibre Native 6.31 |
 | QR codes | ZXing, CameraX | CoreImage, AVFoundation |
