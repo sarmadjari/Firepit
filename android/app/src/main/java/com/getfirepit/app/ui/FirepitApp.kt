@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.getfirepit.app.chat.ChatsPane
+import com.getfirepit.app.map.Following
 import com.getfirepit.app.map.MapScreen
 import com.getfirepit.app.settings.SettingsScreen
 import com.getfirepit.app.settings.SettingsSection
@@ -149,6 +150,9 @@ fun FirepitApp(
         }
     }
 
+    // What the chat side has open, which the map follows while both are on screen (UX §6.11.6).
+    var openConversation by remember { mutableStateOf<Following?>(null) }
+
     val chats = remember {
         movableContentOf { directive: PaneScaffoldDirective ->
             ChatsPane(
@@ -158,6 +162,8 @@ fun FirepitApp(
                 backEnabled = !splitNow || lastTouched == Side.CHAT,
                 searchAsked = chatsSearch,
                 onSearchTaken = { chatsSearch = false },
+                besideMap = splitNow,
+                onOpenConversationChange = { openConversation = it },
                 openTarget = chatTarget,
                 onTargetOpened = { chatTarget = null },
             )
@@ -167,6 +173,10 @@ fun FirepitApp(
         movableContentOf { insetBottom: Boolean ->
             MapScreen(
                 insetBottom = insetBottom,
+                following = openConversation.takeIf { splitNow },
+                // Either one opens on the chat side, or switches to Chats in one pane.
+                onMessage = { peer -> chatTarget = ChatTarget.Direct(peer) },
+                onOpenRoom = { index -> chatTarget = ChatTarget.Channel(index) },
                 onBack = { selected = TopLevelDestination.CHATS },
                 onOpenOfflineAreas = {
                     settingsSection = SettingsSection.OFFLINE_MAPS

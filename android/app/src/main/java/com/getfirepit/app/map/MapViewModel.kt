@@ -19,6 +19,7 @@ import com.getfirepit.core.protocol.NodeRole
 import com.getfirepit.core.protocol.PositionSharing
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import com.getfirepit.app.radio.SavedRadioStore
 import com.getfirepit.app.settings.PersonStore
@@ -26,12 +27,16 @@ import com.getfirepit.core.protocol.Person
 import com.getfirepit.core.protocol.SavedRadio
 import com.getfirepit.core.protocol.SavedRadios
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.maplibre.android.camera.CameraPosition
@@ -102,6 +107,18 @@ enum class MapFilter(val label: String) {
     OURS("Our nodes"),
 }
 
+/**
+ * The conversation open beside the map, which the map follows (UX §6.11.6).
+ * Only set while both sides are on screen.
+ */
+sealed interface Following {
+    val name: String
+
+    data class Room(val roomId: Int, override val name: String) : Following
+
+    data class Direct(val nodeNum: Int, override val name: String) : Following
+}
+
 data class MapUiState(
     val connected: Boolean = false,
     val markers: List<MapMarker> = emptyList(),
@@ -112,7 +129,11 @@ data class MapUiState(
     /** Everyone in a room with us, which is everyone we have a private way to ask. */
     val roomMembers: Set<Int> = emptySet(),
     val filter: MapFilter = MapFilter.ALL,
-    /** How many were left out by [filter], so a thinned map says so. */
+    /** The conversation beside the map, when there is one, followed or not. */
+    val followable: Following? = null,
+    /** What the map is following now: [followable], unless the user stopped. */
+    val following: Following? = null,
+    /** How many were left out by [filter] or [following], so a thinned map says so. */
     val hiddenByFilter: Int = 0,
     val busy: Boolean = false,
     val error: String? = null,
@@ -135,6 +156,10 @@ class MapViewModel @Inject constructor(
     private val busy = MutableStateFlow(false)
     private val error = MutableStateFlow<String?>(null)
     private val filter = MutableStateFlow(MapFilter.ALL)
+    private val followable = MutableStateFlow<Following?>(null)
+
+    /** Following stopped for this conversation; opening another starts it again. */
+    private val stoppedFollowing = MutableStateFlow<Following?>(null)
     private val savedAreas = MutableStateFlow<List<OfflineArea>>(emptyList())
 
     init {
@@ -267,16 +292,32 @@ class MapViewModel @Inject constructor(
         }
     }
 
+    /** Who the map is following and their node numbers, or null when it is not following. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val followed: Flow<Followed?> = combine(followable, stoppedFollowing, MapSelection::followed)
+        .flatMapLatest { target ->
+        when (target) {
+            null -> flowOf(null)
+            is Following.Room -> rooms.observeMembers(target.roomId)
+                .map { members -> Followed(target, members.mapTo(HashSet()) { it.nodeNum }) }
+            is Following.Direct -> flowOf(Followed(target, setOf(target.nodeNum)))
+        }
+    }
+
     val uiState: StateFlow<MapUiState> = combine(
         combine(
-            mesh.isConnected,
-            filter,
-            rooms.observeGroupNodes(),
-            rooms.observePersonCards(),
-            ticker,
-        ) { connected, filter, group, cards, now ->
-            Lens(connected, filter, group, cards, now)
-        },
+            combine(
+                mesh.isConnected,
+                filter,
+                rooms.observeGroupNodes(),
+                rooms.observePersonCards(),
+                ticker,
+            ) { connected, filter, group, cards, now ->
+                Lens(connected, filter, group, cards, now)
+            },
+            followable,
+            followed,
+        ) { lens, open, followed -> lens.copy(followable = open, followed = followed) },
         location.observePositions(),
         mesh.channels,
         mesh.myNodeNum,
@@ -297,10 +338,9 @@ class MapViewModel @Inject constructor(
             aside.radios.mapNotNullTo(this) { it.nodeNum }
         }
         val onMap = nodes.filterNot { it.nodeNum in hidden }
-        val shown = when (lens.filter) {
-            MapFilter.ALL -> onMap
-            MapFilter.OURS -> onMap.filter { it.nodeNum in ours }
-        }
+        val followed = lens.followed
+        val shown = MapSelection.nodes(onMap, followed, lens.filter, ours, myNodeNum)
+        val pins = MapSelection.pins(aside.pins, followed?.target)
         MapUiState(
             connected = lens.connected,
             markers = shown.map { node ->
@@ -338,12 +378,14 @@ class MapViewModel @Inject constructor(
                     fixAgeMinutes = fixAge,
                 )
             },
-            pins = aside.pins,
+            pins = pins,
             rooms = ChannelSlotManager.rooms(channels),
             sharingRoomId = location.sharingRoomId(),
             myNodeNum = myNodeNum,
             roomMembers = lens.group,
             filter = lens.filter,
+            followable = lens.followable,
+            following = followed?.target,
             hiddenByFilter = onMap.size - shown.size,
             busy = aside.busy,
             error = aside.error,
@@ -352,6 +394,20 @@ class MapViewModel @Inject constructor(
 
     fun setFilter(choice: MapFilter) {
         filter.value = choice
+        // Choosing what to show is choosing not to follow, until another
+        // conversation is opened.
+        stoppedFollowing.value = followable.value
+    }
+
+    /** The conversation now beside the map, or null when there is none or the map is alone. */
+    fun follow(target: Following?) {
+        if (target == followable.value) return
+        followable.value = target
+        stoppedFollowing.value = null
+    }
+
+    fun resumeFollowing() {
+        stoppedFollowing.value = null
     }
 
     /**
@@ -365,8 +421,7 @@ class MapViewModel @Inject constructor(
     fun dropPin(latitudeI: Int, longitudeI: Int, name: String) {
         val state = uiState.value
         val shareable = state.rooms.filter(PositionSharing::canShare)
-        val room = shareable.firstOrNull { it.id == state.sharingRoomId }
-            ?: shareable.singleOrNull()
+        val room = MapSelection.pinRoom(shareable, state.followable, state.sharingRoomId)
 
         if (room == null) {
             error.value = if (shareable.isEmpty()) {
@@ -437,4 +492,46 @@ private data class Lens(
     val group: Set<Int>,
     val cards: Map<Int, PersonCard>,
     val now: Long,
+    val followable: Following? = null,
+    val followed: Followed? = null,
 )
+
+/** A followed conversation and the nodes it puts on the map. */
+internal data class Followed(val target: Following, val nodes: Set<Int>)
+
+/** What the map draws and where a pin goes, kept pure so it can be tested (UX §6.11.6). */
+internal object MapSelection {
+
+    /** The open conversation, unless following was stopped for that very one. */
+    fun followed(open: Following?, stopped: Following?): Following? = open.takeIf { it != stopped }
+
+    /** The followed conversation's people and always you; otherwise the chosen filter. */
+    fun nodes(
+        onMap: List<MeshNode>,
+        followed: Followed?,
+        filter: MapFilter,
+        ours: Set<Int>,
+        myNodeNum: Int?,
+    ): List<MeshNode> = when {
+        followed != null -> onMap.filter { it.nodeNum in followed.nodes || it.nodeNum == myNodeNum }
+        filter == MapFilter.ALL -> onMap
+        else -> onMap.filter { it.nodeNum in ours }
+    }
+
+    /** A followed room's own pins, none for a direct chat, and every pin otherwise. */
+    fun pins(pins: List<MapPin>, following: Following?): List<MapPin> = when (following) {
+        null -> pins
+        is Following.Room -> pins.filter { it.roomId == following.roomId }
+        is Following.Direct -> emptyList()
+    }
+
+    /**
+     * The room a dropped pin goes to: the one open beside the map, then the one
+     * your location is shared with, then the only one there is. Null rather
+     * than a guess.
+     */
+    fun pinRoom(shareable: List<RoomChannel>, open: Following?, sharingRoomId: Int?): RoomChannel? =
+        shareable.firstOrNull { it.id == (open as? Following.Room)?.roomId }
+            ?: shareable.firstOrNull { it.id == sharingRoomId }
+            ?: shareable.singleOrNull()
+}

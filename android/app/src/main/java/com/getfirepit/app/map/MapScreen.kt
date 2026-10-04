@@ -14,6 +14,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -105,6 +106,12 @@ fun MapScreen(
     modifier: Modifier = Modifier,
     /** No navigation bar sits under the map, so its bottom strip clears the gesture bar itself. */
     insetBottom: Boolean = false,
+    /** The conversation open beside the map, which it follows (UX §6.11.6). Null when the map is alone. */
+    following: Following? = null,
+    /** Opens a direct chat with somebody on the map. */
+    onMessage: ((nodeNum: Int) -> Unit)? = null,
+    /** Opens a room's conversation, by the slot it sits in. */
+    onOpenRoom: ((channelIndex: Int) -> Unit)? = null,
     onBack: () -> Unit = {},
     onOpenOfflineAreas: () -> Unit = {},
     viewModel: MapViewModel = hiltViewModel(),
@@ -154,6 +161,8 @@ fun MapScreen(
 
     // Held so redraws reuse one manager: a new one per update would stack
     // annotation layers on the style until the map stopped drawing.
+    LaunchedEffect(following) { viewModel.follow(following) }
+
     val markerLayer = remember { MarkerLayer() }
     val coverageMask = remember { CoverageMask() }
     var hasFramedMarkers by viewModel::framed
@@ -321,6 +330,7 @@ fun MapScreen(
             state = state,
             onDismiss = { showingOptions = false },
             onFilter = viewModel::setFilter,
+            onFollow = viewModel::resumeFollowing,
             onShare = {
                 showingOptions = false
                 pickingRoom = true
@@ -347,6 +357,7 @@ fun MapScreen(
     if (pickingRoom) {
         ShareLocationSheet(
             state = sharing,
+            preferredRoomId = (following as? Following.Room)?.roomId,
             onDismiss = { pickingRoom = false },
             onStop = {
                 pickingRoom = false
@@ -384,8 +395,20 @@ fun MapScreen(
     }
 
     openPin?.let { pin ->
+        // Older pins predate the room id and know only their slot.
+        val room = state.rooms.firstOrNull { it.id == pin.roomId && pin.roomId != 0 }
+            ?: state.rooms.firstOrNull { it.index == pin.channel && it.isRoom }
         PinSheet(
             pin = pin,
+            roomName = room?.displayName,
+            onOpenRoom = room?.let { found ->
+                onOpenRoom?.let { open ->
+                    {
+                        openPin = null
+                        open(found.index)
+                    }
+                }
+            },
             canRemove = pin.canEdit(state.myNodeNum),
             onRemove = {
                 viewModel.removePin(pin)
@@ -400,6 +423,13 @@ fun MapScreen(
             marker = marker,
             ask = ask,
             onAsk = { viewModel.askWhereTheyAre(marker.node.nodeNum, marker.name) },
+            onMessage = onMessage?.let { message ->
+                {
+                    openMarker = null
+                    viewModel.clearAsk()
+                    message(marker.node.nodeNum)
+                }
+            },
             onDismiss = {
                 openMarker = null
                 viewModel.clearAsk()
@@ -421,6 +451,7 @@ private fun PersonSheet(
     marker: MapMarker,
     ask: LocationAsk,
     onAsk: () -> Unit,
+    onMessage: (() -> Unit)?,
     onDismiss: () -> Unit,
 ) {
     val asking = ask is LocationAsk.Asking && ask.nodeNum == marker.node.nodeNum
@@ -460,7 +491,10 @@ private fun PersonSheet(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Close") }
+            Row {
+                onMessage?.let { TextButton(onClick = it) { Text("Message") } }
+                TextButton(onClick = onDismiss) { Text("Close") }
+            }
         },
     )
 }
@@ -506,7 +540,14 @@ private fun DropPinDialog(onDismiss: () -> Unit, onDrop: (String) -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PinSheet(pin: MapPin, canRemove: Boolean, onRemove: () -> Unit, onDismiss: () -> Unit) {
+private fun PinSheet(
+    pin: MapPin,
+    roomName: String?,
+    onOpenRoom: (() -> Unit)?,
+    canRemove: Boolean,
+    onRemove: () -> Unit,
+    onDismiss: () -> Unit,
+) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         modifier = Modifier.withinPane(),
@@ -529,6 +570,9 @@ private fun PinSheet(pin: MapPin, canRemove: Boolean, onRemove: () -> Unit, onDi
                 style = MaterialTheme.typography.bodySmall,
                 color = FirepitTheme.colors.textSecondary,
             )
+            if (roomName != null && onOpenRoom != null) {
+                TextButton(onClick = onOpenRoom) { Text("Open $roomName") }
+            }
 
             if (canRemove) {
                 TextButton(onClick = onRemove) { Text("Remove for everyone") }
@@ -576,6 +620,7 @@ private fun MapOptionsSheet(
     state: MapUiState,
     onDismiss: () -> Unit,
     onFilter: (MapFilter) -> Unit,
+    onFollow: () -> Unit,
     onShare: () -> Unit,
     onCentre: () -> Unit,
     onAskEveryone: () -> Unit,
@@ -608,20 +653,35 @@ private fun MapOptionsSheet(
             verticalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
         ) {
             SectionLabel("Show")
-            Row(horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
+            Row(
+                // Following a long room name can push the other two past the edge of a narrow map side.
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
+            ) {
+                state.followable?.let { open ->
+                    FirepitChip(
+                        label = "Following ${open.name}",
+                        selected = state.following != null,
+                        onClick = onFollow,
+                    )
+                }
                 MapFilter.entries.forEach { choice ->
                     FirepitChip(
                         label = choice.label,
-                        selected = state.filter == choice,
+                        selected = state.following == null && state.filter == choice,
                         onClick = { onFilter(choice) },
                     )
                 }
             }
+            val hidden = state.hiddenByFilter.takeIf { it > 0 }?.let { " $it hidden." }.orEmpty()
             Text(
-                text = when (state.filter) {
-                    MapFilter.ALL -> "Everyone this radio has heard."
-                    MapFilter.OURS -> "Your rooms and your own hardware." +
-                        state.hiddenByFilter.takeIf { it > 0 }?.let { " $it hidden." }.orEmpty()
+                text = when (val following = state.following) {
+                    is Following.Room -> "${following.name}'s members and pins.$hidden"
+                    is Following.Direct -> "${following.name} and you.$hidden"
+                    null -> when (state.filter) {
+                        MapFilter.ALL -> "Everyone this radio has heard."
+                        MapFilter.OURS -> "Your rooms and your own hardware.$hidden"
+                    }
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = FirepitTheme.colors.textSecondary,
@@ -829,6 +889,8 @@ private fun mapTally(state: MapUiState): String {
     // Sharing is not named here: the banner directly above says which room and
     // how long is left, and saying it twice in two lines reads as two things.
     return buildList {
+        // Says why the map is thinner than usual while a conversation sits beside it.
+        state.following?.let { add("Following ${it.name}") }
         add(if (people == 1) "1 person" else "$people people")
         if (live > 0) add("$live live")
         if (state.pins.isNotEmpty()) {

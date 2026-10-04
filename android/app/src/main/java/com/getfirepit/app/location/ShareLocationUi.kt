@@ -21,6 +21,7 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -39,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import com.getfirepit.core.designsystem.adaptive.paneSheetMaxWidth
 import com.getfirepit.core.designsystem.adaptive.withinPane
 import com.getfirepit.core.designsystem.component.FirepitIcons
+import com.getfirepit.core.designsystem.component.LiveRing
 import com.getfirepit.core.designsystem.theme.FirepitSpacing
 import com.getfirepit.core.designsystem.theme.FirepitTheme
 import com.getfirepit.core.designsystem.theme.SheetShape
@@ -215,9 +217,15 @@ fun ShareLocationSheet(
     onDismiss: () -> Unit,
     onShare: (roomId: Int, choice: ShareDuration) -> Unit,
     onStop: () -> Unit,
+    /** The room open beside the map, offered first when nothing is being shared yet (UX §6.11.6). */
+    preferredRoomId: Int? = null,
 ) {
-    var room by remember(state.roomId, state.rooms) {
-        mutableStateOf(state.roomId ?: state.rooms.firstOrNull()?.id)
+    var room by remember(state.roomId, state.rooms, preferredRoomId) {
+        mutableStateOf(
+            state.roomId
+                ?: preferredRoomId?.takeIf { id -> state.rooms.any { it.id == id } }
+                ?: state.rooms.firstOrNull()?.id,
+        )
     }
     var choice by remember(state.choice) { mutableStateOf(state.choice) }
 
@@ -367,6 +375,46 @@ private fun PickerRow(label: String, selected: Boolean, onSelect: () -> Unit) {
 internal fun plainListColours() = ListItemDefaults.colors(containerColor = FirepitTheme.colors.surface2)
 
 private val TICK = 30.seconds
+
+/**
+ * "Sharing · 43m left", under the header of the conversation whose room gets
+ * your location, while the map sits beside it (UX §6.11.6).
+ */
+@Composable
+fun SharingChip(state: SharingUiState, modifier: Modifier = Modifier) {
+    val endsAt = state.endsAt
+    val text = when {
+        state.paused -> "Sharing paused"
+        endsAt == null -> "Sharing until you turn it off"
+        else -> {
+            val remaining by produceState(initialValue = timeLeft(endsAt), endsAt) {
+                while (true) {
+                    value = timeLeft(endsAt)
+                    delay(TICK)
+                }
+            }
+            "Sharing · $remaining"
+        }
+    }
+    Surface(
+        shape = RoundedCornerShape(FirepitSpacing.chipCorner),
+        color = FirepitTheme.colors.surface2,
+        modifier = modifier,
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
+            modifier = Modifier.padding(horizontal = FirepitSpacing.s, vertical = FirepitSpacing.xs),
+        ) {
+            LiveRing(size = 8.dp, live = !state.paused)
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodySmall,
+                color = FirepitTheme.colors.textSecondary,
+            )
+        }
+    }
+}
 
 private fun timeLeft(endsAt: Long): String {
     val remaining = endsAt - System.currentTimeMillis()

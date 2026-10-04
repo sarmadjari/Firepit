@@ -650,6 +650,13 @@ When only the arrangement changes, the map is moved, not rebuilt, so no tiles re
 
 **While sharing:** the chat side's header shows a small "Sharing · 43 min" chip in the room being shared to; the share pill stays on the map side.
 
+**As built so far (Android, 2026-10-04):**
+- **What can be followed:** Firepit rooms, whose members the phone knows, and direct chats. A Meshtastic channel has no member list, so beside one the map keeps the filter last chosen.
+- **Where "Following Camp" shows:** it is the first of the map's Show chips, and it starts the line at the bottom of the map ("Following Camp · 3 people · 1 live"). A chip floating at the top would collide with Show everyone on a map side only 280 wide.
+- **Map to chat:** the person card has Message. A pin's sheet has "Open Camp", which opens the pin's room. Pins do not arrive as messages, so there is no message to scroll to.
+- **Chat to map:** these rows wait for the features they depend on. Location cards, messages that drop a pin, a member sheet and a menu on the sender's name do not exist yet. Until then, opening a direct chat beside the map is how to find that person.
+- **The Sharing chip** sits on its own line just under the conversation's header, because the header has no room for a third line.
+
 #### 6.11.7 Navigation with two panes
 
 - **No bottom bar, tab bar or rail** while two or three panes show. The places it switches between are already on screen, and a rail would take about 80 that a folding phone's inner screen cannot spare: on an 8″ inner screen split on the fold, it can push the chat side below the 320 floor.

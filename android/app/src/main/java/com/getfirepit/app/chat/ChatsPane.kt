@@ -55,6 +55,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.layout.AnimatedPane
 import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldRole
+import androidx.compose.material3.adaptive.layout.PaneAdaptedValue
 import androidx.compose.material3.adaptive.layout.PaneScaffoldDirective
 import androidx.compose.material3.adaptive.navigation.NavigableListDetailPaneScaffold
 import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaffoldNavigator
@@ -90,6 +91,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.getfirepit.app.location.SharingChip
+import com.getfirepit.app.location.SharingViewModel
+import com.getfirepit.app.map.Following
 import com.getfirepit.app.ui.ChatTarget
 import com.getfirepit.app.rooms.CreateRoomDialog
 import com.getfirepit.app.rooms.MakeRadioPrivateDialog
@@ -152,6 +156,10 @@ fun ChatsPane(
     /** Ctrl+F asked for a search: the open room's, or the selected one's. Cleared once taken. */
     searchAsked: Boolean = false,
     onSearchTaken: () -> Unit = {},
+    /** The map sits beside the chat, so the conversation can say what it shares with it. */
+    besideMap: Boolean = false,
+    /** The conversation now open, which the map beside it follows (UX §6.11.6); null with only the list showing. */
+    onOpenConversationChange: (Following?) -> Unit = {},
     /** A conversation asked for from outside Chats; opened once, then handed back through [onTargetOpened]. */
     openTarget: ChatTarget? = null,
     onTargetOpened: () -> Unit = {},
@@ -202,6 +210,18 @@ fun ChatsPane(
     // Both the QR screens want the whole display, same as an open chat does.
     LaunchedEffect(chatCoversList, overlay) { onChatOpenChange(chatCoversList || overlay != null) }
     LaunchedEffect(overlay) { onWholeWindowChange(overlay == RoomsOverlay.Join) }
+
+    // Only a Firepit room has a roster to follow: a Meshtastic channel would
+    // leave nobody but you on the map.
+    val detailShowing = navigator.scaffoldValue[ListDetailPaneScaffoldRole.Detail] == PaneAdaptedValue.Expanded
+    val openConversation: Following? = when {
+        !detailShowing -> null
+        else -> state.directPeer?.let { peer -> Following.Direct(peer, state.nameOf(peer)) }
+            ?: state.selectedChannel
+                ?.takeIf { it.isRoom && it.kind.isPrivate }
+                ?.let { channel -> Following.Room(channel.id, channel.displayName) }
+    }
+    LaunchedEffect(openConversation) { onOpenConversationChange(openConversation) }
 
     overlay?.let { current ->
         val dismiss = {
@@ -351,6 +371,7 @@ fun ChatsPane(
                         onBack = back,
                         startSearch = searchOnOpen,
                         onSearchStarted = { searchOnOpen = false },
+                        besideMap = besideMap,
                         // Firepit issues its own invites and no others: they
                         // carry a room key the Meshtastic link format cannot.
                         onInvite = if (channel.kind == RoomKind.FIREPIT) {
@@ -932,8 +953,11 @@ private fun ChannelChat(
     memberCount: Int?,
     startSearch: Boolean = false,
     onSearchStarted: () -> Unit = {},
+    besideMap: Boolean = false,
 ) {
     val receipts by viewModel.receiptsOnScreen.collectAsStateWithLifecycle()
+    val sharingViewModel: SharingViewModel = hiltViewModel()
+    val sharing by sharingViewModel.state.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var searching by rememberSaveable(channel.index) { mutableStateOf(false) }
@@ -1037,6 +1061,15 @@ private fun ChannelChat(
                 .padding(padding)
                 .fillMaxSize(),
         ) {
+            // The map beside it shows the pill; this says which conversation
+            // the location goes to, where the people reading it are.
+            if (besideMap && sharing.roomId == channel.id) {
+                SharingChip(
+                    state = sharing,
+                    modifier = Modifier.padding(horizontal = FirepitSpacing.screenMargin, vertical = FirepitSpacing.xs),
+                )
+            }
+
             val visible = state.visibleMessages
 
             if (state.isSearching && visible.isEmpty()) {

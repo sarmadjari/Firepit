@@ -1081,6 +1081,15 @@ The design is UX §6.11; this is how it gets built.
    - **Map side:** Message opens the direct chat on the chat side; pins and sharing default to the open
      room; Show in chat on a pin.
    - **On a phone,** the same actions switch to the Map tab with the focus applied.
+   - **Built on Android (2026-10-04):**
+     - The map follows the open Firepit room or direct chat while both sides are on screen. Choosing a
+       filter stops following, and opening another conversation starts it again.
+     - Message on the person card, Open the room on a pin, and pins and sharing defaulting to the open room.
+     - The Sharing chip under the conversation's header.
+     - The selection rules are a pure `MapSelection`, tested in `MapSelectionTest`.
+     - The shell passes all of it as parameters; no shared singleton holds it.
+     - **Not built:** the chat-to-map actions, which need location cards, pin messages, a member sheet
+       and a sender menu that do not exist yet (UX §6.11.6).
 5. **Continuity and resilience (both).** Every row of UX §6.11.5 becomes a test: fold and unfold in the
    middle of typing, scrolling, with each sheet open and during a QR scan; rotation; resizing across
    each threshold; and the app being closed by the system in the background.
