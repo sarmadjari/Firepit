@@ -54,10 +54,12 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.layout.AnimatedPane
+import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffold
 import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldRole
 import androidx.compose.material3.adaptive.layout.PaneAdaptedValue
 import androidx.compose.material3.adaptive.layout.PaneScaffoldDirective
-import androidx.compose.material3.adaptive.navigation.NavigableListDetailPaneScaffold
+import androidx.compose.material3.adaptive.navigation.BackNavigationBehavior
+import androidx.compose.material3.adaptive.navigation.ThreePaneScaffoldPredictiveBackHandler
 import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaffoldNavigator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -228,7 +230,8 @@ fun ChatsPane(
             overlay = null
             roomsViewModel.clearMessages()
         }
-        BackHandler(onBack = dismiss)
+        // Scanning takes the whole window, so its back is always the chat side's.
+        BackHandler(enabled = backEnabled || current == RoomsOverlay.Join, onBack = dismiss)
         when (current) {
             is RoomsOverlay.Invite -> InviteScreen(
                 roomId = current.roomId,
@@ -297,12 +300,15 @@ fun ChatsPane(
         }
     }
 
-    BackHandler(enabled = backEnabled && chatCoversList) {
-        scope.launch { navigator.navigateBack() }
+    // The scaffold's own predictive back, registered only while back is this
+    // side's: the navigable scaffold always registers it, map touched last or not.
+    if (backEnabled) {
+        ThreePaneScaffoldPredictiveBackHandler(navigator, BackNavigationBehavior.PopUntilScaffoldValueChange)
     }
 
-    NavigableListDetailPaneScaffold(
-        navigator = navigator,
+    ListDetailPaneScaffold(
+        directive = navigator.scaffoldDirective,
+        scaffoldState = navigator.scaffoldState,
         modifier = modifier,
         listPane = {
             // Beside the conversation the list keeps to its own width (UX §9.3);

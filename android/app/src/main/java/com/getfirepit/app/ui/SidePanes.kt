@@ -1,6 +1,7 @@
 package com.getfirepit.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -30,8 +31,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -40,6 +43,8 @@ import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.isTraversalGroup
+import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -73,6 +78,8 @@ fun SidePanes(
     layout: PaneLayout.SideBySide,
     window: WindowShape,
     chatWholeWindow: Boolean,
+    /** The chat side's minimum at the current text size, which a released divider must respect. */
+    chatMin: Float,
     chat: @Composable () -> Unit,
     map: @Composable () -> Unit,
     onSettle: (DividerSettle) -> Unit,
@@ -107,8 +114,9 @@ fun SidePanes(
                     .fillMaxSize()
                     .within(mapBounds)
                     .consumeWindowInsets(innerEdge(atStart = !chatFirst))
+                    .region("Map")
                     // Out of reach while the conversation covers it.
-                    .then(if (chatWholeWindow) Modifier.clearAndSetSemantics {} else Modifier)
+                    .outOfReach(chatWholeWindow)
                     .touched { onTouched(Side.MAP) },
             ) { map() }
         }
@@ -130,6 +138,7 @@ fun SidePanes(
                     .within(chatBounds)
                     .consumeWindowInsets(if (chatWholeWindow) WindowInsets(0) else innerEdge(atStart = chatFirst))
                     .imePadding()
+                    .region("Chat")
                     .touched { onTouched(Side.CHAT) },
             ) { chat() }
         }
@@ -144,7 +153,7 @@ fun SidePanes(
                 )
             }
             if (!layout.dividerLocked) {
-                DividerHandle(layout, window, chatFirst, startWidth, onSettle, onReset, onSwapSides)
+                DividerHandle(layout, window, chatMin, chatFirst, startWidth, onSettle, onReset, onSwapSides)
             }
         }
     }
@@ -168,6 +177,7 @@ private fun Modifier.within(bounds: PaneBounds): Modifier = padding(
 private fun DividerHandle(
     layout: PaneLayout.SideBySide,
     window: WindowShape,
+    chatMin: Float,
     chatFirst: Boolean,
     startWidth: Float,
     onSettle: (DividerSettle) -> Unit,
@@ -179,6 +189,7 @@ private fun DividerHandle(
     val haptics = LocalHapticFeedback.current
     val currentLayout by rememberUpdatedState(layout)
     val currentWindow by rememberUpdatedState(window)
+    val currentChatMin by rememberUpdatedState(chatMin)
     val settle by rememberUpdatedState(onSettle)
     // The chat side's width the divider would leave if let go now; null while untouched.
     var dragging by remember { mutableStateOf<Float?>(null) }
@@ -198,7 +209,7 @@ private fun DividerHandle(
                     onDragEnd = {
                         dragging?.let { chatWidth ->
                             haptics.performHapticFeedback(HapticFeedbackType.GestureEnd)
-                            settle(PaneLayouts.settle(chatWidth, currentWindow, currentLayout))
+                            settle(PaneLayouts.settle(chatWidth, currentWindow, currentLayout, currentChatMin))
                         }
                         dragging = null
                     },
@@ -283,7 +294,8 @@ fun StackedPanes(
                     .fillMaxWidth()
                     .height(layout.mapHeight.dp)
                     .consumeWindowInsets(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
-                    .then(if (chatWholeWindow) Modifier.clearAndSetSemantics {} else Modifier)
+                    .region("Map")
+                    .outOfReach(chatWholeWindow)
                     .touched { onTouched(Side.MAP) },
             ) { map() }
             if (layout.gap > 0f && !chatWholeWindow) {
@@ -303,20 +315,42 @@ fun StackedPanes(
                         if (chatWholeWindow) WindowInsets(0) else WindowInsets.safeDrawing.only(WindowInsetsSides.Top),
                     )
                     .imePadding()
+                    .region("Chat")
                     .touched { onTouched(Side.CHAT) },
             ) { chat() }
         }
     }
 }
 
+/**
+ * A labelled region that screen readers walk through as one, so focus goes
+ * through one side and then the other, in reading order (UX §6.11.10).
+ */
+private fun Modifier.region(title: String): Modifier = semantics {
+    paneTitle = title
+    isTraversalGroup = true
+}
+
 /** Notes any touch inside without taking it from what sits there. */
 private fun Modifier.touched(onTouch: () -> Unit): Modifier = pointerInput(Unit) {
     awaitPointerEventScope {
         while (true) {
-            awaitPointerEvent(PointerEventPass.Initial)
-            onTouch()
+            // Presses only: a mouse or a hovering pen passing over a side has not used it.
+            if (awaitPointerEvent(PointerEventPass.Initial).type == PointerEventType.Press) onTouch()
         }
     }
+}
+
+/**
+ * Out of reach while something covers it: no screen reader, no focus and so no
+ * keyboard can get in, because the cover is only drawn on top.
+ */
+fun Modifier.outOfReach(covered: Boolean): Modifier = if (covered) {
+    clearAndSetSemantics {}
+        .focusProperties { onEnter = { cancelFocusChange() } }
+        .focusGroup()
+} else {
+    this
 }
 
 /** Wide enough to hit without aiming, overlapping both sides. */

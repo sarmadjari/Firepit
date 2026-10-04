@@ -39,7 +39,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -125,6 +124,11 @@ fun FirepitApp(
 
     val keyboardOpen = WindowInsets.isImeVisible
     val focusManager = LocalFocusManager.current
+    // However Settings came over the panes (⚙, Offline areas, unfolding), a
+    // composer left focused beneath would keep its keyboard and its keys.
+    LaunchedEffect(settingsOverPanes) {
+        if (settingsOverPanes) focusManager.clearFocus()
+    }
     val choice by shell.choice.collectAsStateWithLifecycle()
     val window = currentWindowShape()
     val chatMin = PaneLayouts.chatMinFor(LocalDensity.current.fontScale)
@@ -141,8 +145,12 @@ fun FirepitApp(
             if (selected == TopLevelDestination.SETTINGS) settingsOverPanes = true
         } else if (wasSplit) {
             wasSplit = false
+            // An arrangement chosen on purpose wins over the side touched last:
+            // tapping ◫ in a chat bar to choose Map only is a touch on the chat.
             selected = when {
                 settingsOverPanes -> TopLevelDestination.SETTINGS
+                choice.arrangement == PaneArrangement.MAP_ONLY -> TopLevelDestination.MAP
+                choice.arrangement == PaneArrangement.CHAT_ONLY -> TopLevelDestination.CHATS
                 lastTouched == Side.MAP -> TopLevelDestination.MAP
                 else -> TopLevelDestination.CHATS
             }
@@ -199,11 +207,7 @@ fun FirepitApp(
         },
         onSwapSides = if (layout is PaneLayout.Stacked) null else shell::swapSides,
         onOpenSettings = if (split) {
-            {
-                // A composer left focused beneath would keep its keyboard over Settings.
-                focusManager.clearFocus()
-                settingsOverPanes = true
-            }
+            { settingsOverPanes = true }
         } else {
             null
         },
@@ -240,13 +244,14 @@ fun FirepitApp(
             Box(modifier.fillMaxSize()) {
                 // Settings covers the panes rather than replacing them, so closing
                 // it finds the conversation and the map as they were.
-                val panes = if (settingsOverPanes) Modifier.clearAndSetSemantics {} else Modifier
+                val panes = Modifier.outOfReach(settingsOverPanes)
                 when (layout) {
                     is PaneLayout.SideBySide -> SidePanes(
                         layout = layout,
                         window = window,
                         // Scanning an invite gets the whole window.
                         chatWholeWindow = chatsWholeWindow,
+                        chatMin = chatMin,
                         chat = { chats(chatSideDirective(layout.listBesideConversation)) },
                         map = { map(true) },
                         onSettle = { settle ->
