@@ -31,6 +31,49 @@ class KeyEnvelopeTest {
     }
 
     @Test
+    fun `the hedged derivation has known answers from plain hmac`() {
+        val inviteSecret = ByteArray(InviteCodec.INVITE_SECRET_SIZE) { it.toByte() }
+        val hedge = KeyEnvelope.inviteHedge(inviteSecret, 0x0BADF00D, 0x12345678)
+        val expectedHedge = KeyEnvelope.hmac(
+            inviteSecret,
+            "firepit-invite-hedge-v1".toByteArray() +
+                byteArrayOf(0x0B, 0xAD.toByte(), 0xF0.toByte(), 0x0D) +
+                byteArrayOf(0x12, 0x34, 0x56, 0x78) +
+                byteArrayOf(1),
+        )
+        assertArrayEquals(expectedHedge, hedge)
+
+        val sealed = KeyEnvelope.seal(joinerPublic, roomKey, context, hedge)
+        val ephemeral = sealed.copyOfRange(0, KeyEnvelope.PUBLIC_KEY_SIZE)
+        val shared = KeyEnvelope.agree(joiner.private, requireNotNull(KeyEnvelope.decode(ephemeral)))
+        val prk = KeyEnvelope.hmac(ephemeral + joinerPublic, shared + hedge)
+        val key = KeyEnvelope.hmac(prk, "firepit-key-envelope-v2".toByteArray() + context + byteArrayOf(1))
+
+        assertArrayEquals(roomKey, RoomCipher.open(key, sealed.copyOfRange(KeyEnvelope.PUBLIC_KEY_SIZE, sealed.size), context))
+    }
+
+    @Test
+    fun `a hedged envelope opens only with the invite hedge`() {
+        val hedge = KeyEnvelope.inviteHedge(ByteArray(InviteCodec.INVITE_SECRET_SIZE) { (0x10 + it).toByte() }, 0x0BADF00D, 0x12345678)
+        val wrong = KeyEnvelope.inviteHedge(ByteArray(InviteCodec.INVITE_SECRET_SIZE) { (0x20 + it).toByte() }, 0x0BADF00D, 0x12345678)
+        val sealed = KeyEnvelope.seal(joinerPublic, roomKey, context, hedge)
+
+        assertEquals(KeyEnvelope.SEALED_SIZE, sealed.size)
+        assertArrayEquals(roomKey, KeyEnvelope.open(joiner.private, joinerPublic, sealed, context, hedge))
+        assertNull(KeyEnvelope.open(joiner.private, joinerPublic, sealed, context, wrong))
+        assertNull(KeyEnvelope.open(joiner.private, joinerPublic, sealed, context))
+    }
+
+    @Test
+    fun `a v1 envelope does not open when a hedge is supplied`() {
+        val sealed = KeyEnvelope.seal(joinerPublic, roomKey, context)
+        val hedge = KeyEnvelope.inviteHedge(ByteArray(InviteCodec.INVITE_SECRET_SIZE) { (0x30 + it).toByte() }, 0x0BADF00D, 0x12345678)
+
+        assertArrayEquals(roomKey, KeyEnvelope.open(joiner.private, joinerPublic, sealed, context))
+        assertNull(KeyEnvelope.open(joiner.private, joinerPublic, sealed, context, hedge))
+    }
+
+    @Test
     fun `any other phone cannot`() {
         val other = KeyEnvelope.generateKeyPair()
         val sealed = KeyEnvelope.seal(joinerPublic, roomKey, context)

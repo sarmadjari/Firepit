@@ -46,6 +46,16 @@ struct IOSVectorWriter {
         fields["envelopeContext"] = envelopeContext.hex
         fields["envelope"] = try KeyEnvelope.seal(recipient: joinerPublic, secret: roomKey, context: envelopeContext)
             .hex
+        let inviteRandom = Data((0..<InviteCodec.inviteSecretSize).map { UInt8(0x50 + $0) })
+        let inviteHedge = KeyEnvelope.inviteHedge(secret: inviteRandom, roomId: 0x0BAD_F00D, inviteId: 0x0F0F_1234)
+        fields["inviteRandom"] = inviteRandom.hex
+        fields["inviteHedge"] = inviteHedge.hex
+        fields["hedgedEnvelope"] = try KeyEnvelope.seal(
+            recipient: joinerPublic,
+            secret: roomKey,
+            context: envelopeContext,
+            hedge: inviteHedge
+        ).hex
 
         let alice = P256.KeyAgreement.PrivateKey()
         let bob = P256.KeyAgreement.PrivateKey()
@@ -109,6 +119,7 @@ struct IOSVectorWriter {
             $0.issuedAt = 1_789_000_000
             $0.window = UInt32(bitPattern: window)
             $0.token = token
+            $0.secret = inviteRandom
         }
         fields["inviteUri"] = InviteCodec.encode(invite)
 

@@ -37,9 +37,9 @@ class PhoneKeyStore @Inject constructor(
     fun publicKey(): ByteString = pair().public.toByteString()
 
     /** A room key sealed to this phone, or null when it was not, or was tampered with. */
-    fun open(sealed: ByteArray, context: ByteArray): ByteArray? {
+    fun open(sealed: ByteArray, context: ByteArray, hedge: ByteArray? = null): ByteArray? {
         val pair = pair()
-        return KeyEnvelope.open(pair.private, pair.public, sealed, context)
+        return KeyEnvelope.open(pair.private, pair.public, sealed, context, hedge)
     }
 
     /** Seals [plaintext] from this phone to the phone holding [peerPublic]. See [DirectSeal]. */

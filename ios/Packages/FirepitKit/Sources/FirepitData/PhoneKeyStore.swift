@@ -115,7 +115,7 @@ public final class PhoneKeyStore: Sendable {
     }
 
     /// A room key sealed to this phone, or nil when it was not, or was tampered with.
-    public func open(sealed: Data, context: Data) -> Data? {
+    public func open(sealed: Data, context: Data, hedge: Data? = nil) -> Data? {
         guard let pair = try? pair() else {
             phoneKeyLog.error("could not restore this phone's key")
             return nil
@@ -124,7 +124,8 @@ public final class PhoneKeyStore: Sendable {
             privateKey: pair.private,
             ownPublic: pair.public,
             sealed: sealed,
-            context: context
+            context: context,
+            hedge: hedge
         )
     }
 

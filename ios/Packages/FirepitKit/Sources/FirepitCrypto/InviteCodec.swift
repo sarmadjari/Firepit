@@ -12,6 +12,7 @@ public enum InviteCodec {
 
     /// nanopb caps `ChannelSettings.name` at 12 bytes including the terminator.
     public static let maxRoomNameBytes = 11
+    public static let inviteSecretSize = 16
     private static let publicKeySize = 32
 
     private static let prefix = "\(scheme)://join?v=\(version)&d="
@@ -70,6 +71,7 @@ public enum InviteCodec {
             && invite.roomName.utf8.count <= maxRoomNameBytes
             && invite.inviter.nodeNum != 0
             && invite.inviter.user.publicKey.count == publicKeySize
+            && invite.secret.count == inviteSecretSize
     }
 
     /// Kotlin's `substringAfter(delimiter, "")`: everything after the first occurrence, or empty.

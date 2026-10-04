@@ -48,6 +48,8 @@ data class AwaitedRoom(
     val inviter: Int,
     /** Our own radio's and phone's keys as one line, for reading aloud so the inviter can check them. */
     val ownFingerprint: String? = null,
+    /** The 16-byte in-person QR secret, never sent on the radio, used to open the grant. */
+    val inviteSecret: ByteString = ByteString.EMPTY,
     /** Set when the answer came back and it was no. */
     val declined: Boolean = false,
 )

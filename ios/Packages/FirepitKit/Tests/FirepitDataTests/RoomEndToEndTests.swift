@@ -111,6 +111,26 @@ private func directKeysLearned(_ a: SimulatedPhone, _ b: SimulatedPhone) async -
     }
 }
 
+extension SimulatedPhone {
+    func sendGrantForTest(to joiner: SimulatedPhone, grant: Meshchat_RoomGrant) async throws {
+        var control = Meshchat_MeshChatControl()
+        control.version = InviteCodec.version
+        control.roomGrant = grant
+        let packet = try MeshPacketBuilder.meshPacket(
+            to: joiner.radio.nodeNum,
+            channel: 0,
+            portNum: .privateApp,
+            payload: try control.serializedData(),
+            wantAck: true,
+            pkiEncrypted: true,
+            publicKey: joiner.radio.radioKey
+        )
+        var message = ToRadio()
+        message.packet = packet
+        try await radio.send(message)
+    }
+}
+
 @Suite("RoomRepository end-to-end simulated mesh", .serialized)
 struct RoomEndToEndTests {
     @Test func createdRoomAppearsOnTheRadioAndInRooms() async throws {
@@ -138,6 +158,108 @@ struct RoomEndToEndTests {
         #expect(phones[1].radio.channel(roomId: room.id) != nil)
         #expect(try await phones[0].memberDao.findEntity(roomId: room.id, nodeNum: phones[1].radio.nodeNum) != nil)
         #expect(try await phones[1].memberDao.findEntity(roomId: room.id, nodeNum: phones[0].radio.nodeNum) != nil)
+    }
+
+    @Test func realInvitersUnhedgedGrantIsRefusedThenHedgedGrantIsAccepted() async throws {
+        let (_, phones) = try await makeMesh(2)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await seedPublicKeys([phones[1], phones[0]])
+        try await phones[1].roomRepository.joinRoom(invite: invite)
+        #expect(await waitUntil { !phones[0].roomRepository.pendingJoins.value.isEmpty })
+
+        let firepitKey = try #require(phones[0].roomKeys.currentKey(roomId: room.id))
+        let generation = phones[0].roomKeys.generationOf(roomId: room.id)
+        var grant = Meshchat_RoomGrant()
+        grant.answer = .granted
+        grant.inviteID = invite.inviteID
+        grant.roomID = invite.roomID
+        grant.roomName = room.name
+        grant.roomPsk = try #require(phones[0].radio.channel(roomId: room.id)?.settings.psk)
+        grant.generation = UInt32(generation)
+        grant.keyHour = UInt32(firepitKey.hour)
+        grant.sealedKey = try KeyEnvelope.seal(
+            recipient: try phones[1].phoneKeys.publicKey(),
+            secret: firepitKey.key,
+            context: KeyEnvelope.contextOf(
+                roomId: room.id,
+                generation: Int32(generation),
+                recipientNodeNum: phones[1].radio.nodeNum,
+                hour: Int32(firepitKey.hour)
+            )
+        )
+        try await phones[0].sendGrantForTest(to: phones[1], grant: grant)
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(phones[1].roomRepository.awaiting.value?.roomId == room.id)
+        #expect(!phones[1].roomKeys.holds(roomId: room.id))
+        #expect(phones[1].radio.channel(roomId: room.id) == nil)
+
+        try await phones[0].roomRepository.approveJoin(nodeNum: phones[1].radio.nodeNum)
+        #expect(await waitUntil { phones[1].roomRepository.awaiting.value == nil })
+        #expect(await waitUntil { phones[1].roomKeys.holds(roomId: room.id) })
+        #expect(phones[1].radio.channel(roomId: room.id) != nil)
+    }
+
+    @Test func approvingAfterInviteExpiredDeclinesAndClearsThePrompt() async throws {
+        let (_, phones) = try await makeMesh(2)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await seedPublicKeys([phones[1], phones[0]])
+        try await phones[1].roomRepository.joinRoom(invite: invite)
+        #expect(await waitUntil { phones[0].roomRepository.pendingJoins.value.contains { $0.nodeNum == phones[1].radio.nodeNum } })
+
+        let refreshed = try await phones[0].roomRepository.buildInvite(
+            roomId: room.id,
+            nowMillis: currentEpochMillis() + 10_000_000
+        )
+        #expect(refreshed.inviteID != invite.inviteID)
+        #expect(refreshed.secret != invite.secret)
+        await #expect(throws: RoomError.inviteExpired) {
+            try await phones[0].roomRepository.approveJoin(nodeNum: phones[1].radio.nodeNum)
+        }
+        #expect(phones[0].roomRepository.pendingJoins.value.isEmpty)
+        #expect(await waitUntil { phones[1].roomRepository.awaiting.value?.declined == true })
+        #expect(!phones[1].roomKeys.holds(roomId: room.id))
+    }
+
+    @Test func recordedGrantDoesNotOpenWithoutTheInviteSecret() async throws {
+        let (mesh, phones) = try await makeMesh(2)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await seedPublicKeys([phones[1], phones[0]])
+        try await phones[1].roomRepository.joinRoom(invite: invite)
+        #expect(await waitUntil { !phones[0].roomRepository.pendingJoins.value.isEmpty })
+        let beforeGrant = mesh.airPackets.count
+        try await phones[0].roomRepository.approveJoin(nodeNum: phones[1].radio.nodeNum)
+        #expect(await waitUntil { phones[1].roomKeys.holds(roomId: room.id) })
+
+        let grants = mesh.airPackets.dropFirst(beforeGrant).compactMap { air -> Meshchat_RoomGrant? in
+            guard air.portNum == .privateApp,
+                air.pkiEncrypted,
+                air.from == phones[0].radio.nodeNum,
+                air.to == phones[1].radio.nodeNum,
+                let control = try? Meshchat_MeshChatControl(serializedBytes: air.payload),
+                case .roomGrant(let grant)? = control.payload
+            else {
+                return nil
+            }
+            return grant
+        }
+        let grant = try #require(grants.first)
+        let context = KeyEnvelope.contextOf(
+            roomId: Int32(bitPattern: grant.roomID),
+            generation: Int32(grant.generation),
+            recipientNodeNum: phones[1].radio.nodeNum,
+            hour: Int32(bitPattern: grant.keyHour)
+        )
+        #expect(phones[1].phoneKeys.open(sealed: grant.sealedKey, context: context) == nil)
+    }
+
+    @Test func anInviteStrippedOfItsSecretCannotBeUsed() async throws {
+        let (_, phones) = try await makeMesh(2)
+        let (_, invite) = try await createAndInvite(phones[0])
+        var stripped = invite
+        stripped.secret = Data()
+        await #expect(throws: RoomError.inviteInvalid) {
+            try await phones[1].roomRepository.joinRoom(invite: stripped)
+        }
     }
 
     @Test func aDeclinedJoinerGetsNoKey() async throws {
@@ -697,6 +819,7 @@ struct RoomEndToEndTests {
         invite.inviteID = 9
         invite.window = 1
         invite.token = Data(repeating: 1, count: RoomCrypto.tokenSize)
+        invite.secret = Data((0..<InviteCodec.inviteSecretSize).map { UInt8(0x80 + $0) })
         await #expect(throws: RoomError.inviteExpired) {
             try await phones[1].roomRepository.joinRoom(invite: invite, nowMillis: 1_000_000)
         }

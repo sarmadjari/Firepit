@@ -24,7 +24,7 @@ RTL-ready from Stage 3) · invite-link domain deferred until Stage 8.
 | 8 | v1.0 features | ✅ Built, emoji reactions last (2026-10-04) |
 | 9 | Release prep: accessibility and RTL pass, R8, store listing | ✅ Done 2026-10-04: accessibility, right to left, R8, 16 KB pages, store listing, no analytics. Left for release day: the release key and store submission |
 | 10 | The iPhone app | ✅ Built. An iPhone and an Android phone in one room over real radios is still to be tested |
-| 11 | Security within Meshtastic's limits: Signal-grade protections where the radio allows, with no message growing by a byte | In progress: Phases 1, 2 and 5 done on both apps; Phase 6's signed-message mark built |
+| 11 | Security within Meshtastic's limits: Signal-grade protections where the radio allows, with no message growing by a byte | In progress: Phases 1, 2, 3 and 5 done on both apps; Phase 6's signed-message mark built |
 | 12 | Large screens: the conversation and the map side by side on foldables, tablets and wide windows; the phone app in narrow ones | Built on both apps, 2026-10-04 (decisions U-8 to U-14, UX §11.4). Open: the chat-to-map actions, which need features not built yet; the iOS 27.1 fold APIs; Figma frames; device runs on an iPhone Duo, a Flip and a TriFold |
 
 ---
@@ -914,9 +914,10 @@ random bytes are far more than a nonce needs.
    private key. The receiver tries the rooms it shares with the sender, at most 7 rooms and 2 hours, so the
    message carries nothing extra.
 3. **Quantum hedging through the in-person invite.** The invite QR gains a 16-byte random secret that is
-   shown on screen and never transmitted, and it is mixed into the key that protects the grant. Someone who
-   records every radio packet and later has a quantum computer still cannot open the grant, so cannot open
-   anything that follows from it. Key changes are mixed with the current hourly key, so every link traces
+   shown on screen and never transmitted, and it is mixed into the key that protects the Firepit room key
+   inside the grant. Someone who records every radio packet and later has a quantum computer still cannot
+   open that phone-sealed room key, so cannot open anything that follows from it. The radio PKI layer and
+   channel PSK stay classical. Key changes are mixed with the current hourly key, so every link traces
    back to a secret that never went over the air. Radio bytes are unchanged; the QR is slightly denser.
 4. **Recovery after a break-in.** Room keys change on a schedule (a setting: daily by default, weekly, or
    never) through the existing key-change messages, one small packet per member and never per chat
@@ -1014,6 +1015,36 @@ Done on both apps, byte for byte, with no change to any direct-message or receip
   v2 round trips, wrong-room-key and tamper failures, v1 compatibility, direct-message replay and stale
   generation fallbacks in the simulated mesh, Android `RoomKeyStoreTest` coverage for direct replay/window
   handling, and `scripts/check-android-interop.sh` for Android→iOS and iOS→Android v2 direct seals.
+
+### Phase 3 record
+
+Done on both apps, with no change to any radio packet size (`ProtocolContractTest`,
+`ProtocolContractTests`):
+
+- `Invite.secret` is 16 random bytes, shown only in the QR. It is generated once
+  per `invite_id`, kept only in memory with the inviter's `IssuedInvite`, stable
+  across QR redraws while that id is live, and dropped when the invite expires
+  or is spent. Reopening an invite after the ledger TTL gets a fresh id and
+  secret. An invite without exactly 16 bytes is unusable.
+- A joiner keeps the scanned secret only in `AwaitedRoom` while waiting for the
+  grant. It is never copied into `JoinHello`, never put on the radio and never
+  persisted.
+- `KeyEnvelope` v1 is unchanged when no hedge is supplied. With a hedge, both
+  apps compute
+  `inviteHedge = HMAC(secret, "firepit-invite-hedge-v1" ‖ room_id ‖ invite_id ‖ 1)`,
+  then `PRK = HMAC(ephemeral ‖ recipient, ECDH ‖ inviteHedge)` and
+  `key = HMAC(PRK, "firepit-key-envelope-v2" ‖ context ‖ 1)`. The envelope size
+  stays 93 bytes.
+- A `RoomGrant.sealed_key` is sealed and opened with the hedge for the invite it
+  answers. A grant whose Firepit room key does not open with the scanned secret is refused; there
+  is no v1 fallback. `KeyRotation` is unchanged because it already travels
+  inside a `SealedMessage` under an hourly room key the member holds.
+- Tests: plain-HMAC known answers and v1 compatibility in `KeyEnvelopeTest` /
+  `PhoneSealTests`; invite secret round trips and stripped-invite refusal in
+  `RoomCryptoTest` / `InviteTests`; iOS simulated mesh proves a normal join, a
+  recorded grant will not open with only the joiner's phone key, and a stripped
+  invite cannot be used. `scripts/check-android-interop.sh` writes and opens
+  hedged envelopes in both directions.
 
 ### Rules for every phase
 

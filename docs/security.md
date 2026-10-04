@@ -29,6 +29,7 @@ here is about what travels on the air and what sits on the phone.
 | Passive listener on the mesh | Any radio in range | Sees traffic exists. Cannot read room messages, direct messages, positions or pins. |
 | Another Meshtastic user | Holds the published primary key | Sees a node broadcast NodeInfo. Cannot read any conversation, and nothing they send on the primary is kept as a message or a pin. |
 | Someone who photographs an invite | Camera on the QR | Gets no key, but does learn the room id. Can ask to join for about 30 seconds, which a person must approve after comparing a fingerprint of the joiner's radio and phone keys. Cannot use the room id to join the roster or change the room's keys. |
+| Someone who records every radio packet and later gets a quantum computer | Passive now, powerful later | Still cannot open the room key inside a hedged grant, because its phone envelope is mixed with a 128-bit secret shown only in the in-person QR. That blocks the Firepit room keys and the hourly keys that follow. |
 | A relay carrying our packets | Between two nodes | Forwards ciphertext. Cannot read or alter anything Firepit sends undetected. |
 | Someone holding a member's radio | Physical access, USB, or a Bluetooth pairing | Reads the channel layer: the room PSK, the radio's own name and battery, and its node list. **Cannot** read sealed room text, positions or pins, or direct messages between Firepit users: the room key only ever travels sealed to a phone key (§3), and direct messages are sealed phone to phone, mixed with an hourly room key when the phones share one, neither of which the radio holds. Unsealed text, pins or positions they send into a room are dropped. |
 | Someone nearby with Bluetooth | In range while the owner's phone is not connected | Can pair only with the radio's PIN. Firepit checks on every connection whether the radio has no PIN or the published default one, and offers to set a new one (§7). |
@@ -77,6 +78,22 @@ Stated plainly, because a threat model that claims everything is worthless.
   everybody not running Firepit — can only be reached through the radios'
   PKI, which whoever holds either radio can read. The composer says so on every
   such message.
+- **Rooms with any unhedged grant in their history.** If an older build handed
+  out the room key without the QR hedge, a recording of that grant can still
+  lead through the hourly ratchet and later rotations. The protection below
+  covers rooms whose every grant was hedged.
+- **A removed member with a recording.** A rotation is announced under the old
+  hourly key so the removed member stops sending. They still held that old
+  hourly key at the time; if a future quantum computer opens the classical
+  phone envelope inside their recorded `KeyRotation`, they can recover the new
+  key. Rotation removes future access against today's attackers, not against
+  that record-now/decrypt-later case.
+- **The quantum hedge is only category 1.** The invite secret is 128 bits, so it
+  targets NIST category 1 rather than the larger categories. The radio's PKI
+  layer and the channel PSK in the grant remain classical; breaking them later
+  exposes radio-layer metadata and the room channel key, not the phone-sealed
+  firepit key. V1 direct messages between people with no shared room also stay
+  classical.
 - **Forged positions and telemetry from outside our rooms.** A member's position
   is only believed sealed. Anyone else's comes from unauthenticated firmware
   broadcasts, as do battery and signal figures, and anyone in range can forge
@@ -187,6 +204,9 @@ Three kinds of key, deliberately.
 ```
 room PSK (32 bytes, random)          →  written to the radio
   └─ invite key   = HMAC(psk, "meshchat-invite-v1" || room_id || generation)
+      └─ QR secret (16 bytes, random, one per invite_id)
+         └─ invite hedge = HMAC(QR secret,
+                                "firepit-invite-hedge-v1" || room_id || invite_id || 1)
 
 firepit key (32 bytes, random, one per generation)
   │                                   →  on phones only; travels only sealed to a phone key
@@ -214,6 +234,17 @@ receiving *radio* decrypts, with a private key that anyone holding that radio
 can read out over Bluetooth. So the firepit key never rides that layer alone:
 it is sealed again to the recipient's **phone key** (`KeyEnvelope`), and the
 radio carries something it cannot open.
+
+For the first grant only, that phone-key envelope is also mixed with the
+16-byte QR secret that never went over the radio:
+`PRK = HMAC(ephemeral || recipient, ECDH || invite_hedge)` and
+`key = HMAC(PRK, "firepit-key-envelope-v2" || context || 1)`. A future quantum
+computer that recovers the radio PKI keys and the P-256 phone agreement from a
+recording still lacks the QR secret for the Firepit key inside that grant.
+Rotations are not changed: their `KeyRotation` is already inside a
+`SealedMessage` under an hourly room key the recipient holds, so their
+protection traces back to the in-person grant and the hourly symmetric ratchet
+except for the removed-member limit above.
 
 **Keys move on every hour, one way** (`RoomRatchet`). Hours are counted in UTC
 since 1970, so every member derives the same keys from the same clock without a
@@ -455,11 +486,11 @@ such request.
 The part most worth auditing, because an invite is how a stranger becomes
 someone who can read everything.
 
-### The code carries no keys
+### The code carries no room keys
 
 ```protobuf
 message Invite {
-  reserved 4, 5, 13;              // held open: a key here is in every photograph
+  reserved 4, 5, 13;
   uint32 version = 1;
   fixed32 room_id = 2;
   string room_name = 3;
@@ -470,18 +501,25 @@ message Invite {
   uint32 issued_at = 10;
   uint32 window = 11;
   bytes token = 12;
+  bytes secret = 14;              // 16 bytes, QR only, never on the radio
 }
 ```
 
 A photograph of the QR yields a room name, a room id, the inviter's public key,
-and a token that stops being accepted in about thirty seconds. It does not yield
-a way to read anything.
+and a token that stops being accepted in about thirty seconds. It also yields a
+16-byte secret. That secret is not a room key and is never sent over LoRa; it is
+kept only in memory by both phones while the invite is live, and is mixed into
+the `RoomGrant` envelope. Reopening an invite after its ledger entry expired
+gets a fresh id and secret, and spending an invite drops its secret. Without the
+secret, the Firepit room key inside a recorded grant remains closed even to
+somebody who later breaks the radio PKI layer and the phone ECDH. An invite
+missing the 16-byte secret is refused.
 
 ### Handshake
 
 ```
 inviter                                   joiner
-   │  QR: room id, name, mode, pubkey, token
+   │  QR: room id, name, mode, pubkey, token, 16-byte secret
    │ ────────────────────────────────────►  scan
    │                                        shows inviter id + key fingerprint;
    │                                        nothing is sent until the reader
@@ -494,7 +532,7 @@ inviter                                   joiner
    ├─ ask the person holding the phone, showing a fingerprint of joiner_key
    │  and phone_key together
    │
-   │    RoomGrant { room_psk, generation, key_hour, sealed_key = seal(phone_key, this hour's key) }
+   │    RoomGrant { room_psk, generation, key_hour, sealed_key = seal(phone_key, this hour's key, QR secret) }
    │ ────────────────────────────────────►  PKI to joiner_key
    │                                        writes the channel, stores keys
    │    SealedMessage { RosterSync }        sealed under the key just granted
@@ -535,6 +573,13 @@ with**, which must equal the key the hello names (`MeshPacket.public_key` is set
 by the firmware on PKI decryption). The room's own key inside goes further: it
 is sealed to the joiner's phone key, so the two radios carry it without being
 able to read it.
+
+**The grant also needs the in-person QR secret.** The inviter keeps one
+16-byte secret for each issued `invite_id`, stable across QR refreshes until
+that invite is spent or forgotten. The joiner keeps the scanned secret only
+while waiting. The grant's `sealed_key` opens only with
+`KeyEnvelope.inviteHedge(secret, room_id, invite_id)`, so there is no fallback
+to the older envelope for grants.
 
 **The joiner accepts a grant only from the node it scanned.** The room id and
 invite id both travel in the QR code, so anyone who photographed it can name them
@@ -658,14 +703,16 @@ step is for, and why a code stops working after about 30 seconds.
 
 > Verify: `InvitePrivacyTest` (asserts on encoded bytes that no 32-byte key
 > appears in an invite, and that a grant's key only opens for the joiner's
-> phone), `RoomCryptoTest`, `ScanDisambiguationTest`, `KeyEnvelopeTest`,
+> phone with the QR hedge), `RoomCryptoTest`, `ScanDisambiguationTest`, `KeyEnvelopeTest`,
 > `KeyFingerprintTest`, `TrustRulesTest`, `ProtocolContractTest` (a sealed
 > rotation and a sealed roster sync still fit one PKI packet), `PacketOriginTest`
 > (every hop pair, including the impossible ones)
 >
 > iOS: `InviteTests` (including that an invite has nowhere to put a room key and a
-> grant opens only for the joiner's phone), `ScanDisambiguationTests`,
-> `KeyFingerprintTests`, `TrustRulesTests`, `ProtocolContractTests`, `PacketOriginTests`
+> hedged grant opens only for the joiner's phone), `ScanDisambiguationTests`,
+> `RoomEndToEndTests` (including stripped invites and a recorded grant without
+> the QR secret), `KeyFingerprintTests`, `TrustRulesTests`, `ProtocolContractTests`,
+> `PacketOriginTests`
 
 ---
 

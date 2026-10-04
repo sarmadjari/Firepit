@@ -41,6 +41,8 @@ object KeyEnvelope {
 
     private const val CURVE = "secp256r1"
     private const val INFO = "firepit-key-envelope-v1"
+    private const val HEDGED_INFO = "firepit-key-envelope-v2"
+    private const val INVITE_HEDGE_INFO = "firepit-invite-hedge-v1"
     private const val HMAC = "HmacSHA256"
     private const val COORDINATE_SIZE = 32
     private const val EVEN: Byte = 0x02
@@ -74,12 +76,22 @@ object KeyEnvelope {
     fun contextOf(roomId: Int, generation: Int, recipientNodeNum: Int, hour: Int): ByteArray =
         intBytes(roomId) + intBytes(generation) + intBytes(recipientNodeNum) + intBytes(hour)
 
+    /**
+     * The in-person QR secret mixed into the grant envelope. The secret itself
+     * never goes over the radio, so a recorded grant cannot later be opened
+     * from the radio-layer and phone public-key traffic alone.
+     */
+    fun inviteHedge(secret: ByteArray, roomId: Int, inviteId: Int): ByteArray {
+        require(secret.size == INVITE_SECRET_SIZE) { "invite secret must be $INVITE_SECRET_SIZE bytes" }
+        return hmac(secret, INVITE_HEDGE_INFO.toByteArray() + intBytes(roomId) + intBytes(inviteId) + byteArrayOf(1))
+    }
+
     /** Seals [secret] so that only the holder of the private half of [recipient] can open it. */
-    fun seal(recipient: ByteArray, secret: ByteArray, context: ByteArray): ByteArray {
+    fun seal(recipient: ByteArray, secret: ByteArray, context: ByteArray, hedge: ByteArray? = null): ByteArray {
         val recipientKey = requireNotNull(decode(recipient)) { "not a usable public key" }
         val ephemeral = newPair()
         val ephemeralBytes = publicBytes(ephemeral.public)
-        val key = derive(agree(ephemeral.private, recipientKey), ephemeralBytes, recipient, context)
+        val key = derive(agree(ephemeral.private, recipientKey), ephemeralBytes, recipient, context, hedge)
         return try {
             ephemeralBytes + RoomCipher.seal(key, secret, context)
         } finally {
@@ -92,7 +104,13 @@ object KeyEnvelope {
      * changed. [ownPublic] is the recipient's own public key, which the sender
      * mixed into the derivation.
      */
-    fun open(privateKey: PrivateKey, ownPublic: ByteArray, sealed: ByteArray, context: ByteArray): ByteArray? {
+    fun open(
+        privateKey: PrivateKey,
+        ownPublic: ByteArray,
+        sealed: ByteArray,
+        context: ByteArray,
+        hedge: ByteArray? = null,
+    ): ByteArray? {
         if (sealed.size < PUBLIC_KEY_SIZE + RoomCipher.OVERHEAD) return null
         val ephemeralBytes = sealed.copyOfRange(0, PUBLIC_KEY_SIZE)
         // Validated before use: agreeing on a point that is not on the curve is
@@ -103,7 +121,7 @@ object KeyEnvelope {
         } catch (_: GeneralSecurityException) {
             return null
         }
-        val key = derive(shared, ephemeralBytes, ownPublic, context)
+        val key = derive(shared, ephemeralBytes, ownPublic, context, hedge)
         return try {
             RoomCipher.open(key, sealed.copyOfRange(PUBLIC_KEY_SIZE, sealed.size), context)
         } finally {
@@ -122,14 +140,22 @@ object KeyEnvelope {
         }
 
     /** HKDF-SHA256 (RFC 5869), one block: exactly one AES-256 key is needed. */
-    private fun derive(shared: ByteArray, ephemeral: ByteArray, recipient: ByteArray, context: ByteArray): ByteArray {
-        val prk = hmac(ephemeral + recipient, shared)
-        shared.fill(0)
-        return try {
-            hmac(prk, INFO.toByteArray() + context + byteArrayOf(1))
-        } finally {
-            prk.fill(0)
-        }
+        private fun derive(
+            shared: ByteArray,
+            ephemeral: ByteArray,
+            recipient: ByteArray,
+            context: ByteArray,
+            hedge: ByteArray?,
+        ): ByteArray {
+            val material = if (hedge == null) shared else shared + hedge
+            val prk = hmac(ephemeral + recipient, material)
+            shared.fill(0)
+            if (material !== shared) material.fill(0)
+            return try {
+                hmac(prk, (if (hedge == null) INFO else HEDGED_INFO).toByteArray() + context + byteArrayOf(1))
+            } finally {
+                prk.fill(0)
+            }
     }
 
     internal fun hmac(key: ByteArray, data: ByteArray): ByteArray =
@@ -185,4 +211,6 @@ object KeyEnvelope {
         (value ushr 8).toByte(),
         value.toByte(),
     )
+
+    private const val INVITE_SECRET_SIZE = 16
 }

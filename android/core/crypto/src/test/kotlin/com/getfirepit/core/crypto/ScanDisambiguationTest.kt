@@ -35,6 +35,7 @@ class ScanDisambiguationTest {
             user = User(public_key = ByteArray(32) { 3 }.toByteString()),
         ),
         token = ByteArray(RoomCrypto.TOKEN_SIZE) { 1 }.toByteString(),
+        secret = ByteArray(InviteCodec.INVITE_SECRET_SIZE) { (0x40 + it).toByte() }.toByteString(),
     )
 
     // Built here rather than through our own encoder, so this is a link of the
@@ -79,10 +80,10 @@ class ScanDisambiguationTest {
 
     /**
      * A code that is photographed is worth nothing on its own, because there is
-     * no key in it to take.
+     * no room key in it to take.
      */
     @Test
-    fun `a firepit invite carries no key material`() {
+    fun `a firepit invite carries no room key material`() {
         val decoded = InviteCodec.decode(InviteCodec.encode(invite))
 
         assertNotNull(decoded)

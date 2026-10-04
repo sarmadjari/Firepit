@@ -4,6 +4,7 @@ import FirepitProtocol
 import FirepitProtos
 import FirepitTransport
 import Foundation
+import Security
 import os
 
 /// Why a room operation could not be carried out, in terms the UI can show.
@@ -143,9 +144,14 @@ public final class RoomRepository: Sendable {
     private struct IssuedInvite: Sendable, Equatable {
         var roomId: Int32
         var inviteKey: Data
+        var secret: Data
         var issuedAt: Int64
         /// Set once somebody has been let in on it, which spends it. */
         var usedBy: Int32?
+
+        func withIssuedAt(_ value: Int64) -> IssuedInvite {
+            IssuedInvite(roomId: roomId, inviteKey: inviteKey, secret: secret, issuedAt: value, usedBy: usedBy)
+        }
     }
 
     private struct Card: Sendable, Equatable {
@@ -158,6 +164,15 @@ public final class RoomRepository: Sendable {
     /// key. Without it, somebody who never opened the settings — typically the
     /// room's founder — could never be handed a new room key.
     private static let noName = Card(name: "", tag: "", colourSlot: nil)
+
+    private static func randomInviteSecret() -> Data {
+        var bytes = Data(count: Int(InviteCodec.inviteSecretSize))
+        let ok = bytes.withUnsafeMutableBytes { buffer in
+            SecRandomCopyBytes(kSecRandomDefault, buffer.count, buffer.baseAddress!)
+        }
+        precondition(ok == errSecSuccess, "could not draw invite secret")
+        return bytes
+    }
 
     public init(
         link: any RadioLinking,
@@ -597,16 +612,16 @@ public final class RoomRepository: Sendable {
         let generation: Int32 = Int32(RoomKeyStore.first)
         let inviteKey = RoomCrypto.inviteKey(roomPsk: psk, roomId: roomId, generation: generation)
         let window = RoomCrypto.windowFor(epochMillis: nowMillis)
-        let inviteId = issuedInvites.withLock { ledger -> Int32 in
-            if let existing = ledger.first(where: { $0.value.roomId == roomId && $0.value.usedBy == nil })?.key {
-                return existing
-            }
-            return RoomCrypto.generateRoomId()
-        }
-        issuedInvites.withLock { ledger in
-            ledger[inviteId] = IssuedInvite(roomId: roomId, inviteKey: inviteKey, issuedAt: nowMillis)
-        }
         forgetStaleInvites(nowMillis: nowMillis)
+        let existingInvite = issuedInvites.withLock { ledger in
+            ledger.first(where: { $0.value.roomId == roomId && $0.value.usedBy == nil })
+        }
+        let inviteId = existingInvite?.key ?? RoomCrypto.generateRoomId()
+        let issued = existingInvite?.value.withIssuedAt(nowMillis)
+            ?? IssuedInvite(roomId: roomId, inviteKey: inviteKey, secret: Self.randomInviteSecret(), issuedAt: nowMillis)
+        issuedInvites.withLock { ledger in
+            ledger[inviteId] = issued
+        }
         var invite = Meshchat_Invite()
         invite.version = InviteCodec.version
         invite.roomID = UInt32(bitPattern: roomId)
@@ -621,7 +636,8 @@ public final class RoomRepository: Sendable {
         invite.inviteID = UInt32(bitPattern: inviteId)
         invite.issuedAt = UInt32(nowMillis / 1000)
         invite.window = UInt32(bitPattern: window)
-        invite.token = RoomCrypto.token(inviteKey: inviteKey, inviterNodeNum: myNodeNum, window: window)
+        invite.token = RoomCrypto.token(inviteKey: issued.inviteKey, inviterNodeNum: myNodeNum, window: window)
+        invite.secret = issued.secret
         var lora = Meshchat_LoRaProfile()
         lora.meshMode = range.mode.value.wire
         invite.lora = lora
@@ -653,7 +669,8 @@ public final class RoomRepository: Sendable {
                 roomName: invite.roomName,
                 inviteId: Int32(bitPattern: invite.inviteID),
                 inviter: inviter,
-                ownFingerprint: ownFingerprint()
+                ownFingerprint: ownFingerprint(),
+                inviteSecret: invite.secret
             )
         )
         try await askToJoin(invite: invite)
@@ -1340,6 +1357,9 @@ public final class RoomRepository: Sendable {
         if inviter.nodeNum == 0 {
             throw RoomError.inviteInvalid
         }
+        if invite.secret.count != InviteCodec.inviteSecretSize {
+            throw RoomError.inviteInvalid
+        }
         if !InviteCodec.isTimeBound(invite) {
             throw RoomError.inviteExpired
         }
@@ -1755,6 +1775,15 @@ public final class RoomRepository: Sendable {
         guard let request = pendingJoins.value.first(where: { $0.nodeNum == nodeNum }) else {
             return
         }
+        guard let issued = issuedInvites.withLock({ $0[request.inviteId] }) else {
+            clearPending(nodeNum: nodeNum)
+            var grant = Meshchat_RoomGrant()
+            grant.answer = .declined
+            grant.inviteID = UInt32(bitPattern: request.inviteId)
+            grant.roomID = UInt32(bitPattern: request.roomId)
+            try? await sendGrant(to: nodeNum, key: request.joinerKey, grant: grant)
+            throw RoomError.inviteExpired
+        }
         guard let room = ChannelSlotManager.findByRoomId(channels: mesh.channels.value, roomId: request.roomId) else {
             throw RoomError.inviteInvalid
         }
@@ -1764,6 +1793,7 @@ public final class RoomRepository: Sendable {
         // This hour's key: what they read starts when they are let in.
         let firepitKey = try roomKeys.currentKey(roomId: request.roomId) ?? roomKeys.generate(roomId: request.roomId)
         let generation = roomKeys.generationOf(roomId: request.roomId)
+        let hedge = KeyEnvelope.inviteHedge(secret: issued.secret, roomId: request.roomId, inviteId: request.inviteId)
         var grant = Meshchat_RoomGrant()
         grant.answer = .granted
         grant.inviteID = UInt32(bitPattern: request.inviteId)
@@ -1779,15 +1809,13 @@ public final class RoomRepository: Sendable {
                 generation: Int32(generation),
                 recipientNodeNum: nodeNum,
                 hour: Int32(firepitKey.hour)
-            )
+            ),
+            hedge: hedge
         )
         grant.keyHour = UInt32(firepitKey.hour)
         try await sendGrant(to: nodeNum, key: request.joinerKey, grant: grant)
-        issuedInvites.withLock { ledger in
-            if var issued = ledger[request.inviteId] {
-                issued.usedBy = nodeNum
-                ledger[request.inviteId] = issued
-            }
+        _ = issuedInvites.withLock { ledger in
+            ledger.removeValue(forKey: request.inviteId)
         }
         clearPending(nodeNum: nodeNum)
         try await memberDao.record(
@@ -1918,6 +1946,14 @@ public final class RoomRepository: Sendable {
             awaiting.set(nil)
             return
         }
+        guard awaited.inviteSecret.count == InviteCodec.inviteSecretSize else {
+            return
+        }
+        let hedge = KeyEnvelope.inviteHedge(
+            secret: awaited.inviteSecret,
+            roomId: Int32(bitPattern: grant.roomID),
+            inviteId: Int32(bitPattern: grant.inviteID)
+        )
         guard grant.roomPsk.count == RoomCrypto.pskSize,
             let firepitKey = phoneKeys.open(
                 sealed: grant.sealedKey,
@@ -1926,7 +1962,8 @@ public final class RoomRepository: Sendable {
                     generation: Int32(generation),
                     recipientNodeNum: myNodeNum,
                     hour: Int32(bitPattern: grant.keyHour)
-                )
+                ),
+                hedge: hedge
             ),
             firepitKey.count == RoomCipher.keySize
         else {

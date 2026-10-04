@@ -158,6 +158,7 @@ struct RoomsTests {
             $0.issuedAt = 1_788_000_000
             $0.window = 12_345
             $0.token = Data((0..<8).map { UInt8($0) })
+            $0.secret = Data((0..<InviteCodec.inviteSecretSize).map { UInt8(0x90 + $0) })
         }
     }
 

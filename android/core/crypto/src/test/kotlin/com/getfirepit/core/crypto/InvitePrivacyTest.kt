@@ -17,7 +17,7 @@ import org.meshtastic.proto.User
  * What a photographed invite is worth.
  *
  * A code is shown on a screen, where a camera can reach it, so it carries no
- * key material at all. These are the properties that make that true, asserted
+ * room key material at all. These are the properties that make that true, asserted
  * on the wire format rather than on the app's behaviour: the code is what
  * leaves the phone.
  */
@@ -38,6 +38,7 @@ class InvitePrivacyTest {
         invite_id = 0x1234_5678,
         window = RoomCrypto.windowFor(1_000_000_000_000),
         token = ByteArray(RoomCrypto.TOKEN_SIZE) { 1 }.toByteString(),
+        secret = ByteArray(InviteCodec.INVITE_SECRET_SIZE) { (0x20 + it).toByte() }.toByteString(),
     )
 
     /** The whole point: neither key can be written into an invite any more. */
@@ -95,6 +96,7 @@ class InvitePrivacyTest {
         val phone = KeyEnvelope.generateKeyPair()
         val phonePublic = KeyEnvelope.publicBytes(phone.public)
         val context = KeyEnvelope.contextOf(roomId = 0x0BADF00D, generation = 1, recipientNodeNum = 42, hour = 491_234)
+        val hedge = KeyEnvelope.inviteHedge(invite().secret.toByteArray(), 0x0BADF00D, 0x1234_5678)
         val grant = RoomGrant(
             answer = RoomGrant.Answer.GRANTED,
             invite_id = 0x1234_5678,
@@ -102,7 +104,7 @@ class InvitePrivacyTest {
             room_name = "camp",
             room_psk = roomPsk.toByteString(),
             generation = 1,
-            sealed_key = KeyEnvelope.seal(phonePublic, firepitKey, context).toByteString(),
+            sealed_key = KeyEnvelope.seal(phonePublic, firepitKey, context, hedge).toByteString(),
             key_hour = 491_234,
         )
 
@@ -113,7 +115,7 @@ class InvitePrivacyTest {
         assertEquals(roomPsk.toByteString(), decoded.room_psk)
         assertArrayEquals(
             firepitKey,
-            KeyEnvelope.open(phone.private, phonePublic, decoded.sealed_key.toByteArray(), context),
+            KeyEnvelope.open(phone.private, phonePublic, decoded.sealed_key.toByteArray(), context, hedge),
         )
     }
 

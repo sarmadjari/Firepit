@@ -54,7 +54,7 @@ message Inviter {
   meshtastic.User user = 2;
 }
 
-// Everything needed to ask to join a room. Carries no key material at all: a
+// Everything needed to ask to join a room. Carries no room key material: a
 // photographed code is a request to be let in, not a way in. The keys arrive
 // in a RoomGrant, encrypted to the joiner, once the inviter approves.
 message Invite {
@@ -81,6 +81,9 @@ message Invite {
   // invite would be an open door rather than one that closes on its own.
   uint32 window = 11;
   bytes token = 12;
+  // Shown on screen in the QR and never sent over the air; mixed into the key
+  // that protects the grant (Stage 11 Phase 3).
+  bytes secret = 14;
 }
 
 // ---------------------------------------------------------------------------

@@ -79,7 +79,8 @@ object InviteCodec {
             room_id != 0 &&
             room_name.toByteArray().size <= MAX_ROOM_NAME_BYTES &&
             inviter?.node_num != 0 &&
-            inviter?.user?.public_key?.size == PUBLIC_KEY_SIZE
+            inviter?.user?.public_key?.size == PUBLIC_KEY_SIZE &&
+            secret.size == INVITE_SECRET_SIZE
 
     /**
      * Whether this invite stops working on its own.
@@ -92,6 +93,7 @@ object InviteCodec {
     /** nanopb caps `ChannelSettings.name` at 12 bytes including the terminator. */
     const val MAX_ROOM_NAME_BYTES = 11
     private const val PUBLIC_KEY_SIZE = 32
+    const val INVITE_SECRET_SIZE = 16
 }
 
 fun ByteArray.toOkio() = toByteString()

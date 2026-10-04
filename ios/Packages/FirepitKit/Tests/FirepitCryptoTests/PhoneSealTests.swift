@@ -22,6 +22,63 @@ struct PhoneSealTests {
             KeyEnvelope.open(privateKey: joiner, ownPublic: joinerPublic, sealed: sealed, context: context) == roomKey)
     }
 
+    @Test func theHedgedDerivationHasKnownAnswersFromPlainHMAC() throws {
+        let inviteRandom = Data((0..<InviteCodec.inviteSecretSize).map { UInt8($0) })
+        let hedge = KeyEnvelope.inviteHedge(secret: inviteRandom, roomId: 0x0BAD_F00D, inviteId: 0x1234_5678)
+        let expectedHedge = RoomCrypto.hmac(
+            key: inviteRandom,
+            message: Data("firepit-invite-hedge-v1".utf8)
+                + Data([0x0B, 0xAD, 0xF0, 0x0D])
+                + Data([0x12, 0x34, 0x56, 0x78])
+                + Data([1])
+        )
+        #expect(hedge == expectedHedge)
+
+        let sealed = try KeyEnvelope.seal(recipient: joinerPublic, secret: roomKey, context: context, hedge: hedge)
+        let ephemeral = Data(sealed.prefix(KeyEnvelope.publicKeySize))
+        let shared = try joiner.sharedSecretFromKeyAgreement(with: #require(KeyEnvelope.decode(ephemeral)))
+        let prk = RoomCrypto.hmac(key: ephemeral + joinerPublic, message: rawBytes(shared) + hedge)
+        let key = RoomCrypto.hmac(key: prk, message: Data("firepit-key-envelope-v2".utf8) + context + Data([1]))
+        #expect(
+            RoomCipher.open(
+                key: key, sealed: Data(sealed.dropFirst(KeyEnvelope.publicKeySize)), context: context) == roomKey)
+    }
+
+    @Test func aHedgedEnvelopeOpensOnlyWithTheInviteHedge() throws {
+        let hedge = KeyEnvelope.inviteHedge(
+            secret: Data((0..<InviteCodec.inviteSecretSize).map { UInt8(0x10 + $0) }),
+            roomId: 0x0BAD_F00D,
+            inviteId: 0x1234_5678
+        )
+        let wrong = KeyEnvelope.inviteHedge(
+            secret: Data((0..<InviteCodec.inviteSecretSize).map { UInt8(0x20 + $0) }),
+            roomId: 0x0BAD_F00D,
+            inviteId: 0x1234_5678
+        )
+        let sealed = try KeyEnvelope.seal(recipient: joinerPublic, secret: roomKey, context: context, hedge: hedge)
+        #expect(sealed.count == KeyEnvelope.sealedSize)
+        #expect(
+            KeyEnvelope.open(privateKey: joiner, ownPublic: joinerPublic, sealed: sealed, context: context, hedge: hedge)
+                == roomKey)
+        #expect(
+            KeyEnvelope.open(privateKey: joiner, ownPublic: joinerPublic, sealed: sealed, context: context, hedge: wrong)
+                == nil)
+        #expect(KeyEnvelope.open(privateKey: joiner, ownPublic: joinerPublic, sealed: sealed, context: context) == nil)
+    }
+
+    @Test func aV1EnvelopeDoesNotOpenWhenAHedgeIsSupplied() throws {
+        let sealed = try KeyEnvelope.seal(recipient: joinerPublic, secret: roomKey, context: context)
+        let hedge = KeyEnvelope.inviteHedge(
+            secret: Data((0..<InviteCodec.inviteSecretSize).map { UInt8(0x30 + $0) }),
+            roomId: 0x0BAD_F00D,
+            inviteId: 0x1234_5678
+        )
+        #expect(KeyEnvelope.open(privateKey: joiner, ownPublic: joinerPublic, sealed: sealed, context: context) == roomKey)
+        #expect(
+            KeyEnvelope.open(privateKey: joiner, ownPublic: joinerPublic, sealed: sealed, context: context, hedge: hedge)
+                == nil)
+    }
+
     @Test func anyOtherPhoneCannot() throws {
         let other = KeyEnvelope.generateKeyPair()
         let sealed = try KeyEnvelope.seal(recipient: joinerPublic, secret: roomKey, context: context)

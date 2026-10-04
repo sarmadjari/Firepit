@@ -68,6 +68,13 @@ struct AndroidInteropTests {
         #expect(
             KeyEnvelope.open(privateKey: joiner, ownPublic: joinerPublic, sealed: envelope, context: context) == roomKey
         )
+        let inviteHedge = KeyEnvelope.inviteHedge(secret: try bytes("inviteRandom"), roomId: 0x0BAD_F00D, inviteId: 0x1234_5678)
+        #expect(inviteHedge == (try bytes("inviteHedge")))
+        #expect(
+            KeyEnvelope.open(
+                privateKey: joiner, ownPublic: joinerPublic, sealed: try bytes("hedgedEnvelope"),
+                context: context, hedge: inviteHedge) == roomKey
+        )
     }
 
     @Test func androidsStoredPrivateKeyFormatImportsToo() throws {
@@ -143,6 +150,7 @@ struct AndroidInteropTests {
         #expect(invite.issuedAt == 1_789_000_000)
         let token = try bytes("token")
         #expect(invite.token == token)
+        #expect(invite.secret == (try bytes("inviteRandom")))
         #expect(InviteCodec.encode(invite) == uri, "iOS writes the identical code for the same invite")
         guard case .firepit = CodeScanner.classify(uri) else {
             Issue.record("an Android invite must classify as Firepit")

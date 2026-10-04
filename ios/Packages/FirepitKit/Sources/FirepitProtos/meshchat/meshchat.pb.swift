@@ -120,7 +120,7 @@ public nonisolated struct Meshchat_Inviter: Sendable {
   fileprivate var _user: User? = nil
 }
 
-/// Everything needed to ask to join a room. Carries no key material at all: a
+/// Everything needed to ask to join a room. Carries no room key material: a
 /// photographed code is a request to be let in, not a way in. The keys arrive
 /// in a RoomGrant, encrypted to the joiner, once the inviter approves.
 public nonisolated struct Meshchat_Invite: @unchecked Sendable {
@@ -189,6 +189,13 @@ public nonisolated struct Meshchat_Invite: @unchecked Sendable {
   public var token: Data {
     get {_storage._token}
     set {_uniqueStorage()._token = newValue}
+  }
+
+  /// Shown on screen in the QR and never sent over the air; mixed into the key
+  /// that protects the grant (Stage 11 Phase 3).
+  public var secret: Data {
+    get {_storage._secret}
+    set {_uniqueStorage()._secret = newValue}
   }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -901,7 +908,7 @@ nonisolated extension Meshchat_Inviter: SwiftProtobuf.Message, SwiftProtobuf._Me
 
 nonisolated extension Meshchat_Invite: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Invite"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}version\0\u{3}room_id\0\u{3}room_name\0\u{2}\u{3}generation\0\u{1}lora\0\u{1}inviter\0\u{3}invite_id\0\u{3}issued_at\0\u{1}window\0\u{1}token\0\u{b}room_psk\0\u{b}firepit_key\0\u{b}position_precision\0\u{c}\u{4}\u{1}\u{c}\u{5}\u{1}\u{c}\u{d}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}version\0\u{3}room_id\0\u{3}room_name\0\u{2}\u{3}generation\0\u{1}lora\0\u{1}inviter\0\u{3}invite_id\0\u{3}issued_at\0\u{1}window\0\u{1}token\0\u{2}\u{2}secret\0\u{b}room_psk\0\u{b}firepit_key\0\u{b}position_precision\0\u{c}\u{4}\u{1}\u{c}\u{5}\u{1}\u{c}\u{d}\u{1}")
 
   fileprivate class _StorageClass {
     var _version: UInt32 = 0
@@ -914,6 +921,7 @@ nonisolated extension Meshchat_Invite: SwiftProtobuf.Message, SwiftProtobuf._Mes
     var _issuedAt: UInt32 = 0
     var _window: UInt32 = 0
     var _token: Data = Data()
+    var _secret: Data = Data()
 
       // This property is used as the initial default value for new instances of the type.
       // The type itself is protecting the reference to its storage via CoW semantics.
@@ -934,6 +942,7 @@ nonisolated extension Meshchat_Invite: SwiftProtobuf.Message, SwiftProtobuf._Mes
       _issuedAt = source._issuedAt
       _window = source._window
       _token = source._token
+      _secret = source._secret
     }
   }
 
@@ -962,6 +971,7 @@ nonisolated extension Meshchat_Invite: SwiftProtobuf.Message, SwiftProtobuf._Mes
         case 10: try { try decoder.decodeSingularUInt32Field(value: &_storage._issuedAt) }()
         case 11: try { try decoder.decodeSingularUInt32Field(value: &_storage._window) }()
         case 12: try { try decoder.decodeSingularBytesField(value: &_storage._token) }()
+        case 14: try { try decoder.decodeSingularBytesField(value: &_storage._secret) }()
         default: break
         }
       }
@@ -1004,6 +1014,9 @@ nonisolated extension Meshchat_Invite: SwiftProtobuf.Message, SwiftProtobuf._Mes
       if !_storage._token.isEmpty {
         try visitor.visitSingularBytesField(value: _storage._token, fieldNumber: 12)
       }
+      if !_storage._secret.isEmpty {
+        try visitor.visitSingularBytesField(value: _storage._secret, fieldNumber: 14)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -1023,6 +1036,7 @@ nonisolated extension Meshchat_Invite: SwiftProtobuf.Message, SwiftProtobuf._Mes
         if _storage._issuedAt != rhs_storage._issuedAt {return false}
         if _storage._window != rhs_storage._window {return false}
         if _storage._token != rhs_storage._token {return false}
+        if _storage._secret != rhs_storage._secret {return false}
         return true
       }
       if !storagesAreEqual {return false}

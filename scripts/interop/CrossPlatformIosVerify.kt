@@ -61,6 +61,15 @@ class CrossPlatformIosVerify {
             bytes("roomKey"),
             KeyEnvelope.open(privateFrom("joinerScalar"), bytes("joinerPublic"), bytes("envelope"), bytes("envelopeContext")),
         )
+        val inviteHedge = KeyEnvelope.inviteHedge(bytes("inviteRandom"), 0x0BADF00D, 0x0F0F_1234)
+        assertArrayEquals(bytes("inviteHedge"), inviteHedge)
+        assertArrayEquals(
+            bytes("roomKey"),
+            KeyEnvelope.open(
+                privateFrom("joinerScalar"), bytes("joinerPublic"), bytes("hedgedEnvelope"),
+                bytes("envelopeContext"), inviteHedge,
+            ),
+        )
     }
 
     @Test
@@ -113,6 +122,7 @@ class CrossPlatformIosVerify {
         assertEquals("Lena من", invite.inviter?.user?.long_name)
         assertEquals(HardwareModel.RAK4631, invite.inviter?.user?.hw_model)
         assertArrayEquals(bytes("token"), invite.token.toByteArray())
+        assertArrayEquals(bytes("inviteRandom"), invite.secret.toByteArray())
         assertEquals(uri, InviteCodec.encode(invite))
     }
 }

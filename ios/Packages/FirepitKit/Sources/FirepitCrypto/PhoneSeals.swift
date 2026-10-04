@@ -38,6 +38,9 @@ public enum KeyEnvelope {
     public static let sealedSize = publicKeySize + RoomCipher.nonceSize + RoomCipher.keySize + RoomCipher.tagSize
 
     private static let info = Data("firepit-key-envelope-v1".utf8)
+    private static let hedgedInfo = Data("firepit-key-envelope-v2".utf8)
+    private static let inviteHedgeInfo = Data("firepit-invite-hedge-v1".utf8)
+    private static let inviteSecretSize = 16
 
     public static func generateKeyPair() -> P256.KeyAgreement.PrivateKey { P256.KeyAgreement.PrivateKey() }
 
@@ -61,13 +64,22 @@ public enum KeyEnvelope {
         bigEndian(roomId) + bigEndian(generation) + bigEndian(recipientNodeNum) + bigEndian(hour)
     }
 
+    /// The in-person QR secret mixed into the grant envelope. The secret itself never goes over the radio.
+    public static func inviteHedge(secret: Data, roomId: Int32, inviteId: Int32) -> Data {
+        precondition(secret.count == inviteSecretSize, "invite secret must be \(inviteSecretSize) bytes")
+        return RoomCrypto.hmac(
+            key: secret,
+            message: inviteHedgeInfo + bigEndian(roomId) + bigEndian(inviteId) + Data([1])
+        )
+    }
+
     /// Seals `secret` so that only the holder of the private half of `recipient` can open it.
-    public static func seal(recipient: Data, secret: Data, context: Data) throws -> Data {
+    public static func seal(recipient: Data, secret: Data, context: Data, hedge: Data? = nil) throws -> Data {
         guard let recipientKey = decode(recipient) else { throw FirepitCryptoError.unusablePublicKey }
         let ephemeral = P256.KeyAgreement.PrivateKey()
         let ephemeralBytes = publicBytes(ephemeral.publicKey)
         let shared = try ephemeral.sharedSecretFromKeyAgreement(with: recipientKey)
-        let key = derive(shared: shared, ephemeral: ephemeralBytes, recipient: recipient, context: context)
+        let key = derive(shared: shared, ephemeral: ephemeralBytes, recipient: recipient, context: context, hedge: hedge)
         return ephemeralBytes + RoomCipher.seal(key: key, plaintext: secret, context: context)
     }
 
@@ -75,7 +87,7 @@ public enum KeyEnvelope {
     /// own public key, which the sender mixed into the derivation.
     public static func open(
         privateKey: any PhoneKeyAgreementKey, ownPublic: Data, sealed: Data,
-        context: Data
+        context: Data, hedge: Data? = nil
     ) -> Data? {
         guard sealed.count >= publicKeySize + RoomCipher.overhead else { return nil }
         let ephemeralBytes = Data(sealed.prefix(publicKeySize))
@@ -84,7 +96,7 @@ public enum KeyEnvelope {
         guard let ephemeral = decode(ephemeralBytes),
             let shared = try? privateKey.sharedSecretFromKeyAgreement(with: ephemeral)
         else { return nil }
-        let key = derive(shared: shared, ephemeral: ephemeralBytes, recipient: ownPublic, context: context)
+        let key = derive(shared: shared, ephemeral: ephemeralBytes, recipient: ownPublic, context: context, hedge: hedge)
         return RoomCipher.open(key: key, sealed: Data(sealed.dropFirst(publicKeySize)), context: context)
     }
 
@@ -99,9 +111,16 @@ public enum KeyEnvelope {
     }
 
     /// HKDF-SHA256 (RFC 5869), one block: exactly one AES-256 key is needed.
-    private static func derive(shared: SharedSecret, ephemeral: Data, recipient: Data, context: Data) -> Data {
-        let prk = RoomCrypto.hmac(key: ephemeral + recipient, message: rawBytes(shared))
-        return RoomCrypto.hmac(key: prk, message: info + context + Data([1]))
+    private static func derive(
+        shared: SharedSecret,
+        ephemeral: Data,
+        recipient: Data,
+        context: Data,
+        hedge: Data?
+    ) -> Data {
+        let material = hedge.map { rawBytes(shared) + $0 } ?? rawBytes(shared)
+        let prk = RoomCrypto.hmac(key: ephemeral + recipient, message: material)
+        return RoomCrypto.hmac(key: prk, message: (hedge == nil ? info : hedgedInfo) + context + Data([1]))
     }
 }
 

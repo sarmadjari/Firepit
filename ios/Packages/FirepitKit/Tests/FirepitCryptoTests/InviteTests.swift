@@ -133,12 +133,43 @@ struct InviteTests {
             $0.issuedAt = 1_788_000_000
             $0.window = 12_345
             $0.token = Data((0..<8).map { UInt8($0) })
+            $0.secret = Data((0..<InviteCodec.inviteSecretSize).map { UInt8(0xA0 + $0) })
         }
     }
 
     @Test func anInviteSurvivesTheRoundTrip() {
         let invite = validInvite()
-        #expect(InviteCodec.decode(InviteCodec.encode(invite)) == invite)
+        let decoded = InviteCodec.decode(InviteCodec.encode(invite))
+        #expect(decoded == invite)
+        #expect(decoded?.secret == invite.secret)
+    }
+
+    @Test func anInviteWithoutTheInPersonSecretIsUnusable() {
+        var broken = validInvite()
+        broken.secret = Data()
+        #expect(InviteCodec.decode(InviteCodec.encode(broken)) == nil)
+    }
+
+    @Test func qrPayloadLengthReportsTheInPersonSecretCost() {
+        let fullUser = User.with {
+            $0.id = "!12345678"
+            $0.longName = "Alex Firepit"
+            $0.shortName = "AF"
+            $0.publicKey = Data((0..<32).map { UInt8(0x50 + $0) })
+        }
+        var withSecret = validInvite()
+        withSecret.roomName = "12345678901"
+        withSecret.inviter = Meshchat_Inviter.with {
+            $0.nodeNum = 0x1234_5678
+            $0.user = fullUser
+        }
+        var withoutSecret = withSecret
+        withoutSecret.secret = Data()
+        let before = InviteCodec.encode(withoutSecret).components(separatedBy: "&d=").last?.count ?? 0
+        let after = InviteCodec.encode(withSecret).components(separatedBy: "&d=").last?.count ?? 0
+        print("Invite QR base64 chars without secret: \(before)")
+        print("Invite QR base64 chars with secret: \(after)")
+        #expect(after > before)
     }
 
     @Test func theEncodedFormIsAFirepitLink() {
@@ -205,10 +236,11 @@ struct InviteTests {
             $0.inviteID = 0x1234_5678
             $0.window = UInt32(bitPattern: RoomCrypto.windowFor(epochMillis: 1_000_000_000_000))
             $0.token = Data(repeating: 1, count: RoomCrypto.tokenSize)
+            $0.secret = Data((0..<InviteCodec.inviteSecretSize).map { UInt8(0x20 + $0) })
         }
     }
 
-    /// The whole point: neither key can be written into an invite any more.
+    /// The whole point: neither room key can be written into an invite any more.
     @Test func anInviteHasNowhereToPutARoomKey() throws {
         let fields: Data = try privacyInvite().serializedBytes()
         #expect(!fields.containsRun(roomPsk), "the channel key is in the code")
@@ -253,7 +285,8 @@ struct InviteTests {
         let phone = KeyEnvelope.generateKeyPair()
         let phonePublic = KeyEnvelope.publicBytes(phone.publicKey)
         let context = KeyEnvelope.contextOf(roomId: 0x0BAD_F00D, generation: 1, recipientNodeNum: 42, hour: 491_234)
-        let sealedKey = try KeyEnvelope.seal(recipient: phonePublic, secret: firepitKey, context: context)
+        let hedge = KeyEnvelope.inviteHedge(secret: privacyInvite().secret, roomId: 0x0BAD_F00D, inviteId: 0x1234_5678)
+        let sealedKey = try KeyEnvelope.seal(recipient: phonePublic, secret: firepitKey, context: context, hedge: hedge)
         let grant = Meshchat_RoomGrant.with {
             $0.answer = .granted
             $0.inviteID = 0x1234_5678
@@ -271,7 +304,7 @@ struct InviteTests {
         #expect(!bytes.containsRun(firepitKey), "the sealing key travels in the clear")
         #expect(decoded.roomPsk == roomPsk)
         #expect(
-            KeyEnvelope.open(privateKey: phone, ownPublic: phonePublic, sealed: decoded.sealedKey, context: context)
+            KeyEnvelope.open(privateKey: phone, ownPublic: phonePublic, sealed: decoded.sealedKey, context: context, hedge: hedge)
                 == firepitKey)
     }
 
@@ -322,6 +355,7 @@ struct ScanDisambiguationTests {
             $0.user = User.with { $0.publicKey = Data(repeating: 3, count: 32) }
         }
         $0.token = Data(repeating: 1, count: RoomCrypto.tokenSize)
+        $0.secret = Data((0..<InviteCodec.inviteSecretSize).map { UInt8(0x40 + $0) })
     }
 
     /// Built here rather than through our own encoder, so this is a link of the shape the official clients produce and
@@ -357,7 +391,7 @@ struct ScanDisambiguationTests {
         #expect(ChannelUrl.decode(junk) == nil)
     }
 
-    /// A code that is photographed is worth nothing on its own, because there is no key in it to take.
+    /// A code that is photographed is worth nothing on its own, because there is no room key in it to take.
     @Test func aFirepitInviteCarriesNoKeyMaterial() throws {
         let decoded = try #require(InviteCodec.decode(InviteCodec.encode(invite)))
         #expect(decoded.roomID == invite.roomID)

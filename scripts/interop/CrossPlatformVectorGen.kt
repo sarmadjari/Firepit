@@ -58,6 +58,11 @@ class CrossPlatformVectorGen {
         put("joinerScalar", hex(scalar(joiner.private))); put("joinerPkcs8", hex(joiner.private.encoded))
         put("joinerPublic", hex(joinerPub)); put("envelopeContext", hex(envCtx))
         put("envelope", hex(KeyEnvelope.seal(joinerPub, roomKey, envCtx)))
+        val inviteRandom = ByteArray(InviteCodec.INVITE_SECRET_SIZE) { (0x30 + it).toByte() }
+        val inviteHedge = KeyEnvelope.inviteHedge(inviteRandom, 0x0BADF00D, 0x12345678)
+        put("inviteRandom", hex(inviteRandom))
+        put("inviteHedge", hex(inviteHedge))
+        put("hedgedEnvelope", hex(KeyEnvelope.seal(joinerPub, roomKey, envCtx, inviteHedge)))
 
         val alice = KeyEnvelope.generateKeyPair(); val alicePub = KeyEnvelope.publicBytes(alice.public)
         val bob = KeyEnvelope.generateKeyPair(); val bobPub = KeyEnvelope.publicBytes(bob.public)
@@ -104,6 +109,7 @@ class CrossPlatformVectorGen {
             issued_at = 1_789_000_000,
             window = window,
             token = token.toByteString(),
+            secret = inviteRandom.toByteString(),
         )
         put("inviteUri", InviteCodec.encode(invite))
 

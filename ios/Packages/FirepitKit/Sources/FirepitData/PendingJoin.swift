@@ -55,6 +55,8 @@ public struct AwaitedRoom: Sendable, Equatable {
     public var inviter: Int32
     /// Our own radio's and phone's keys as one line, for reading aloud so the inviter can check them.
     public var ownFingerprint: String?
+    /// The 16-byte in-person QR secret, never sent on the radio, used to open the grant.
+    public var inviteSecret: Data
     /// Set when the answer came back and it was no.
     public var declined: Bool
 
@@ -64,6 +66,7 @@ public struct AwaitedRoom: Sendable, Equatable {
         inviteId: Int32,
         inviter: Int32,
         ownFingerprint: String? = nil,
+        inviteSecret: Data = Data(),
         declined: Bool = false
     ) {
         self.roomId = roomId
@@ -71,6 +74,7 @@ public struct AwaitedRoom: Sendable, Equatable {
         self.inviteId = inviteId
         self.inviter = inviter
         self.ownFingerprint = ownFingerprint
+        self.inviteSecret = inviteSecret
         self.declined = declined
     }
 }

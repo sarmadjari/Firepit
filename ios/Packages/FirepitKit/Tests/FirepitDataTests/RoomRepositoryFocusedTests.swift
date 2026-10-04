@@ -115,6 +115,7 @@ private func makeValidInvite(window: Int32 = 10, inviter: Int32 = 222) -> Meshch
     invite.issuedAt = 1
     invite.window = UInt32(bitPattern: window)
     invite.token = Data(repeating: 9, count: RoomCrypto.tokenSize)
+    invite.secret = Data((0..<InviteCodec.inviteSecretSize).map { UInt8(0x70 + $0) })
     return invite
 }
 

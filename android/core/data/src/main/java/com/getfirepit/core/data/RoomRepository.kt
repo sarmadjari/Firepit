@@ -61,6 +61,7 @@ import com.getfirepit.protocol.meshchat.RosterSync
 import com.getfirepit.protocol.meshchat.SealedDirect
 import com.getfirepit.protocol.meshchat.SealedDirectRefused
 import com.getfirepit.core.transport.RadioLink
+import java.security.SecureRandom
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -237,10 +238,18 @@ class RoomRepository @Inject constructor(
     private data class IssuedInvite(
         val roomId: Int,
         val inviteKey: ByteArray,
+        val secret: ByteArray,
         val issuedAt: Long,
         /** Set once somebody has been let in on it, which spends it. */
         val usedBy: Int? = null,
-    )
+    ) {
+        fun wipe() {
+            inviteKey.fill(0)
+            secret.fill(0)
+        }
+    }
+
+    private val inviteRandom = SecureRandom()
 
     /** Who we have seen in [roomId]. See [RoomMember] for what this can and cannot know. */
     fun observeMembers(roomId: Int): Flow<List<RoomMember>> = memberDao.observeRoom(roomId)
@@ -612,16 +621,24 @@ class RoomRepository @Inject constructor(
         val inviteKey = RoomCrypto.inviteKey(psk, roomId, generation)
         val window = RoomCrypto.windowFor(nowMillis)
 
+        forgetStaleInvites(nowMillis)
         // Stable for as long as this room keeps being offered, so a hello that
         // arrives several rotations later still points at the right room. The
         // rotating token, not this id, is what limits a stolen code. A spent id
         // is never reissued: that is what makes one code let one person in.
-        val inviteId = issuedInvites.entries
+        val existingInvite = issuedInvites.entries
             .firstOrNull { it.value.roomId == roomId && it.value.usedBy == null }
-            ?.key
-            ?: RoomCrypto.generateRoomId()
-        issuedInvites[inviteId] = IssuedInvite(roomId, inviteKey, nowMillis)
-        forgetStaleInvites(nowMillis)
+        val inviteId = existingInvite?.key ?: RoomCrypto.generateRoomId()
+        val issued = existingInvite?.value?.copy(issuedAt = nowMillis)
+            ?: IssuedInvite(
+                roomId = roomId,
+                inviteKey = inviteKey,
+                secret = ByteArray(InviteCodec.INVITE_SECRET_SIZE).also(inviteRandom::nextBytes),
+                issuedAt = nowMillis,
+            )
+        issuedInvites.put(inviteId, issued)?.let { old ->
+            if (old.secret !== issued.secret || old.inviteKey !== issued.inviteKey) old.wipe()
+        }
 
         return Invite(
             version = InviteCodec.VERSION,
@@ -632,7 +649,8 @@ class RoomRepository @Inject constructor(
             invite_id = inviteId,
             issued_at = (nowMillis / 1000L).toInt(),
             window = window,
-            token = RoomCrypto.token(inviteKey, myNodeNum, window).toByteString(),
+            token = RoomCrypto.token(issued.inviteKey, myNodeNum, window).toByteString(),
+            secret = issued.secret.toByteString(),
             // Which frequency slot we are on. A joiner on the other mode is
             // tuned elsewhere and would never hear this room at all.
             lora = LoRaProfile(mesh_mode = range.mode.value.wire),
@@ -671,6 +689,7 @@ class RoomRepository @Inject constructor(
             inviteId = invite.invite_id,
             inviter = inviter,
             ownFingerprint = ownFingerprint(),
+            inviteSecret = invite.secret,
         )
         askToJoin(invite)
     }
@@ -1319,6 +1338,7 @@ class RoomRepository @Inject constructor(
         // against later, and zero matches a packet from nobody.
         val inviter = invite.inviter ?: throw RoomError.InviteInvalid
         if (inviter.node_num == 0) throw RoomError.InviteInvalid
+        if (invite.secret.size != InviteCodec.INVITE_SECRET_SIZE) throw RoomError.InviteInvalid
 
         // A tokenless invite never stops working, so a copy kept from a room
         // that has long since emptied would still be worth presenting.
@@ -1751,12 +1771,29 @@ class RoomRepository @Inject constructor(
     suspend fun approveJoin(nodeNum: Int) {
         val myNodeNum = mesh.myNodeNum.value ?: throw RoomError.NotConnected
         val request = _pendingJoins.value.firstOrNull { it.nodeNum == nodeNum } ?: return
+        val issued = issuedInvites[request.inviteId] ?: run {
+            clearPending(nodeNum)
+            runCatching {
+                sendGrant(
+                    to = nodeNum,
+                    key = request.joinerKey,
+                    grant = RoomGrant(
+                        answer = RoomGrant.Answer.DECLINED,
+                        invite_id = request.inviteId,
+                        room_id = request.roomId,
+                    ),
+                )
+            }.onFailure { cause -> Log.w(TAG, "could not tell $nodeNum their invite expired", cause) }
+            Log.w(TAG, "invite ${request.inviteId} expired before approval; not granting")
+            throw RoomError.InviteExpired
+        }
         val room = ChannelSlotManager.findByRoomId(mesh.channels.value, request.roomId)
             ?: throw RoomError.InviteInvalid
         val psk = admin.getChannel(room.index)?.settings?.psk ?: throw RoomError.NotConnected
         // This hour's key: what they read starts when they are let in.
         val firepitKey = roomKeys.currentKey(request.roomId) ?: roomKeys.generate(request.roomId)
         val generation = roomKeys.generationOf(request.roomId)
+        val hedge = KeyEnvelope.inviteHedge(issued.secret, request.roomId, request.inviteId)
 
         try {
             sendGrant(
@@ -1775,17 +1812,19 @@ class RoomRepository @Inject constructor(
                         request.phoneKey.toByteArray(),
                         firepitKey.key,
                         KeyEnvelope.contextOf(request.roomId, generation, nodeNum, firepitKey.hour),
+                        hedge,
                     ).toByteString(),
                     key_hour = firepitKey.hour,
                 ),
             )
         } finally {
             firepitKey.key.fill(0)
+            hedge.fill(0)
         }
 
         // Spent: a code photographed over somebody's shoulder stops being worth
         // presenting the moment the person it was shown to is let in.
-        issuedInvites.computeIfPresent(request.inviteId) { _, issued -> issued.copy(usedBy = nodeNum) }
+        issuedInvites.remove(request.inviteId)?.wipe()
         clearPending(nodeNum)
 
         memberDao.record(request.roomId, nodeNum, System.currentTimeMillis(), invitedBy = myNodeNum)
@@ -1932,13 +1971,22 @@ class RoomRepository @Inject constructor(
             Log.w(TAG, "grant for room ${grant.room_id} carried no usable channel key; ignored")
             return
         }
+        val hedge = awaited.inviteSecret.toByteArray().takeIf { it.size == InviteCodec.INVITE_SECRET_SIZE }?.let {
+            KeyEnvelope.inviteHedge(it, grant.room_id, grant.invite_id)
+        } ?: run {
+            Log.w(TAG, "grant for room ${grant.room_id} has no in-person invite secret; ignored")
+            return
+        }
         val firepitKey = phoneKeys.open(
             grant.sealed_key.toByteArray(),
             KeyEnvelope.contextOf(grant.room_id, generation, myNodeNum, grant.key_hour),
+            hedge,
         )?.takeIf { it.size == RoomCipher.KEY_SIZE } ?: run {
+            hedge.fill(0)
             Log.w(TAG, "grant for room ${grant.room_id} carried no sealing key we could open; ignored")
             return
         }
+        hedge.fill(0)
 
         val slot = held?.index
             ?: ChannelSlotManager.nextFreeSlot(mesh.channels.value)
@@ -2149,7 +2197,11 @@ class RoomRepository @Inject constructor(
     }
 
     private fun forgetStaleInvites(nowMillis: Long) {
-        issuedInvites.entries.removeAll { nowMillis - it.value.issuedAt > INVITE_LEDGER_TTL_MS }
+        issuedInvites.forEach { (id, issued) ->
+            if (nowMillis - issued.issuedAt > INVITE_LEDGER_TTL_MS && issuedInvites.remove(id, issued)) {
+                issued.wipe()
+            }
+        }
     }
 
     private fun channelFor(index: Int, name: String, psk: ByteArray, roomId: Int) = Channel(

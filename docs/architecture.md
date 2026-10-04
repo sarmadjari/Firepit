@@ -116,13 +116,21 @@ Firepit room. The composer counts bytes, not letters, so Arabic or emoji show th
 
 Invites are QR codes, shown and scanned **in person**:
 
-1. The inviter opens the room's **Invite** screen. The QR code changes every few seconds and contains **no key**;
-   a photo of it only lets someone *ask* to join, for a short time.
+1. The inviter opens the room's **Invite** screen. The QR code changes every few seconds and contains no room key;
+   a photo of it only lets someone *ask* to join, for a short time. It does contain a 16-byte in-person secret that
+   never goes over the radio.
 2. The joiner scans it. Their phone shows the inviter's key fingerprint, which they compare with the inviter's
    screen, and asks to join.
 3. The inviter's phone shows **"Let them in?"** with the joiner's fingerprint. The inviter approves.
-4. The inviter's phone seals the room's keys to the joiner's phone key and sends them. The joiner's phone sets up
-   the room's channel on its own radio and keeps the firepit key. They are in.
+4. The inviter's phone seals the room's keys to the joiner's phone key and the QR secret, then sends them. The
+   joiner's phone sets up the room's channel on its own radio and keeps the firepit key. They are in.
+
+That QR secret is the post-quantum hedge for the Firepit key inside the grant. Someone who records the radio traffic
+today and later breaks the radio PKI and P-256 phone envelope still lacks the 128-bit secret that was only shown in
+person, so the room's phone-sealed key and the hourly keys that follow remain closed. The grant's radio layer and
+channel PSK remain classical. Later key rotations are already sealed under hourly room keys, so they do not need extra
+bytes, except that a removed member who held the old hourly key can use a future quantum break of their recorded inner
+envelope to recover the rotation.
 
 Removing someone **changes the room's key** for everyone who stays; the removed person keeps what they already
 received but can read nothing new.

@@ -333,7 +333,7 @@ Each feature: **Maps to** (stock Meshtastic mechanism) · **Wire facts** · **Fi
 2. Update `rooms.slot_index` by `room_id`, never by name. If the active location room moved, its precision moved with it (precision lives in the channel settings), so nothing else changes.
 3. Position-sharing side effect: if the removed room was the active location room, live sharing stops automatically (no channel with precision ≠ 0), which matches the design.
 
-**Steps — join via invite** → §6.8 (QR only). Decoding the invite writes nothing: it carries no key. The channel is written only when the `RoomGrant` arrives (§6.8.5), using the granted `room_id`, name, psk and precision. A grant for a `room_id` this phone already holds is only taken from a member of that room and only at a newer generation (catching up after a missed rotation); then the channel is overwritten in place.
+**Steps — join via invite** → §6.8 (QR only). Decoding the invite writes nothing: it carries no room key. The channel is written only when the `RoomGrant` arrives (§6.8.5), using the granted `room_id`, name, psk and precision. A grant for a `room_id` this phone already holds is only taken from a member of that room and only at a newer generation (catching up after a missed rotation); then the channel is overwritten in place.
 
 **Slot 0 (primary) provisioning — D-1:** written once at node setup, never shown as a channel. `Channel{ index: 0, role: PRIMARY, settings{ name: <mode-dependent>, psk: <32-byte app-wide key>, id: 0x4D455348, module_settings{ position_precision: 0 } } }`. **Group only:** `name = "MeshChat"` → the firmware hashes the name into its own frequency slot. **Group + public relays:** `name = ""` → the firmware hashes the modem-preset display name instead (`LongFast`), landing on the public mesh's slot, so public nodes relay our encrypted packets while the private key keeps identity and telemetry unreadable. Never set `lora.channel_num` by hand (leave 0 so the derivation stays correct in every region). Switching modes = one `set_channel` on slot 0; verify on hardware whether the radio re-tunes without a reboot (`Channels::onConfigChanged` bumps `radioGeneration`) and fall back to `reboot_seconds` if not. All nodes in a group must share mode **and** modem preset or they cannot hear each other: the invite carries both (`LoRaProfile`), and the joiner aligns before writing the room. On 2.8, US public nodes may default to LongTurbo; public-relay mode should follow the local public preset (`FromRadio.region_presets` default), group-only mode keeps LongFast.
 
@@ -611,7 +611,7 @@ message LoRaProfile {
 }
 message Inviter { uint32 node_num = 1; meshtastic.User user = 2; }   // user.public_key must be 32 bytes
 message Invite {
-  reserved 4, 13;                    // held open: a key here is in every photograph of the code
+  reserved 4, 13;                    // held open: room keys never go in a photographed code
   uint32 version = 1;                // 1
   fixed32 room_id = 2;               // == ChannelSettings.id
   string room_name = 3;              // ≤ 11 UTF-8 bytes
@@ -623,18 +623,24 @@ message Invite {
   uint32 issued_at = 10;             // unix seconds (inviter clock)
   uint32 window = 11;                // rotation window index
   bytes token = 12;                  // 8 bytes
+  bytes secret = 14;                 // 16 bytes, QR only, never on the radio
 }
 ```
 
-**The invite carries no key material.** A photograph of the code yields a room
-name, a room id, the inviter's public key and a token that stops being accepted
-in about thirty seconds. The keys arrive in a `RoomGrant` (§6.8.5), encrypted to
-the joiner, after a person approves.
+**The invite carries no room key material.** A photograph of the code yields a
+room name, a room id, the inviter's public key, a token that stops being
+accepted in about thirty seconds, and a 16-byte secret. That secret is shown
+only in the QR, never sent over LoRa, and is mixed into the `RoomGrant` key
+envelope (§6.8.5). The room keys arrive in the grant, encrypted to the joiner,
+after a person approves.
 
 #### 6.8.3 QR invites (in-person, rotating)
 
 - `invite_key = HMAC-SHA256(key = room_psk, msg = "meshchat-invite-v1" || room_id || generation)` — derivable by every current key-holder, so any member can invite (design).
 - Every `ROTATION_SECS = 8` s: `window = floor(now / ROTATION_SECS)`, `token = HMAC-SHA256(invite_key, inviter.node_num || window)[0:8]`, re-encode, re-render. The QR payload is `firepit://join?v=1&d=<base64url(Invite)>` (register the scheme on both platforms).
+- `secret` is exactly 16 random bytes generated once for an `invite_id`, stable across QR redraws while that id is
+  live, kept only in memory with the issued invite and dropped when it expires or is spent. Reopening an invite after
+  the ledger TTL gets a fresh id and secret. A code without the secret is unusable.
 - **The scanner cannot verify the token.** It is an HMAC under the room key, which the scanner does not hold and is not yet trusted with. It checks only that `window` is within ±2 of its own clock, which fails an obviously old photograph immediately; the inviter proves the token before granting anything.
 - The invite screen sets `FLAG_SECURE`, so the code cannot be screenshotted or screen-recorded into a photo backup.
 - Size: Invite ≈ 32 (inviter key) + names + ~40 → ~120 bytes → ~160-char base64url; QR version 7–9 at ECC M, fine for phone screens.
@@ -688,7 +694,7 @@ MeshPacket{ to: joiner, pki_encrypted: true, public_key: joiner_key, want_ack: t
             decoded: Data{ portnum: PRIVATE_APP,
                            payload: MeshChatControl{ room_grant: RoomGrant{ answer: GRANTED, invite_id, room_id, room_name, room_psk, generation, sealed_key, key_hour } } } }
 ```
-`generation` is the room key's current generation. `sealed_key` is that generation's key for the current hour, sealed to the joiner's `phone_key` and bound to `room_id`, `generation`, the joiner's node number and `key_hour`, the hour it belongs to (UTC hours since 1970). Room keys move on every hour, one way (security.md §3), so the joiner reads from the hour they were let in and nothing recorded before it. The radios at both ends decrypt the PKI layer, and anyone holding one can read its private key, but neither can open this. Declining sends the same message with `answer: DECLINED` and no keys, so the joiner is told rather than left waiting.
+`generation` is the room key's current generation. `sealed_key` is that generation's key for the current hour, sealed to the joiner's `phone_key` and bound to `room_id`, `generation`, the joiner's node number and `key_hour`, the hour it belongs to (UTC hours since 1970). For a grant, `KeyEnvelope` also mixes `inviteHedge(secret, room_id, invite_id)` into the envelope key, where the 16-byte secret came only from the QR. Room keys move on every hour, one way (security.md §3), so the joiner reads from the hour they were let in and nothing recorded before it. The radios at both ends decrypt the PKI layer, and anyone holding one can read its private key, but neither can open the Firepit room key inside; a future attacker who breaks that radio layer and the P-256 agreement still lacks the QR secret. The `room_psk` remains classical channel material. Declining sends the same message with `answer: DECLINED` and no keys, so the joiner is told rather than left waiting.
 
 The joiner accepts a grant only from the node it asked, only for the invite it asked about, and only while still waiting. The sender check is not redundant with the id checks: `room_id` and `invite_id` both travel in the QR code, so anyone who photographed it can name them and race the real inviter with their own keys, landing the scanner in a room they control. Answering *as the scanned node* needs that node's private key, and the joiner seeded its public key from the code in step A — so `packet.from == awaited.inviter` on an already-`pki_encrypted` packet is what makes the substitution fail. A grant for a room already held is taken only from a member of it, moving it forward (`TrustRules.mayTakeGrant`). It then writes the channel, stores both keys, and announces itself. The inviter broadcasts a sealed `RosterEvent{ JOINED, phone_key }` to the room and sends the roster privately to the joiner.
 

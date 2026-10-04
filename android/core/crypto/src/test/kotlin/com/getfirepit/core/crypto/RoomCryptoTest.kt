@@ -147,6 +147,33 @@ class InviteCodecTest {
         val decoded = InviteCodec.decode(InviteCodec.encode(invite))
 
         assertEquals(invite, decoded)
+        assertEquals(invite.secret, decoded?.secret)
+    }
+
+    @Test
+    fun `an invite without the in-person secret is unusable`() {
+        val broken = validInvite().copy(secret = ByteArray(0).toByteString())
+
+        assertNull(InviteCodec.decode(InviteCodec.encode(broken)))
+    }
+
+    @Test
+    fun `qr payload length reports the in-person secret cost`() {
+        val fullUser = User(
+            id = "!12345678",
+            long_name = "Alex Firepit",
+            short_name = "AF",
+            public_key = ByteArray(32) { (0x50 + it).toByte() }.toByteString(),
+        )
+        val withSecret = validInvite().copy(
+            room_name = "12345678901",
+            inviter = Inviter(node_num = 0x12345678, user = fullUser),
+        )
+        val withoutSecret = withSecret.copy(secret = ByteArray(0).toByteString())
+
+        println("Invite QR base64 chars without secret: ${InviteCodec.encode(withoutSecret).substringAfter("&d=").length}")
+        println("Invite QR base64 chars with secret: ${InviteCodec.encode(withSecret).substringAfter("&d=").length}")
+        assertTrue(InviteCodec.encode(withSecret).length > InviteCodec.encode(withoutSecret).length)
     }
 
     @Test
@@ -215,5 +242,6 @@ class InviteCodecTest {
         issued_at = 1_788_000_000,
         window = 12_345,
         token = ByteArray(8) { it.toByte() }.toByteString(),
+        secret = ByteArray(InviteCodec.INVITE_SECRET_SIZE) { (0xA0 + it).toByte() }.toByteString(),
     )
 }
