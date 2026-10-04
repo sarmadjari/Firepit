@@ -650,7 +650,7 @@ When only the arrangement changes, the map is moved, not rebuilt, so no tiles re
 
 **While sharing:** the chat side's header shows a small "Sharing · 43 min" chip in the room being shared to; the share pill stays on the map side.
 
-**As built so far (Android, 2026-10-04):**
+**As built so far (both apps, 2026-10-04):**
 - **What can be followed:** Firepit rooms, whose members the phone knows, and direct chats. A Meshtastic channel has no member list, so beside one the map keeps the filter last chosen.
 - **Where "Following Camp" shows:** it is the first of the map's Show chips, and it starts the line at the bottom of the map ("Following Camp · 3 people · 1 live"). A chip floating at the top would collide with Show everyone on a map side only 280 wide.
 - **Map to chat:** the person card has Message. A pin's sheet has "Open Camp", which opens the pin's room. Pins do not arrive as messages, so there is no message to scroll to.
@@ -662,7 +662,7 @@ When only the arrangement changes, the map is moved, not rebuilt, so no tiles re
 - **No bottom bar, tab bar or rail** while two or three panes show. The places it switches between are already on screen, and a rail would take about 80 that a folding phone's inner screen cannot spare: on an 8″ inner screen split on the fold, it can push the chat side below the 320 floor.
 - **Settings** opens from ⚙ in the chat list's top bar.
   - Android: across the whole window, with its own list beside the detail as today, and back returns to the two panes.
-  - iOS: a sheet, at full height on the iPhone Duo's inner screen and as a form sheet on iPad.
+  - iOS: a sheet, at full height on the iPhone Duo's inner screen and as a form sheet on iPad. As built: the system's sheet everywhere, with Done to close it.
 - **Back** (Android back gesture, iOS edge swipe) acts on the side touched last. In a conversation it returns to the list; on the map it closes the open sheet. Android's predictive back animates within that pane.
 - **In Chat only or Map only on a wide window,** the rail (Android) or tab bar (iOS) returns as it is today, with ◫ to go back to two panes.
 
@@ -709,6 +709,7 @@ When only the arrangement changes, the map is moved, not rebuilt, so no tiles re
   - Map side: filter chip · ◎ · ⬇ along the top, with ◫ in the top corner under the map's ⋮. Stacking the two keeps the top row free for notices and Show everyone on a map side only 280 wide.
 - **The layout glyph** is a split-view symbol from each platform's chrome icons (§9.6): two panes outlined in Firepit's 24 dp outlined set on Android, SF Symbols' `rectangle.split.2x1` on iOS.
 - **Motion:** changing arrangement moves the panes over 250 ms (emphasised deceleration). The map pane takes its new size once, at the end. While the divider is dragged, it follows the finger 1:1.
+  - As built: dragging shows a line where the divider will land, and both panes take their new width on release. Changing the arrangement is not animated yet, so it is also still under Reduce Motion.
 - **No new colours.** The divider is `outline` and the handle `text-2`.
 
 #### 6.11.12 Not in this stage

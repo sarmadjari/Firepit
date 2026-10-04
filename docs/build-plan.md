@@ -25,7 +25,7 @@ RTL-ready from Stage 3) · invite-link domain deferred until Stage 8.
 | 9 | Release prep: accessibility and RTL pass, R8, store listing | Not started |
 | 10 | The iPhone app | ✅ Built. An iPhone and an Android phone in one room over real radios is still to be tested |
 | 11 | Security within Meshtastic's limits: Signal-grade protections where the radio allows, with no message growing by a byte | In progress: Phase 1 done on both apps, Phase 2 next |
-| 12 | Large screens: the conversation and the map side by side on foldables, tablets and wide windows; the phone app in narrow ones | In progress. Decisions U-8 to U-14 locked 2026-10-04 (UX §11.4) |
+| 12 | Large screens: the conversation and the map side by side on foldables, tablets and wide windows; the phone app in narrow ones | Built on both apps, 2026-10-04 (decisions U-8 to U-14, UX §11.4). Open: the chat-to-map actions, which need features not built yet; the iOS 27.1 fold APIs; motion when the arrangement changes; Figma frames; device runs on an iPhone Duo, a Flip and a TriFold |
 
 ---
 
@@ -1073,6 +1073,28 @@ The design is UX §6.11; this is how it gets built.
      holds the map's redraw during a live resize.
    - **With two panes,** Settings opens in a sheet and the map side ignores the keyboard
      (`.ignoresSafeArea(.keyboard)`). There is one scene (`UIApplicationSupportsMultipleScenes` off).
+   - **Built (2026-10-04):**
+     - A universal app (device family 1,2, every iPad orientation).
+     - `AppShell` measures the window and asks the ported `PaneLayouts`: the tab view in one pane, otherwise
+       `SidePanes` with a divider made from `DragGesture`. The divider settles by the shared rule, is
+       adjustable for VoiceOver with the four actions, and gives a light haptic.
+     - Swapping sides flips the row's layout direction rather than reordering it, so neither side is rebuilt.
+     - `Workspace` holds the chat and map models, the chats stack and the map's camera, so changing layout
+       keeps them. The map's model lost a guard that stopped it observing after its screen was rebuilt;
+       tabs had the same latent bug.
+     - From 1200 points the chat side keeps its list, 320 wide, beside the conversation stack. The stack keeps
+       its place in the view tree between two and three panes, and opening from the list replaces what is open,
+       so what shows is always what Send goes to.
+     - The map's open sheets, the list's filter and the last room searched live in `Workspace`, so a change of
+       layout puts them back.
+     - A rebuilt screen appears before the old one goes, so per-screen bookkeeping is keyed by screen:
+       the invite QR's capture cover (`SecureWindow`) and the map's on-screen count both are.
+     - The side used last is noted on touch-down by a window recognizer that never takes the touch, so panning
+       the map counts and hovering does not.
+     - Settings › Appearance › Wide screens; layout choices in `@AppStorage`.
+     - Checked on iPad Pro 13″ and iPhone simulators.
+     - **Not built:** the iOS 27.1 APIs (`ArrangementView`, `ReservedRegion`, `onHingeChange`), because
+       Xcode 27.0 ships the 27.0 SDK. Until then iOS sees no fold, and the custom split is all it uses.
 4. **The two sides together (both apps).**
    - **Map:** a filter that follows the open conversation, and a `focus` request (member, pin or point)
      the chat side can make. Both live in shared workspace state, not in either screen.
@@ -1081,7 +1103,7 @@ The design is UX §6.11; this is how it gets built.
    - **Map side:** Message opens the direct chat on the chat side; pins and sharing default to the open
      room; Show in chat on a pin.
    - **On a phone,** the same actions switch to the Map tab with the focus applied.
-   - **Built on Android (2026-10-04):**
+   - **Built on Android and iOS (2026-10-04), the same rules in both (`MapSelectionTest`, `MapSelectionTests`):**
      - The map follows the open Firepit room or direct chat while both sides are on screen. Choosing a
        filter stops following, and opening another conversation starts it again.
      - Message on the person card, Open the room on a pin, and pins and sharing defaulting to the open room.

@@ -44,6 +44,7 @@ struct MapTallyBar: View {
 struct MapOptionsSheet: View {
     let state: MapUiState
     let onFilter: (MapFilter) -> Void
+    var onFollow: () -> Void = {}
     let onShare: () -> Void
     let onCentre: () -> Void
     let onAskEveryone: () -> Void
@@ -55,8 +56,15 @@ struct MapOptionsSheet: View {
         VStack(alignment: .leading, spacing: FirepitSpacing.s) {
             SectionLabel("Show")
             ChipRow {
+                // Beside a conversation the map follows it (UX §6.11.6); either filter stops that.
+                if let open = state.followable {
+                    FirepitChip("Following \(open.name)", selected: state.following != nil, action: onFollow)
+                }
                 ForEach(MapFilter.allCases) { choice in
-                    FirepitChip(LocalizedStringKey(choice.label), selected: state.filter == choice) {
+                    FirepitChip(
+                        LocalizedStringKey(choice.label),
+                        selected: state.following == nil && state.filter == choice
+                    ) {
                         onFilter(choice)
                     }
                 }
@@ -82,7 +90,16 @@ struct MapOptionsSheet: View {
     }
 
     private var filterCaption: String {
-        switch state.filter {
+        let hidden = state.hiddenByFilter > 0 ? String(localized: " \(state.hiddenByFilter) hidden.") : ""
+        switch state.following {
+        case .room(_, let name)?:
+            return String(localized: "\(name)'s members and pins.") + hidden
+        case .direct(_, let name)?:
+            return String(localized: "\(name) and you.") + hidden
+        case nil:
+            break
+        }
+        return switch state.filter {
         case .all:
             String(localized: "Everyone this radio has heard.")
         case .ours:
@@ -166,6 +183,9 @@ struct DropPinSheet: View {
 
 struct PinSheet: View {
     let pin: MapPin
+    /// The pin's room, which Open takes the chat side to; nil when it is not one of yours.
+    var roomName: String?
+    var onOpenRoom: (() -> Void)?
     let canRemove: Bool
     let onRemove: () -> Void
     @Environment(\.dismiss) private var dismiss
@@ -183,6 +203,13 @@ struct PinSheet: View {
             Text(verbatim: coordinateText(pin))
                 .font(FirepitFont.bodySmall)
                 .foregroundStyle(FirepitColors.textSecondary)
+            if let roomName, let onOpenRoom {
+                Button("Open \(roomName)") {
+                    dismiss()
+                    onOpenRoom()
+                }
+                .buttonStyle(.outlined)
+            }
             if canRemove {
                 Button("Remove for everyone", role: .destructive) {
                     onRemove()
@@ -203,6 +230,8 @@ struct PersonSheet: View {
     let marker: MapMarker
     let ask: LocationAsk
     let onAsk: () -> Void
+    /// Opens a direct chat with them, on the chat side or in Chats.
+    var onMessage: (() -> Void)?
     let onDismiss: () -> Void
 
     var body: some View {
@@ -221,6 +250,10 @@ struct PersonSheet: View {
             HStack {
                 Button("Close", action: onDismiss)
                     .buttonStyle(.outlined)
+                if let onMessage {
+                    Button("Message", action: onMessage)
+                        .buttonStyle(.outlined)
+                }
                 Button(isAsking ? "Asking…" : "Ask where they are", action: onAsk)
                     .buttonStyle(.prominent)
                     .disabled(isAsking)

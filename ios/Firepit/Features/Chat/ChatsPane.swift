@@ -4,8 +4,9 @@ import FirepitProtocol
 import SwiftUI
 
 /// Where the chats stack can go. Android draws the room screens as overlays that take the whole display; on iPhone
-/// they are pushed, which gives them the same full-screen presence and the system back gesture.
-private enum ChatRoute: Hashable {
+/// they are pushed, which gives them the same full-screen presence and the system back gesture. The stack itself
+/// lives in `Workspace`, so it outlives a change of layout.
+enum ChatRoute: Hashable {
     /// `searching` opens the room with its search bar up, for the list's search button.
     case channel(Int, searching: Bool = false)
     case direct(Int32)
@@ -25,19 +26,37 @@ private enum ChatRoute: Hashable {
 /// android/app/…/chat/ChatsPane.kt.
 struct ChatsPane: View {
     let app: AppContainer
+    let workspace: Workspace
 
     @State private var viewModel: ChatsViewModel
     @State private var rooms: RoomsViewModel
-    @State private var path: [ChatRoute] = []
     @State private var creating = false
-    @State private var filter = ChannelFilter.all
-    /// The last room opened, which the list's search button returns to: search reads a conversation, so it needs one.
-    @State private var lastChannel: Int?
+    @Environment(\.besideMap) private var besideMap
+    @Environment(\.listBesideConversation) private var listBesideConversation
 
+    /// A chats screen of its own, for a screen shown on its own.
     init(app: AppContainer) {
+        self.init(app: app, workspace: Workspace(app: app))
+    }
+
+    /// The chat side of the shell, whose models and stack outlive a change of layout.
+    init(app: AppContainer, workspace: Workspace) {
         self.app = app
-        _viewModel = State(initialValue: ChatsViewModel(app: app))
-        _rooms = State(initialValue: RoomsViewModel(app: app))
+        self.workspace = workspace
+        _viewModel = State(initialValue: workspace.chats)
+        _rooms = State(initialValue: workspace.rooms)
+    }
+
+    /// The stack, read and written through the workspace.
+    private var path: [ChatRoute] {
+        get { workspace.chatPath }
+        nonmutating set { workspace.chatPath = newValue }
+    }
+
+    /// The last room opened, which the list's search button returns to: search reads a conversation, so it needs one.
+    private var lastChannel: Int? {
+        get { workspace.lastChannel }
+        nonmutating set { workspace.lastChannel = newValue }
     }
 
     #if DEBUG
@@ -52,28 +71,30 @@ struct ChatsPane: View {
 
     var body: some View {
         @Bindable var router = app.router
-        NavigationStack(path: $path) {
-            ChannelList(
-                state: viewModel.uiState,
-                rooms: rooms.uiState,
-                filter: $filter,
-                canSearch: lastChannel != nil,
-                select: { open(channel: $0) },
-                openDirect: { open(direct: $0) },
-                toggleMute: viewModel.toggleMute,
-                newRoom: { creating = true },
-                joinRoom: {
-                    // A leftover "Created Camp" notice would otherwise close the scanner the moment it opens.
-                    rooms.clearMessages()
-                    path.append(.join)
-                },
-                search: {
-                    guard let lastChannel else { return }
-                    open(channel: lastChannel, searching: true)
-                },
-                dismissMessage: rooms.clearMessages
-            )
-            .navigationDestination(for: ChatRoute.self, destination: destination)
+        @Bindable var workspace = workspace
+        // The conversation stack is the row's last child either way, so going between two and three panes keeps it,
+        // and whatever is open in it.
+        HStack(spacing: 0) {
+            if listBesideConversation {
+                // Three panes (UX §6.11.3): the list keeps its own width beside the conversation.
+                NavigationStack { channelList }
+                    .frame(width: PaneLayouts.listWidth)
+                FirepitColors.outline.frame(width: 1).ignoresSafeArea()
+            }
+            NavigationStack(path: $workspace.chatPath) {
+                Group {
+                    if listBesideConversation {
+                        Text("Pick a channel to start reading.")
+                            .font(FirepitFont.bodyMedium)
+                            .foregroundStyle(FirepitColors.textSecondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(FirepitColors.surface)
+                    } else {
+                        channelList
+                    }
+                }
+                .navigationDestination(for: ChatRoute.self, destination: destination)
+            }
         }
         .sheet(isPresented: $creating) {
             CreateRoomDialog(
@@ -92,7 +113,7 @@ struct ChatsPane: View {
             MakeRadioPrivateDialog(onMakePrivate: rooms.makeRadioPrivate, onKeepPublic: rooms.keepRadioPublic)
                 .interactiveDismissDisabled()
         }
-        .onChange(of: path) { old, new in leave(from: old, to: new) }
+        .onChange(of: workspace.chatPath) { old, new in leave(from: old, to: new) }
         .onChange(of: router.pendingChannel, initial: true) { _, channel in
             guard let channel else { return }
             router.pendingChannel = nil
@@ -116,6 +137,30 @@ struct ChatsPane: View {
         #if DEBUG
             .task { await startDebug() }
         #endif
+    }
+
+    private var channelList: some View {
+        @Bindable var workspace = workspace
+        return ChannelList(
+            state: viewModel.uiState,
+            rooms: rooms.uiState,
+            filter: $workspace.chatFilter,
+            canSearch: lastChannel != nil,
+            select: { open(channel: $0) },
+            openDirect: { open(direct: $0) },
+            toggleMute: viewModel.toggleMute,
+            newRoom: { creating = true },
+            joinRoom: {
+                // A leftover "Created Camp" notice would otherwise close the scanner the moment it opens.
+                rooms.clearMessages()
+                path.append(.join)
+            },
+            search: {
+                guard let lastChannel else { return }
+                open(channel: lastChannel, searching: true)
+            },
+            dismissMessage: rooms.clearMessages
+        )
     }
 
     #if DEBUG
@@ -160,6 +205,7 @@ struct ChatsPane: View {
                 rooms: rooms,
                 index: index,
                 startSearching: searching,
+                sharing: besideMap ? workspace.sharing.state : nil,
                 showMembers: { channel in
                     path.append(
                         .members(roomId: channel.id, roomName: channel.displayName, channelIndex: channel.index))
@@ -202,15 +248,17 @@ struct ChatsPane: View {
         }
     }
 
+    /// Opening a conversation starts the stack from it. On a phone the stack is empty here anyway; with the list
+    /// beside the conversation, stacking one on another would let Back show one while Send went to the other.
     private func open(channel index: Int, searching: Bool = false) {
         lastChannel = index
         viewModel.select(index)
-        path.append(.channel(index, searching: searching))
+        path = [.channel(index, searching: searching)]
     }
 
     private func open(direct peer: Int32) {
         viewModel.openDirect(peer)
-        path.append(.direct(peer))
+        path = [.direct(peer)]
     }
 
     /// Back gestures and buttons both land here, so the bookkeeping cannot be skipped by how somebody leaves.
@@ -227,6 +275,8 @@ struct ChatsPane: View {
             viewModel.select(nil)
         } else if case .channel(let index, _) = new.last, viewModel.uiState.selected != index {
             viewModel.select(index)
+        } else if case .direct(let peer) = new.last, viewModel.uiState.directPeer != peer {
+            viewModel.openDirect(peer)
         }
     }
 }
@@ -335,6 +385,8 @@ private struct ChannelList: View {
                 Button(action: search) { Image(icon: .search) }
                     .disabled(!canSearch)
                     .accessibilityLabel(Text("Search messages"))
+                LayoutMenu()
+                WideScreenSettingsButton()
                 Button(action: newRoom) { Image(icon: .add) }
                     .disabled(!canAddRoom)
                     .accessibilityLabel(Text("New room"))
@@ -577,6 +629,8 @@ private struct ChannelChat: View {
     let rooms: RoomsViewModel
     let index: Int
     let showMembers: (RoomChannel) -> Void
+    /// Location sharing, while the map sits beside the chat; nil otherwise.
+    var sharing: SharingUiState?
 
     @State private var searching: Bool
     @State private var memberCount: Int?
@@ -586,11 +640,13 @@ private struct ChannelChat: View {
         rooms: RoomsViewModel,
         index: Int,
         startSearching: Bool,
+        sharing: SharingUiState? = nil,
         showMembers: @escaping (RoomChannel) -> Void
     ) {
         self.viewModel = viewModel
         self.rooms = rooms
         self.index = index
+        self.sharing = sharing
         self.showMembers = showMembers
         _searching = State(initialValue: startSearching)
     }
@@ -649,6 +705,16 @@ private struct ChannelChat: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationTitle(Text(verbatim: channel?.displayName ?? ""))
         .toolbar(.hidden, for: .tabBar)
+        // The map beside it shows the pill; this says which conversation the location goes to, where the people
+        // reading it are.
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let sharing, let channel, sharing.roomId == channel.id {
+                SharingChip(state: sharing)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, FirepitSpacing.screenMargin)
+                    .padding(.vertical, FirepitSpacing.xs)
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .principal) {
                 if let channel {
@@ -662,6 +728,7 @@ private struct ChannelChat: View {
                     Image(icon: .search)
                 }
                 .accessibilityLabel(Text("Search messages"))
+                LayoutMenu()
                 // Room actions live in Room info, so the bar stays narrow enough for the room's name and status.
                 if let channel, channel.isRoom {
                     Button {
@@ -818,6 +885,9 @@ private struct DirectChat: View {
                     }
                 }
                 .accessibilityElement(children: .combine)
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                LayoutMenu()
             }
         }
     }

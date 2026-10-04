@@ -208,7 +208,7 @@ Same features, screens, wording and encryption. These differences come from what
 | Bluetooth pairings | Lists radios the phone has paired | iOS does not show apps the phone's pairings; only radios Firepit found are listed |
 | Message database at rest | Encrypted with SQLCipher under a key the Keystore protects | Protected by iOS file encryption, which opens after the first unlock following a restart. Adding SQLCipher would match Android. |
 | Reinstalling | Uninstalling wipes everything | iOS keeps the Keychain, so the phone key and room keys survive a reinstall |
-| Large screens | List and conversation side by side on foldables and tablets | iPhone layout. Stage 12 brings both apps to the same thing: the conversation and the map side by side on the iPhone Duo's inner screen, foldables, tablets and wide windows (UX §6.11) |
+| Large screens | Chat and map side by side from 600 dp wide, three panes from 1200, map above conversation when half-folded across the screen; the divider locks to a fold (UX §6.11) | The same rule on iPhone and iPad, now one universal app. The iOS 27.0 SDK reports no fold, so the divider never locks and nothing stacks until the iOS 27.1 SDK. Settings opens as a sheet, and sheets on iPad are the system's form sheets rather than kept to one pane |
 | Reading state | Leaving a chat keeps it selected (counted as read) | Leaving a chat stops counting it as read |
 
 ---

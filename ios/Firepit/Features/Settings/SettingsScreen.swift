@@ -29,14 +29,22 @@ struct SettingsScreen: View {
     @State private var radioModel: RadioViewModel
     @State private var sharingModel: SharingViewModel
     private let scrollTo: SettingsPageSection?
+    /// Set when Settings is a sheet over two panes: it gets a Done button (UX §6.11.7).
+    private let onClose: (() -> Void)?
 
-    init(app: AppContainer) {
-        self.init(app: app, initialRoute: nil)
+    init(app: AppContainer, onClose: (() -> Void)? = nil) {
+        self.init(app: app, initialRoute: nil, onClose: onClose)
     }
 
-    init(app: AppContainer, initialRoute: SettingsSection?, scrollTo: SettingsPageSection? = nil) {
+    init(
+        app: AppContainer,
+        initialRoute: SettingsSection?,
+        scrollTo: SettingsPageSection? = nil,
+        onClose: (() -> Void)? = nil
+    ) {
         self.app = app
         self.scrollTo = scrollTo
+        self.onClose = onClose
         _path = State(initialValue: initialRoute.map { [$0] } ?? [])
         _model = State(initialValue: SettingsViewModel(app: app))
         _radioModel = State(initialValue: RadioViewModel(app: app))
@@ -53,6 +61,13 @@ struct SettingsScreen: View {
                 onOpen: { path.append($0) }
             )
             .navigationDestination(for: SettingsSection.self, destination: destination)
+            .toolbar {
+                if let onClose {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done", action: onClose)
+                    }
+                }
+            }
         }
         .task { await model.observe() }
         .task { await radioModel.observe() }
@@ -218,6 +233,8 @@ private struct SettingsPage: View {
                 }
                 .id(SettingsPageSection.appearance)
 
+                WideScreenSection()
+
                 Section {
                     LabeledRow(
                         title: "Firepit",
@@ -289,6 +306,67 @@ private struct SettingsPage: View {
         .pickerStyle(.menu)
         .tint(FirepitColors.primary)
         .disabled(!enabled)
+    }
+}
+
+/// Settings › Appearance › Wide screens (UX §6.11.4), shown while the window is wide enough for two panes. Ported
+/// from android/app/…/settings/SettingsScreen.kt.
+private struct WideScreenSection: View {
+    @Environment(\.wideScreen) private var controls
+    @Environment(\.layoutDirection) private var direction
+    private var preferences = LayoutPreferences()
+
+    /// The side as the setting names it, whatever the reading direction.
+    private enum PhysicalSide: String, CaseIterable {
+        case right
+        case left
+
+        var label: String {
+            switch self {
+            case .right: String(localized: "Right")
+            case .left: String(localized: "Left")
+            }
+        }
+    }
+
+    var body: some View {
+        if controls?.canSplit == true {
+            let choice = preferences.choice
+            let rtl = direction == .rightToLeft
+            let mapOnRight = (choice.mapSide == .end) != rtl
+            Section {
+                Picker(
+                    "Layout",
+                    selection: Binding(get: { choice.arrangement }, set: { controls?.onArrange($0) ?? preferences.setArrangement($0) })
+                ) {
+                    ForEach(PaneArrangement.allCases, id: \.self) { option in
+                        Text(verbatim: option.label).tag(option)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(FirepitColors.primary)
+                Picker(
+                    "Map on the",
+                    selection: Binding(
+                        get: { mapOnRight ? PhysicalSide.right : .left },
+                        set: { side in preferences.setMapSide((side == .right) != rtl ? .end : .start) }
+                    )
+                ) {
+                    ForEach(PhysicalSide.allCases, id: \.self) { side in
+                        Text(verbatim: side.label).tag(side)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(FirepitColors.primary)
+                .disabled(choice.arrangement != .chatAndMap)
+                Button("Reset the divider", action: preferences.resetDivider)
+                    .tint(FirepitColors.primary)
+            } header: {
+                Text("Wide screens")
+            } footer: {
+                Text("When the screen is wide enough for two: unfolded, a tablet, or a wide window.")
+            }
+        }
     }
 }
 

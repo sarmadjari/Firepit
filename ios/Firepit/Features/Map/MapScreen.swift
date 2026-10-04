@@ -7,24 +7,64 @@ import SwiftUI
 /// The live Firepit map. Ported from android/app/…/map/MapScreen.kt.
 struct MapScreen: View {
     let app: AppContainer
+    let workspace: Workspace
 
     @State private var model: MapViewModel
     @State private var sharingModel: SharingViewModel
     @State private var mapView: MLNMapView?
-    @State private var hasFramedMarkers = false
-    @State private var pickingRoom = false
-    @State private var showingOptions = false
-    @State private var droppingAt: DropTarget?
-    @State private var openPin: MapPin?
-    @State private var openMarker: MapMarker?
-    @State private var showingOfflineAreas = false
+    /// Which screen this is, so the model counts it on screen exactly once.
+    @State private var screenId = UUID()
     @State private var pendingShare: PendingShare?
     @Environment(\.openURL) private var openURL
 
+    /// A map of its own, for a screen shown on its own.
     init(app: AppContainer) {
+        self.init(app: app, workspace: Workspace(app: app))
+    }
+
+    /// The map side of the shell, whose models and camera outlive a change of layout.
+    init(app: AppContainer, workspace: Workspace) {
         self.app = app
-        _model = State(initialValue: MapViewModel(app: app))
-        _sharingModel = State(initialValue: SharingViewModel(location: app.location, mesh: app.mesh))
+        self.workspace = workspace
+        _model = State(initialValue: workspace.map)
+        _sharingModel = State(initialValue: workspace.sharing)
+    }
+
+    // The open sheets live in the workspace, so a change of layout puts them back (UX §6.11.5).
+    private var pickingRoom: Bool {
+        get { workspace.mapSheets.pickingRoom }
+        nonmutating set { workspace.mapSheets.pickingRoom = newValue }
+    }
+
+    private var showingOptions: Bool {
+        get { workspace.mapSheets.showingOptions }
+        nonmutating set { workspace.mapSheets.showingOptions = newValue }
+    }
+
+    private var droppingAt: DropTarget? {
+        get { workspace.mapSheets.droppingAt }
+        nonmutating set { workspace.mapSheets.droppingAt = newValue }
+    }
+
+    private var openPin: MapPin? {
+        get { workspace.mapSheets.openPin }
+        nonmutating set { workspace.mapSheets.openPin = newValue }
+    }
+
+    private var openMarker: MapMarker? {
+        get { workspace.mapSheets.openMarker }
+        nonmutating set { workspace.mapSheets.openMarker = newValue }
+    }
+
+    private var showingOfflineAreas: Bool {
+        get { workspace.mapSheets.showingOfflineAreas }
+        nonmutating set { workspace.mapSheets.showingOfflineAreas = newValue }
+    }
+
+    /// Kept on the model, so a rebuilt map does not pull the camera to everyone again.
+    private var hasFramedMarkers: Bool {
+        get { model.framed }
+        nonmutating set { model.framed = newValue }
     }
 
     #if DEBUG
@@ -38,7 +78,8 @@ struct MapScreen: View {
     #endif
 
     var body: some View {
-        NavigationStack {
+        @Bindable var workspace = workspace
+        return NavigationStack {
             ZStack(alignment: .top) {
                 // The map runs under the status bar; the controls over it keep to the safe area.
                 mapBody
@@ -52,7 +93,7 @@ struct MapScreen: View {
             .task { await model.observe() }
             .task { await sharingModel.observe() }
             .onAppear(perform: mapAppeared)
-            .onDisappear { model.setMapVisible(false) }
+            .onDisappear { model.setMapVisible(false, screen: screenId) }
             .onChange(of: model.ask) { _, ask in
                 if case .swept = ask, openMarker == nil {
                     Task {
@@ -61,9 +102,9 @@ struct MapScreen: View {
                     }
                 }
             }
-            .sheet(isPresented: $showingOptions) { optionsSheet.fittedSheet() }
-            .sheet(isPresented: $pickingRoom) { shareSheet.fittedSheet() }
-            .sheet(item: $droppingAt) { target in
+            .sheet(isPresented: $workspace.mapSheets.showingOptions) { optionsSheet.fittedSheet() }
+            .sheet(isPresented: $workspace.mapSheets.pickingRoom) { shareSheet.fittedSheet() }
+            .sheet(item: $workspace.mapSheets.droppingAt) { target in
                 DropPinSheet(
                     onDismiss: { droppingAt = nil },
                     onDrop: { name in
@@ -77,9 +118,20 @@ struct MapScreen: View {
                 )
                 .fittedSheet()
             }
-            .sheet(item: $openPin) { pin in
+            .sheet(item: $workspace.mapSheets.openPin) { pin in
+                // Older pins predate the room id and know only their slot.
+                let room =
+                    model.uiState.rooms.first { $0.id == pin.roomId && pin.roomId != 0 }
+                    ?? model.uiState.rooms.first { $0.index == pin.channel && $0.isRoom }
                 PinSheet(
                     pin: pin,
+                    roomName: room?.displayName,
+                    onOpenRoom: room.map { found in
+                        {
+                            openPin = nil
+                            app.router.open(channel: found.index)
+                        }
+                    },
                     canRemove: pin.canEdit(myNodeNum: model.uiState.myNodeNum),
                     onRemove: {
                         model.removePin(pin)
@@ -88,11 +140,16 @@ struct MapScreen: View {
                 )
                 .fittedSheet()
             }
-            .sheet(item: $openMarker) { marker in
+            .sheet(item: $workspace.mapSheets.openMarker) { marker in
                 PersonSheet(
                     marker: marker,
                     ask: model.ask,
                     onAsk: { model.askWhereTheyAre(nodeNum: marker.node.nodeNum, name: marker.name) },
+                    onMessage: {
+                        openMarker = nil
+                        model.clearAsk()
+                        app.router.openDirect(marker.node.nodeNum)
+                    },
                     onDismiss: {
                         openMarker = nil
                         model.clearAsk()
@@ -100,7 +157,7 @@ struct MapScreen: View {
                 )
                 .fittedSheet()
             }
-            .navigationDestination(isPresented: $showingOfflineAreas) {
+            .navigationDestination(isPresented: $workspace.mapSheets.showingOfflineAreas) {
                 OfflineMapsScreen(
                     model: OfflineMapsViewModel(
                         repository: app.offlineMaps, mapPreferences: app.mapPreferences, mesh: app.mesh)
@@ -123,7 +180,14 @@ struct MapScreen: View {
                 CoverageMask().apply(style: style, areas: model.areas, enabled: model.offlineOnly)
                 frameMarkersIfNeeded()
             },
-            onCameraIdle: { _ in },
+            onCameraIdle: { view in
+                model.camera = MapCamera(
+                    latitude: view.centerCoordinate.latitude,
+                    longitude: view.centerCoordinate.longitude,
+                    zoom: view.zoomLevel
+                )
+            },
+            initialCamera: model.camera,
             markers: model.uiState.markers,
             pins: model.uiState.pins,
             showsUserLocation: true,
@@ -140,7 +204,18 @@ struct MapScreen: View {
             HStack(alignment: .top) {
                 noticeView
                 Spacer(minLength: FirepitSpacing.s)
-                mapOptionsButton
+                // ◫ under ⋮ rather than beside it: a map side can be 280 wide, and the top row already holds the
+                // notice and Show everyone.
+                VStack(spacing: FirepitSpacing.s) {
+                    mapOptionsButton
+                    LayoutMenu {
+                        Image(systemName: "rectangle.split.2x1")
+                            .font(.headline)
+                            .foregroundStyle(FirepitColors.textPrimary)
+                            .frame(width: 48, height: 48)
+                            .floatingControlBackground(in: .rect(cornerRadius: FirepitRadius.large))
+                    }
+                }
             }
             // Top centre, where Android has it: online, the map waits to be asked before going to where people are.
             .overlay(alignment: .top) {
@@ -186,6 +261,7 @@ struct MapScreen: View {
         MapOptionsSheet(
             state: model.uiState,
             onFilter: model.setFilter,
+            onFollow: model.resumeFollowing,
             onShare: { pickingRoom = true },
             onCentre: { frameAll(force: true) },
             onAskEveryone: model.askEveryone,
@@ -197,6 +273,10 @@ struct MapScreen: View {
     private var shareSheet: some View {
         ShareLocationSheet(
             state: sharingModel.state,
+            preferredRoomId: {
+                if case .room(let roomId, _)? = model.uiState.followable { return roomId }
+                return nil
+            }(),
             onDismiss: { pickingRoom = false },
             onShare: { roomId, choice in
                 pickingRoom = false
@@ -227,7 +307,7 @@ struct MapScreen: View {
         if LocationPermission.isDenied {
             model.reportPermissionDenied()
         } else {
-            model.setMapVisible(true)
+            model.setMapVisible(true, screen: screenId)
         }
     }
 
@@ -257,7 +337,7 @@ private struct PendingShare: Identifiable {
 }
 
 /// Where a pin is about to be dropped, identified so a sheet can present it.
-private struct DropTarget: Identifiable {
+struct DropTarget: Identifiable {
     let id = UUID()
     let coordinate: CLLocationCoordinate2D
 }

@@ -175,6 +175,35 @@ struct SharingBanner: View {
     }
 }
 
+/// "Sharing · 43m left", under the header of the conversation whose room gets your location, while the map sits
+/// beside it (UX §6.11.6). Ported from android/app/…/location/ShareLocationUi.kt.
+struct SharingChip: View {
+    let state: SharingUiState
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            HStack(spacing: FirepitSpacing.xs) {
+                Circle()
+                    .fill(state.paused ? FirepitColors.stale : FirepitColors.live)
+                    .frame(width: 8, height: 8)
+                    .accessibilityHidden(true)
+                Text(verbatim: text(now: context.date))
+                    .font(FirepitFont.bodySmall)
+                    .foregroundStyle(FirepitColors.textSecondary)
+            }
+            .padding(.horizontal, FirepitSpacing.s)
+            .padding(.vertical, FirepitSpacing.xs)
+            .background(FirepitColors.surface2, in: Capsule())
+        }
+    }
+
+    private func text(now: Date) -> String {
+        if state.paused { return String(localized: "Sharing paused") }
+        guard let endsAt = state.endsAt else { return String(localized: "Sharing until you turn it off") }
+        return String(localized: "Sharing · \(timeLeft(endsAt, now: now))")
+    }
+}
+
 /// Choose a room and a length of time, or stop.
 ///
 /// Duration is asked at the same moment as the room rather than hidden behind a later setting: the two answers
@@ -188,8 +217,10 @@ struct ShareLocationSheet: View {
     @State private var room: Int32?
     @State private var choice: ShareDuration
 
+    /// `preferredRoomId`: the room open beside the map, offered first when nothing is being shared yet (UX §6.11.6).
     init(
         state: SharingUiState,
+        preferredRoomId: Int32? = nil,
         onDismiss: @escaping () -> Void,
         onShare: @escaping (Int32, ShareDuration) -> Void,
         onStop: @escaping () -> Void
@@ -198,7 +229,8 @@ struct ShareLocationSheet: View {
         self.onDismiss = onDismiss
         self.onShare = onShare
         self.onStop = onStop
-        _room = State(initialValue: state.roomId ?? state.rooms.first?.id)
+        let preferred = preferredRoomId.flatMap { id in state.rooms.contains { $0.id == id } ? id : nil }
+        _room = State(initialValue: state.roomId ?? preferred ?? state.rooms.first?.id)
         _choice = State(initialValue: state.choice)
     }
 

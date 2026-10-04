@@ -34,8 +34,22 @@ extension View {
 
     /// Holds the window secure while this view is on screen, as Android's invite screen does.
     func holdsSecureWindow(_ secureWindow: SecureWindow, as holder: String) -> some View {
-        onAppear { secureWindow.hold(holder) }
-            .onDisappear { secureWindow.release(holder) }
+        modifier(SecureWindowHold(secureWindow: secureWindow, holder: holder))
+    }
+}
+
+/// Each screen holds under a name of its own. A screen rebuilt for a new layout appears before the old one goes, and
+/// the old one's release must not lift the new one's hold while the invite QR is still showing.
+private struct SecureWindowHold: ViewModifier {
+    let secureWindow: SecureWindow
+    let holder: String
+
+    @State private var instance = UUID()
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { secureWindow.hold("\(holder)-\(instance)") }
+            .onDisappear { secureWindow.release("\(holder)-\(instance)") }
     }
 }
 

@@ -86,6 +86,61 @@ struct MapCoordinate: Hashable, Sendable {
     var longitude: Double
 }
 
+/// The conversation open beside the map, which the map follows (UX §6.11.6). Only set while both sides are on
+/// screen. Ported from android/app/…/map/MapViewModel.kt.
+nonisolated enum Following: Equatable, Sendable {
+    case room(roomId: Int32, name: String)
+    case direct(nodeNum: Int32, name: String)
+
+    var name: String {
+        switch self {
+        case .room(_, let name), .direct(_, let name): name
+        }
+    }
+}
+
+/// What the map draws and where a pin goes, kept pure so it can be tested. Ported from `MapSelection` in
+/// android/app/…/map/MapViewModel.kt.
+nonisolated enum MapSelection {
+    /// The open conversation, unless following was stopped for that very one.
+    static func followed(open: Following?, stopped: Following?) -> Following? {
+        guard let open, open != stopped else { return nil }
+        return open
+    }
+
+    /// The followed conversation's people and always you; otherwise the chosen filter.
+    static func nodes(
+        _ onMap: [MeshNode],
+        following: Following?,
+        followedNodes: Set<Int32>,
+        filter: MapFilter,
+        ours: Set<Int32>,
+        myNodeNum: Int32?
+    ) -> [MeshNode] {
+        if following != nil {
+            return onMap.filter { followedNodes.contains($0.nodeNum) || $0.nodeNum == myNodeNum }
+        }
+        return filter == .all ? onMap : onMap.filter { ours.contains($0.nodeNum) }
+    }
+
+    /// A followed room's own pins, none for a direct chat, and every pin otherwise.
+    static func pins(_ pins: [MapPin], following: Following?) -> [MapPin] {
+        switch following {
+        case nil: pins
+        case .room(let roomId, _)?: pins.filter { $0.roomId == roomId }
+        case .direct?: []
+        }
+    }
+
+    /// The room a dropped pin goes to: the one open beside the map, then the one your location is shared with, then
+    /// the only one there is. Nil rather than a guess.
+    static func pinRoom(_ shareable: [RoomChannel], open: Following?, sharingRoomId: Int32?) -> RoomChannel? {
+        if case .room(let roomId, _)? = open, let room = shareable.first(where: { $0.id == roomId }) { return room }
+        if let room = shareable.first(where: { $0.id == sharingRoomId }) { return room }
+        return shareable.count == 1 ? shareable[0] : nil
+    }
+}
+
 struct MapUiState: Equatable {
     var connected = false
     var markers: [MapMarker] = []
@@ -96,7 +151,11 @@ struct MapUiState: Equatable {
     /// Everyone in a room with us, which is everyone we have a private way to ask.
     var roomMembers: Set<Int32> = []
     var filter: MapFilter = .all
-    /// How many were left out by `filter`, so a thinned map says so.
+    /// The conversation beside the map, when there is one, followed or not.
+    var followable: Following?
+    /// What the map is following now: `followable`, unless the user stopped.
+    var following: Following?
+    /// How many were left out by `filter` or `following`, so a thinned map says so.
     var hiddenByFilter = 0
     var busy = false
     var error: String?
@@ -120,7 +179,6 @@ final class MapViewModel {
     @ObservationIgnored private let people: PersonStore
     @ObservationIgnored private let rooms: RoomRepository
     @ObservationIgnored private let mapPreferences: MapPreferences
-    @ObservationIgnored private var observeStarted = false
     @ObservationIgnored private var sweep: Task<Void, Never>?
     @ObservationIgnored private var busy = false
     @ObservationIgnored private var error: String?
@@ -129,6 +187,20 @@ final class MapViewModel {
     @ObservationIgnored private var groupNodes: Set<Int32> = []
     @ObservationIgnored private var cards: [Int32: PersonCard] = [:]
     @ObservationIgnored private var pins: [MapPin] = []
+    @ObservationIgnored private var followable: Following?
+    /// Following stopped for this conversation; opening another starts it again.
+    @ObservationIgnored private var stoppedFollowing: Following?
+    @ObservationIgnored private var followedNodes: Set<Int32> = []
+    @ObservationIgnored private var followTask: Task<Void, Never>?
+    @ObservationIgnored private var visibleScreens: Set<UUID> = []
+
+    /// Where the map was last looking. Unfolding, folding or rotating rebuilds the map's view, and it picks up here
+    /// rather than back at the world (UX §6.11.5). In memory only: never saved or sent. Not observed, so panning does
+    /// not redraw the screen.
+    @ObservationIgnored var camera: MapCamera?
+
+    /// The camera has been to everyone already, so it is not pulled there again on its own.
+    var framed = false
     @ObservationIgnored private var nowMillis: Int64
 
     init(
@@ -169,9 +241,10 @@ final class MapViewModel {
     }
 
     /// Follows map repositories while the screen is up. Call from `.task`.
+    ///
+    /// Safe to call again from a screen built later: the model outlives its screens (`Workspace`), and a tab or a
+    /// layout coming back starts its task again. Two can overlap for a moment while one screen replaces another.
     func observe() async {
-        guard !observeStarted else { return }
-        observeStarted = true
         areas = await offlineMaps.areas()
         recompute()
         await withTaskGroup(of: Void.self) { group in
@@ -243,13 +316,50 @@ final class MapViewModel {
 
     func setFilter(_ choice: MapFilter) {
         filter = choice
+        // Choosing what to show is choosing not to follow, until another conversation is opened.
+        stoppedFollowing = followable
+        refollow()
+    }
+
+    /// The conversation now beside the map, or nil when there is none or the map is alone.
+    func follow(_ target: Following?) {
+        guard target != followable else { return }
+        followable = target
+        stoppedFollowing = nil
+        refollow()
+    }
+
+    func resumeFollowing() {
+        stoppedFollowing = nil
+        refollow()
+    }
+
+    private func refollow() {
+        followTask?.cancel()
+        followTask = nil
+        followedNodes = []
+        switch MapSelection.followed(open: followable, stopped: stoppedFollowing) {
+        case .room(let roomId, _)?:
+            let members = rooms.observeMembers(roomId: roomId)
+            followTask = Task { [weak self] in
+                for await rows in members {
+                    guard let self, !Task.isCancelled else { return }
+                    self.followedNodes = Set(rows.map(\.nodeNum))
+                    self.recompute()
+                }
+            }
+        case .direct(let nodeNum, _)?:
+            followedNodes = [nodeNum]
+        case nil:
+            break
+        }
         recompute()
     }
 
     /// Pins go to one private room, never to the public primary channel.
     func dropPin(latitudeI: Int32, longitudeI: Int32, name: String) {
         let shareable = uiState.rooms.filter(PositionSharing.canShare(channel:))
-        let room = shareable.first { $0.id == uiState.sharingRoomId } ?? (shareable.count == 1 ? shareable[0] : nil)
+        let room = MapSelection.pinRoom(shareable, open: followable, sharingRoomId: uiState.sharingRoomId)
         guard let room else {
             error = shareable.isEmpty ? MapWords.noPinRoom : MapWords.choosePinRoom
             recompute()
@@ -269,9 +379,11 @@ final class MapViewModel {
         run(fallback: String(localized: "Could not remove the pin")) { try await self.waypoints.remove(pin: pin) }
     }
 
-    /// Called while the map is on screen, so the phone's own fix can be shown.
-    func setMapVisible(_ visible: Bool) {
-        location.setMapVisible(visible: visible)
+    /// Called while a map screen is on screen, so the phone's own fix can be shown. Counted per screen: a screen
+    /// rebuilt for a new layout appears before the old one goes, and the old one leaving must not hide the new one.
+    func setMapVisible(_ visible: Bool, screen: UUID) {
+        if visible { visibleScreens.insert(screen) } else { visibleScreens.remove(screen) }
+        location.setMapVisible(visible: !visibleScreens.isEmpty)
     }
 
     func clearError() {
@@ -355,16 +467,26 @@ final class MapViewModel {
         ours.formUnion(groupNodes)
         savedRadios.radios.compactMap(\.nodeNum).forEach { ours.insert($0) }
         let onMap = nodes.filter { !hidden.contains($0.nodeNum) }
-        let shown = filter == .all ? onMap : onMap.filter { ours.contains($0.nodeNum) }
+        let following = MapSelection.followed(open: followable, stopped: stoppedFollowing)
+        let shown = MapSelection.nodes(
+            onMap,
+            following: following,
+            followedNodes: followedNodes,
+            filter: filter,
+            ours: ours,
+            myNodeNum: mesh.myNodeNum.value
+        )
         uiState = MapUiState(
             connected: mesh.isConnected.value,
             markers: shown.map(marker(for:)),
-            pins: pins,
+            pins: MapSelection.pins(pins, following: following),
             rooms: ChannelSlotManager.rooms(channels: mesh.channels.value),
             sharingRoomId: location.sharingRoomId(),
             myNodeNum: mesh.myNodeNum.value,
             roomMembers: groupNodes,
             filter: filter,
+            followable: followable,
+            following: following,
             hiddenByFilter: onMap.count - shown.count,
             busy: busy,
             error: error
@@ -445,6 +567,8 @@ nonisolated enum MapWords {
         let people = state.markers.filter { !$0.isSelf }.count
         let live = state.markers.filter { !$0.isSelf && $0.isLive }.count
         var parts = [people == 1 ? String(localized: "1 person") : String(localized: "\(people) people")]
+        // Says why the map is thinner than usual while a conversation sits beside it.
+        if let following = state.following { parts.insert(String(localized: "Following \(following.name)"), at: 0) }
         if live > 0 { parts.append(String(localized: "\(live) live")) }
         if state.pins.count == 1 { parts.append(String(localized: "1 pin")) }
         if state.pins.count > 1 { parts.append(String(localized: "\(state.pins.count) pins")) }

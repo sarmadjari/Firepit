@@ -12,6 +12,8 @@ struct MapLibreView: UIViewRepresentable {
     let styleUrl: String
     var onReady: (MLNMapView, MLNStyle) -> Void = { _, _ in }
     var onCameraIdle: (MLNMapView) -> Void = { _ in }
+    /// Where a new view starts looking, set before the style loads so it does not jump (UX §6.11.5).
+    var initialCamera: MapCamera?
     var markers: [MapMarker] = []
     var pins: [MapPin] = []
     var showsUserLocation = false
@@ -39,6 +41,13 @@ struct MapLibreView: UIViewRepresentable {
         // position off it in a hurry.
         view.allowsTilting = false
         view.compassViewPosition = .topRight
+        if let camera = initialCamera {
+            view.setCenter(
+                CLLocationCoordinate2D(latitude: camera.latitude, longitude: camera.longitude),
+                zoomLevel: camera.zoom,
+                animated: false
+            )
+        }
         return view
     }
 
