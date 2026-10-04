@@ -3,7 +3,7 @@
 **Companion to:** `meshchat-app-design.md` (product design, rev 2) and `meshchat-implementation-guide.md` (protocol/firmware facts, rev 1)
 **Product name:** Firepit (store, in-app title). "MeshChat" below is the internal protocol name.
 **Platforms:** iOS (SwiftUI) and Android (Jetpack Compose), native, one shared design language
-**Status:** UX design rev 2 — flows verified against firmware 2.7/2.8; decisions locked 2026-09-09 (§11.4, guide §9, `meshchat-v1-scope.md`)
+**Status:** UX design rev 3 — flows verified against firmware 2.7/2.8; decisions locked 2026-09-09 (§11.4, guide §9, `meshchat-v1-scope.md`). Rev 3 (2026-10-04) adds large screens, foldables and split screen (§6.11), planned as build-plan Stage 12
 
 ---
 
@@ -17,6 +17,7 @@ This document defines what the user sees and does. It takes the feature set from
 - Core loop: connect node → create or join a room → chat.
 - Three tabs: **Chats** (rooms and direct), **Map**, **Settings**.
 - Beautiful, minimal, elegant.
+- Uses the whole screen when there is one: on a foldable, a tablet or a wide window the conversation and the map sit side by side (§6.11).
 
 Section 11 verifies the proposed flow against firmware reality and mobile best practice, and lists the adjustments made.
 
@@ -57,6 +58,8 @@ Design consequence: the first-run flow and the room invite flow get the most pol
 | **Settings** | profile, nodes, rooms, notifications, map, privacy, diagnostics | — |
 
 Three tabs sit inside both platform guidelines (HIG tab bar: 3–5; Material 3 navigation bar: 3–5). Node connection status is not a tab: it is a persistent subtitle in the Chats header and a card at the top of Settings.
+
+On a window wide enough for two panes, Chats and Map stop taking turns and sit side by side, and the tabs give way: Settings opens from ⚙ on the chat side (§6.11).
 
 ### 4.2 Navigation map
 
@@ -114,6 +117,7 @@ flowchart LR
 | 19 | Map & location | push | offline maps, units, GPS source |
 | 20 | Privacy & security | push | plain-language trust model, key info |
 | 21 | Diagnostics | push | mesh utilization, firmware, logs, nearby nodes |
+| 22 | Wide screens (arrangement) | layout, not a screen | chat side ∥ map side, three panes from 1200, stacked when half-folded; layout menu ◫ and Settings › Appearance › Wide screens (§6.11) |
 
 ---
 
@@ -461,6 +465,253 @@ Every row that restarts the node says so in its detail screen and shows the chec
 
 Mesh utilization (channel util / own TX util as two small gauges), firmware version and protocol capabilities (PKI, signing), reconnect count, nearby nodes not in any room (count only, expandable), export logs. This is the only place raw numbers live.
 
+### 6.11 Large screens, foldables and split screen
+
+Firepit is a conversation and a map. On a phone they take turns. On a screen wide enough for both, they sit side by side, so you can talk to the group and see where everyone is at the same time. On the cover screen of a foldable, or in half of a split screen, Firepit is the phone app you already know.
+
+Every rule here follows the size and shape of the **window** Firepit is given, never the device model. The same rules serve an unfolded Galaxy Z Fold8 or Fold8 Ultra, a Pixel Fold, the inner screen of an iPhone Duo, a TriFold, a tablet, a desktop window, and Firepit in part of a split screen. Built in build-plan Stage 12.
+
+#### 6.11.1 Principles
+
+1. **The window decides, not the device.** Layout comes from the window's width and height and from the fold, if there is one. A device name or "is foldable" never appears in the code.
+2. **The same app, more of it.** Two panes show two places the user already knows: Chats and Map. No new screens, and every action keeps its place and wording.
+3. **Nothing is lost when the shape changes.** Folding, unfolding, rotating or resizing keeps the open conversation, the draft, the scroll position, the map's camera, open sheets and a QR scan in progress.
+4. **The fold is a boundary.** When a fold separates the screen (half-folded), the split sits on it and nothing is drawn across it.
+5. **The user chooses the arrangement, and Firepit remembers it.**
+
+#### 6.11.2 Which layout, when
+
+Sizes are in dp on Android and points on iOS, measured on the window, not the screen.
+
+| Window | Layout | Navigation |
+|---|---|---|
+| Narrower than 600, or shorter than 480 | **One pane:** the phone app. Chats, Map and Settings take turns | Bottom bar (iOS tab bar). On Android, a phone in landscape (wide but short) keeps today's rail |
+| 600 to 1199 wide and at least 480 tall | **Two panes:** the chat side and the map side (default), or one pane if the user chose so | No bar or rail; Settings opens from ⚙ on the chat side (§6.11.7) |
+| 1200 or wider and at least 480 tall | **Three panes:** chat list, conversation, map | Same |
+| Half-folded with the fold across the screen (tabletop) | **Two stacked panes:** map above, conversation below | Same |
+
+- **Pane minimums:** the chat side needs at least 320 (the app's width floor) and the map side at least 280. If both cannot fit, for example with a large text size in a narrow window, Firepit shows one pane.
+- **Below 320:** the full design holds down to 320. Between 220 (the smallest window Android allows) and 320, as in a third of a split screen, Firepit stays the one-pane phone app with less chrome. The composer's ＋ and ⚡ fold into one button, and the map's controls fold into one menu. Nothing is cut off.
+- Typical windows, from the 2026 devices. These are estimates: Samsung does not publish its screen densities, Apple has not published the iPhone Duo's sizes in points (these are worked out from its screenshot sizes), and the user's display-size setting changes them all. The app always reads the real window size at run time:
+
+| Device and window | About | Layout |
+|---|---|---|
+| Galaxy Z Fold8 Ultra, cover screen (6.5″, 21:9) | 410 × 960 dp | one pane |
+| Galaxy Z Fold8 Ultra, inner screen (8.0″, about 10:9) | 750–860 × 835–950 dp | two panes, split on the fold |
+| Galaxy Z Fold8 (the wide model), inner screen held landscape (7.6″, 4:3) | 815–930 × 615–705 dp | two panes |
+| Galaxy Z Fold8, cover screen (5.5″) | 415–475 × 655–750 dp | one pane |
+| Galaxy Z Flip8, half-folded | about 400 wide, two halves of about 420 | stacked: map above, chat below |
+| Galaxy Z Flip8, cover screen (4.1″) | 315–360 × 350–400 dp | one pane, where the user lets apps run there |
+| Galaxy Z TriFold, open (10″) | 820–1080 × 600–790 dp | two panes; three from 1200 wide |
+| Pixel 11 Pro Fold, inner screen | 790–850 × 820–880 dp | two panes |
+| iPhone Duo, outer screen (5.4″) | 466 × 678 pt | one pane |
+| iPhone Duo, inner screen (7.6″, landscape when open) | 951 × 669 pt | two panes, split on the fold |
+| iPad or tablet, full screen | 1000–1400 wide | two or three panes |
+| Any of these in half of a split screen | 340–470 wide | one pane |
+
+#### 6.11.3 The two panes
+
+```
+┌────────────────────────────┬─────────────────────────────┐
+│ ‹  (⛺) Camp         ◫  ⋮  │ [Following Camp ▾] (◎) (◫) │
+│       7 members · ● 78%    │                             │
+├────────────────────────────┤     (SA)      ⌂ Camp Base   │
+│ ┌ Ali ────────────┐        │                             │
+│ │ On my way       │ 12:40  │   (AL)·····                 │
+│ └─────────────────┘        │            📍 Tent          │
+│        ┌───────────────┐   │                             │
+│        │ See you 12:41✓│   │                             │
+│        └───────────────┘   │ ┌─────────────────────────┐ │
+│ 📍 Ali shared a location   │ │ ● Share my location     │ │
+│    120 m NE · [Open map]   │ └─────────────────────────┘ │
+├────────────────────────────┤ ═ 7 people · 2 live ═══════ │
+│ (＋) [ Message      ] (➤)  │                             │
+└────────────────────────────┴─────────────────────────────┘
+           chat side        ┃ divider: on the fold       map side
+```
+
+- **The chat side** holds everything the Chats tab holds: the list, conversations, room info, invites and the member sheet. It navigates as on a phone: list, then conversation, then back. Its top bar adds ◫ (layout) and, on the list, ⚙ (Settings).
+- **The map side** holds everything the Map tab holds: markers, pins, the room filter, ◎, offline tiles, the share pill and the people sheet, docked at the bottom of the pane. Its controls add ◫.
+
+With three panes (1200 and wider), the list gets its own pane, 320 wide, and the conversation and the map share the rest:
+
+```
+┌───────────────┬──────────────────────────┬──────────────────────────┐
+│ Chats  🔍 ◫ ⚙ │ ‹ (⛺) Camp           ⋮  │ [Following Camp ▾] (◎)  │
+│ [All] [Rooms] │                          │                          │
+│ (⛺) Camp   ● │   bubbles…               │   map…                   │
+│ (◍) Sam       │                          │                          │
+│ (🥾) Trail    │ (＋) [ Message   ] (➤)   │ ● Share my location      │
+└───────────────┴──────────────────────────┴──────────────────────────┘
+```
+
+Half-folded with the fold across the screen (tabletop; a Flip8 standing on a table, or a Fold turned sideways), the top half is for looking and the bottom half for doing:
+
+```
+┌──────────────────────────────┐
+│ [Following Camp ▾]      (◎)  │
+│    (SA)     ⌂ Camp Base      │  ← map above the fold
+│         📍 Tent              │
+├──────────── fold ────────────┤
+│ (⛺) Camp · 7 members     ◫  │
+│ Ali: On my way        12:40  │  ← conversation and composer below
+│ (＋) [ Message       ] (➤)   │
+└──────────────────────────────┘
+```
+
+Typing in tabletop gives the conversation the whole screen, because a keyboard would fill the bottom half; the split returns when the keyboard closes.
+
+#### 6.11.4 Choosing the arrangement
+
+Three arrangements, available whenever the window is wide enough for two panes:
+
+- **Chat and map** (default): the chat side and the map side.
+- **Chat only:** the chat side across the whole window. At 600 and wider that is today's list beside the conversation.
+- **Map only:** the map across the whole window, with the people sheet docked at the side.
+
+Plus **Swap sides**, which puts the map on the other side.
+
+Where the user chooses:
+
+1. **The layout button ◫**, in the chat side's top bar and among the map side's controls. In one pane on a wide window, it stays in the top bar so two panes are one tap away. It opens a menu: Chat and map · Chat only · Map only, then Swap sides. The current arrangement is ticked.
+2. **The divider:**
+   - Drag it to share the width differently. Released, it settles on the nearest of ⅓, ½ or ⅔, or on the fold, with a light haptic as it lands.
+   - Drag a pane below its minimum to close it, which chooses Chat only or Map only. The layout button brings the pane back.
+   - Double-tap the divider to put it back on the fold, or in the middle when there is no fold.
+3. **Settings → Appearance → Wide screens:**
+   - Layout: Chat and map · Chat only · Map only.
+   - Map on the: Right · Left. Mirrored defaults in right-to-left languages, so the map starts on the left there.
+   - Reset the divider.
+   - Caption: "When the screen is wide enough for two: unfolded, a tablet, or a wide window."
+
+What is remembered, on this device only and never sent anywhere:
+
+- The arrangement and the map's side.
+- The divider position, kept separately for upright windows and for wide ones, because a share that suits one rarely suits the other.
+- While a fold separates the screen (half-folded, book posture), the divider sits on the fold and cannot be dragged; the remembered position returns when the screen lies flat.
+
+#### 6.11.5 Folding, unfolding, rotating and resizing
+
+| From → to | What the user sees |
+|---|---|
+| Folded, conversation open → unfold | That conversation on the chat side; the map beside it, following the same room. Draft and scroll position kept, and the keyboard stays up if it was |
+| Folded, Map open → unfold | The map with the same camera on the map side; the chat side shows the last conversation, or the list if none was open |
+| Two panes → fold | The side touched last becomes the one pane: the map if the map was touched last, otherwise the chat side. The other waits where it was left |
+| Lying flat → half-folded like a book | The divider moves onto the fold |
+| Two panes → tabletop | Map above, conversation below |
+| Any → rotate | Same content and arrangement, with the divider position for the new shape |
+| Window made narrower than two panes (split screen, desktop window) | Collapses to one pane, as when folding |
+| App closed by the system in the background, then reopened | Same arrangement, conversation and map camera |
+
+What is kept through all of these:
+
+- The open conversation and its draft text.
+- The scroll position.
+- Any open sheet: member, share location or pin.
+- The map's camera (centre, zoom and bearing) and its filter.
+- The invite QR on screen, and a QR scan in progress: the camera restarts, the screen stays.
+- The arrangement.
+
+When only the arrangement changes, the map is moved, not rebuilt, so no tiles reload and nothing flashes. Moving to the other screen of a foldable can rebuild it on Android; it comes back on the same camera, from tiles already on the phone.
+
+#### 6.11.6 How the two sides work together
+
+**The map follows the open conversation.**
+- With a room open, the map shows that room's members and pins. Its filter reads "Following Camp", and the other markers are left off.
+- In a direct chat, the map shows that person and you.
+- With only the list showing, the map uses the filter last chosen (All nodes or Our nodes).
+- The filter menu can stop following, and following resumes when the user opens another conversation.
+
+**From the chat to the map, without leaving the chat:**
+
+| On the chat side | The map side |
+|---|---|
+| Location card → Open map | Flies to the point and marks it |
+| A message that dropped a pin | Centres the pin and opens its sheet |
+| Member sheet → Open map | Centres the person |
+| Long-press a sender's name → Show on map | Centres the person (on a phone, this opens the Map tab) |
+
+**From the map to the chat, without leaving the map:**
+
+| On the map side | The chat side |
+|---|---|
+| Marker → member sheet → Message | Opens the direct chat |
+| Pin sheet → Show in chat | Scrolls to the message that dropped it, when it is in a room the user is in |
+| Long-press to drop a pin | The pin sheet's room defaults to the open conversation |
+| Share my location | The room defaults to the open conversation |
+
+**Each sheet opens on the side it was opened from:**
+- A member sheet opened from a conversation or room info opens on the chat side; one opened from a marker opens on the map side.
+- **Map side:** the pin, share-location and people sheets.
+- **Chat side:** room info, invite and send alert.
+- **The whole window:** step-by-step flows and anything that needs it: first run, node setup, joining by scanning a QR, and Settings (§6.11.7).
+
+**Notifications:** tapping a message notification opens its conversation on the chat side, and the map follows.
+
+**While sharing:** the chat side's header shows a small "Sharing · 43 min" chip in the room being shared to; the share pill stays on the map side.
+
+#### 6.11.7 Navigation with two panes
+
+- **No bottom bar, tab bar or rail** while two or three panes show. The places it switches between are already on screen, and a rail would take about 80 that a folding phone's inner screen cannot spare: on an 8″ inner screen split on the fold, it can push the chat side below the 320 floor.
+- **Settings** opens from ⚙ in the chat list's top bar.
+  - Android: across the whole window, with its own list beside the detail as today, and back returns to the two panes.
+  - iOS: a sheet, at full height on the iPhone Duo's inner screen and as a form sheet on iPad.
+- **Back** (Android back gesture, iOS edge swipe) acts on the side touched last. In a conversation it returns to the list; on the map it closes the open sheet. Android's predictive back animates within that pane.
+- **In Chat only or Map only on a wide window,** the rail (Android) or tab bar (iOS) returns as it is today, with ◫ to go back to two panes.
+
+#### 6.11.8 Keyboard, fold and edges
+
+- **The keyboard belongs to the chat side.** It lifts the composer. The map behind it is covered, not squeezed, so it never jumps or redraws when the keyboard opens.
+- **Nothing sits on a separating fold.** Android reads the fold's position from the window. On the iPhone Duo, iOS 27.1 reports the fold and camera areas, and controls keep clear of both.
+- **Edge to edge.** The map runs under the system bars and the camera cut-out while its controls stay in the safe area. The chat side keeps its usual insets.
+  - On the iPhone Duo, iOS may put toolbars along the side of the screen. Firepit uses standard toolbars so the system can place them.
+  - In Split View, each app's controls sit on its outer edge, so the safe area differs on each side.
+- **Half-folded,** controls belong in the bottom half and reading in the top, which is Apple's guidance and the tabletop arrangement above.
+
+#### 6.11.9 Split screen, windows, mouse and keyboard
+
+- **In part of a split screen** (Android, iPhone Duo, iPad), Firepit has a phone-sized window, so it shows one pane: exactly the phone app.
+- **Freely resized windows** (Samsung DeX, Android desktop windowing, iPad windows):
+  - The layout changes at the same thresholds while the window is resized.
+  - The map is not redrawn on every frame of a live resize; it settles when the resize ends.
+- **One Firepit window at a time** in this stage. A second window would need its own radio session, and a radio talks to only one phone app at a time.
+- **Mouse, trackpad and keyboard:**
+  - Rows and buttons show hover.
+  - A right-click opens the long-press menu.
+  - The scroll wheel zooms the map.
+  - Enter sends; Shift+Enter starts a new line.
+  - Esc closes the top sheet or menu.
+  - Ctrl+F (⌘F on iPad) searches the chats.
+  - Tab moves between the two sides.
+
+#### 6.11.10 Accessibility and right-to-left
+
+- **Regions:** each side is a labelled region, "Chat" and "Map". Focus moves through one side, then the other, in reading order.
+- **The divider** is an adjustable control: "Divider. Drag to give the chat or the map more room." Its actions are "Make the chat wider", "Make the map wider", "Swap sides" and "Close the map".
+- **Text size** never changes the layout thresholds. If the chat side would fall below its minimum at the user's text size, Firepit uses one pane.
+- **Right-to-left:** the chat side sits at the start edge (the right) and the map at the end edge by default. "Map on the right/left" always names the physical side.
+- **Reduce Motion:** pane changes cross-fade instead of sliding.
+
+#### 6.11.11 Visual details
+
+- **Divider:** a 1 hairline in `outline`, full height. Its handle is a 4 × 48 pill in `text-2` at 50 %, centred, with a 48-wide touch target that overlaps both panes. The handle is hidden while the divider is locked to a separating fold.
+- **Panes:** no gutter between them, so the map runs right up to the divider. On a device with a physical gap between its two screens, the gap is `surface`.
+- **Top bars:** each pane keeps its own.
+  - Chat list: 🔍 · ◫ · ⚙.
+  - Conversation: ◫ before ⋮.
+  - Map side: filter chip · ◎ · ⬇ · ◫.
+- **The layout glyph** is the platform's own split-view symbol: Material's vertical split on Android, SF Symbols' `rectangle.split.2x1` on iOS. That follows §9.3: chrome icons are each platform's.
+- **Motion:** changing arrangement moves the panes over 250 ms (emphasised deceleration). The map pane takes its new size once, at the end. While the divider is dragged, it follows the finger 1:1.
+- **No new colours.** The divider is `outline` and the handle `text-2`.
+
+#### 6.11.12 Not in this stage
+
+- More than one Firepit window.
+- Drag and drop between apps.
+- A purpose-built Flip cover-screen layout: it gets the one-pane app where the user lets apps run there.
+- Picture-in-picture.
+- A separate layout for external monitors: they are desktop windows.
+
 ---
 
 ## 7. Components and states
@@ -614,6 +865,7 @@ System fonts (SF Pro / Roboto), Dynamic Type and font scaling honoured.
 ### 9.3 Layout and components
 
 - Spacing scale 4/8/12/16/24/32; screen margins 16; list rows 64–72 dp; bubbles padding 10×14; radius 16 (bubbles), 12 (cards), 24 (sheets), full (pills, FAB).
+- Panes (§6.11): chat side at least 320 wide, map side at least 280, chat list pane 320 in three panes; no gutter on a flat screen; divider a 1 hairline in `outline`, handle 4 × 48 in `text-2` at 50 % with a 48-wide touch target; divider settles at ⅓ · ½ · ⅔ or on the fold.
 - Platform-native controls: iOS tab bar, navigation stack, sheets with grabber; Android Material 3 navigation bar, top app bar, bottom sheets, FAB. Shared visual tokens; no cross-platform lookalikes.
 - Icons: interface chrome uses each platform's symbols (SF Symbols on iOS; Firepit's outlined 24 dp set on Android), with the same metaphor on both — Settings is a gear, Chats a single bubble. Glyphs that people compare between phones are the same drawing on both: the eight room icons, the Personal/Base/Router role glyphs, and the map pin. Android's vector drawables are the source; `scripts/sync-ios-glyphs.py` writes them into the iOS asset catalogue. The delivery ticks are drawn the same way on both, by hand.
 
@@ -655,7 +907,7 @@ The tokens (§9.1), type ramp (§9.2), icon set, copy (§10) and every flow are 
 | Icons | SF Symbols for chrome; room, role and pin glyphs are Android's drawings (`Glyphs` asset set) | Firepit's 24 dp outlined set (vector drawables) |
 | Ripple / highlight | Highlight on press | Material ripple (do not disable) |
 | Map controls | Pill + round buttons over the map | Assist chip + small FABs; extended FAB for sharing; sheet peek with drag handle |
-| Large screens / foldables | iPad split view later | Window size classes + hinge posture: list-detail panes for Chats, map + sheet side-by-side (build-plan "adaptive" thread) |
+| Large screens / foldables | Size classes and the window's size: chat side ∥ map side on the iPhone Duo's inner screen and iPad, one pane on the outer screen; custom split with a draggable divider, sheets for Settings; iOS 27.1 fold and camera areas kept clear (§6.11) | Window size classes and posture: chat side ∥ map side from 600 wide, three panes from 1200, stacked in tabletop; pane expansion with a drag handle; split on the hinge (§6.11) |
 
 Rules: platform-native navigation and gestures always win over visual parity; colour, spacing scale, radii for our own components (bubbles 18, cards 12), copy and behaviour never diverge. Bubble shapes: iOS 16 pt uniform; Android 18 dp with a 4 dp "tail" corner on the sender side — both acceptable expressions of the same message row. M3 gotcha: never map `surfaceVariant` to a colour also used as a container, or `contentColorFor` silently returns `onSurfaceVariant` (grey text); set `contentColor` explicitly on surface-2 containers.
 
@@ -725,6 +977,7 @@ Rules: platform-native navigation and gestures always win over visual parity; co
 | Security explanations in UI | Room info privacy note, Privacy & security screen, microcopy (§10) |
 | Removing someone / leaving | §5.10, §5.11 |
 | Bandwidth: counters, priorities, no polling | Byte counter, alert priority, mesh-busy banner; no refresh buttons anywhere |
+| Talk and watch the map at once on a big screen | Chat side ∥ map side, linked: the map follows the open conversation (§6.11) |
 
 ### 11.3 Mobile best-practice checklist
 
@@ -741,6 +994,7 @@ Rules: platform-native navigation and gestures always win over visual parity; co
 | Background behaviour explained (Android foreground notification, iOS BLE background) | ✓ (§5.12) |
 | Copy is short, specific, non-technical; technical detail behind long-press / Diagnostics | ✓ (§10, §6.10) |
 | No dark patterns; no growth nags; no accounts | ✓ |
+| Foldables, tablets and split screen: layout from the window, never the device; state survives fold, unfold and resize; nothing on a separating fold | Planned (§6.11, build-plan Stage 12). Android already has list ∥ conversation and hinge alignment (Stage 3) |
 
 ### 11.4 Open UX decisions
 
@@ -753,6 +1007,13 @@ Rules: platform-native navigation and gestures always win over visual parity; co
 | U-5 | Room avatar — **locked** | Eight fixed icons (tent, trail, car, music, flag, house, star, heart), default tent; no emoji |
 | U-6 | Duration presets — **locked** | 15 min · 1 h · 8 h · Custom (update rate follows automatically) |
 | U-7 | "Secure this node" prompt timing — **locked (default)** | After first successful setup of a headless node, once |
+| U-8 | Arrangement on a wide screen — **proposed** | Chat and map side by side; Chat only and Map only one tap away (§6.11.4) |
+| U-9 | Which side the map takes — **proposed** | The end side: right in left-to-right languages, left in right-to-left; Swap sides changes it |
+| U-10 | Navigation with two panes — **proposed** | No bar or rail; Settings from ⚙ on the chat side. A rail would push the chat side below 320 on an 8″ inner screen split on the fold |
+| U-11 | Half-folded across the screen (tabletop) — **proposed** | Map above, conversation below; typing takes the whole screen until the keyboard closes |
+| U-12 | Divider — **proposed** | On the fold if there is one, otherwise the middle; settles at ⅓ · ½ · ⅔; locked on a separating fold; remembered per upright and wide window |
+| U-13 | Narrow windows — **proposed** | Full design down to 320; one pane with less chrome down to 220 (a third of a split screen) |
+| U-14 | iPad — **proposed** | Yes, from the same code: the iPhone Duo's inner screen and an iPad window are the same regular-width layout |
 
 ---
 
@@ -767,3 +1028,4 @@ Local exports: `design/ios/firepit-ios-ui.pdf` (16 pages, exported from Figma: l
 3. Build a click-through prototype of first run → create room → invite → join on a second phone; test with three people who have never used Meshtastic.
 4. Copy review against §10 with a non-technical reader.
 5. Implement the design tokens as platform theme files before any screen code.
+6. Wide screens (§6.11): add Figma frames, light and dark, for the Fold8 Ultra inner screen (two panes on the fold), the wide Fold8 inner screen held landscape, tabletop, the cover screen, half of a split screen, three panes on a tablet, and the iPhone Duo inner and outer screens. Android renders come from the same screens at those sizes.

@@ -6,9 +6,10 @@ Each stage records what it built, what broke, and what is still unverified.
 Companion to `meshchat-app-design.md` (product), `meshchat-implementation-guide.md` (protocol),
 `meshchat-ux-design.md` (screens), `meshchat-v1-scope.md` (decisions).
 
-Eleven planned stages (0–10), each with a demoable outcome and an exit proof, plus six the work
-itself called for (7.5–7.9 and 11). Adaptive/foldable work is a thread inside every UI stage, never a stage
-of its own — retrofitting it later costs 3–4×.
+Eleven planned stages (0–10), each with a demoable outcome and an exit proof, plus seven the work
+itself called for (7.5–7.9, 11 and 12). Adaptive/foldable work is a thread inside every UI stage —
+retrofitting it later costs 3–4× — and Stage 12 is the exception that proves it: the 2026 foldables and
+the map beside the chat change the shape of the whole app, not one screen.
 
 **Decisions taken 2026-09-09:** Hilt for DI · Kable for BLE · RTL/Arabic supported (layouts
 RTL-ready from Stage 3) · invite-link domain deferred until Stage 8.
@@ -24,6 +25,7 @@ RTL-ready from Stage 3) · invite-link domain deferred until Stage 8.
 | 9 | Release prep: accessibility and RTL pass, R8, store listing | Not started |
 | 10 | The iPhone app | ✅ Built. An iPhone and an Android phone in one room over real radios is still to be tested |
 | 11 | Security within Meshtastic's limits: Signal-grade protections where the radio allows, with no message growing by a byte | In progress: Phase 1 done on both apps, Phase 2 next |
+| 12 | Large screens: the conversation and the map side by side on foldables, tablets and wide windows; the phone app in narrow ones | Planned (UX §6.11). Decisions U-8 to U-14 proposed, to confirm |
 
 ---
 
@@ -187,6 +189,9 @@ PIN entry boxes, QR card (**stays white in dark mode** — scannability beats th
 **Exit proof:** kitchen-sink screen and Chats shell render correctly at 320/480/600/840/1200 dp;
 folding mid-scroll and mid-QR-scan loses no state; `@PreviewScreenSizes` + `@PreviewFontScale`
 snapshots checked in.
+
+Superseded in part by Stage 12: on a wide window the map no longer takes turns with Chats, it sits
+beside the conversation, and the rail gives way to the two panes (UX §6.11).
 
 ---
 
@@ -964,6 +969,160 @@ zero-size rule is ever relaxed.
 
 ---
 
+## Stage 12 — Side by side: foldables, tablets and split screen
+
+On a phone, Firepit's conversation and map take turns. On a screen wide enough for both they should sit
+side by side, with the user choosing the arrangement, and in narrow windows Firepit stays the phone app.
+The design is UX §6.11; this is how it gets built.
+
+**Why now**
+
+- **The hardware.** Samsung's Galaxy Z Fold8 Ultra (8.0″ inner screen, about 10:9) and the new wide
+  Galaxy Z Fold8 (7.6″, 4:3, landscape-first) shipped in July 2026, beside the Flip8; the Galaxy Z
+  TriFold since December 2025; the Pixel 11 Pro Fold in August 2026. Apple's iPhone Duo was announced on
+  9 September 2026 and goes on sale on 23 October with iOS 27.1. Its inner screen is landscape when open,
+  and iOS reports it as regular width.
+- **The platforms.** Android 17 removes the opt-out from resizing on screens 600 dp wide or more for
+  apps targeting API 37, which Firepit does. With the iOS 27 SDK, supported orientations become a
+  preference, and folding an iPhone Duo is a window resize.
+- **The product.** A group on the move wants to talk and see where everyone is at once.
+
+**What already exists**
+
+- **Android (Stage 3):** a rail from 600 dp; list ∥ conversation with `NavigableListDetailPaneScaffold`;
+  `foldAwarePaneDirective` (two panes from medium width, the hinge avoided); the tab survives a fold
+  (`rememberSaveable`); no orientation locks; the 320 dp floor. The map is a tab of its own, and nothing
+  links a conversation to it.
+- **iOS:** iPhone only (`TARGETED_DEVICE_FAMILY = 1`), a three-tab `TabView`, no size-class logic.
+- **MapLibre:** Android 13.6.1 and iOS 6.31.0 already include the fixes that matter here. The
+  split-screen freeze (maplibre-native #3836) was fixed in 13.5.0, and the display scale now comes from the
+  window's own screen (ios-v6.28.0), which matters on two-screen devices.
+
+### Phases
+
+1. **One layout rule, shared.** `PaneLayout` is a pure function in a Kotlin core module, tested on the
+   JVM, with a Swift port in FirepitKit. Both use the same names and the same table of cases, and
+   `check-port-parity.py` holds them together.
+   - **In:** the window's width and height (dp or pt); the fold (none, lying flat at a position,
+     separating down the screen, or separating across it, with its bounds); the narrowest chat side
+     the current text size allows; and the user's choice (arrangement, map side, and divider position for
+     upright and for wide windows).
+   - **Out:** one pane (which one); two side by side (bounds, divider anchors, and whether the divider is
+     locked); two stacked; or three. Also which navigation shows: bar, rail or none.
+   - **Cases:** at least 40. They cover every device size in UX §6.11.2, both sides of 600 and 1200
+     wide and of 480 tall, each pane minimum, right-to-left, and a locked divider.
+2. **Android shell.**
+   - The top level chooses one pane (today's tabs), two, three or stacked from `PaneLayout`.
+   - The Chats and Map content are `movableContentOf`, so changing arrangement moves them instead of
+     rebuilding them: the MapLibre view, the scroll position and the draft all stay.
+   - The chat side's list-detail scaffold gets a directive from the chat pane's own width, not the
+     window's. Otherwise it would split again inside a 376 dp pane.
+   - **Divider:** Material 3 adaptive pane expansion: `rememberPaneExpansionState` with proportion
+     anchors at ⅓, ½ and ⅔ plus an offset anchor on the hinge, and a `VerticalDragHandle`. It sits in
+     `ThreePaneScaffold` / `SupportingPaneScaffold`, or in a small custom layout if nesting fights it.
+     - MapLibre's `SurfaceView` blocks the UI thread on every size change. So the map pane takes its new
+       size once, when a drag or animation ends (`boundsAnimationSpec = snap()` for that pane).
+   - **Fold and posture** come from `currentWindowAdaptiveInfoV2().windowPosture` (hinge bounds,
+     `isTabletop`). A separating fold locks the divider to it; tabletop stacks the panes.
+   - **Navigation:** no rail with two or three panes. ⚙ on the chat list opens Settings across the
+     window, and back acts on the side touched last.
+   - **Keyboard:** `imePadding` moves from the shell to the chat side, and the map side ignores the
+     keyboard.
+   - **Preferences** live in DataStore (`LayoutPreferences`: arrangement, map side, and the divider for
+     upright and wide windows).
+   - **Narrow windows:** less chrome below 320 dp, and still usable at 220 dp.
+   - **Mouse and keyboard:** hover, right-click for the long-press menu, Enter and Shift+Enter, Esc,
+     Ctrl+F, and Tab between the sides.
+   - **Moving between screens** still recreates the activity, as today (no `configChanges` shortcuts,
+     CLAUDE.md). State lives in ViewModels and saved state, and the map's camera in its ViewModel.
+     `movableContentOf` covers changes within one window; recreation covers moving between screens.
+3. **iOS shell.**
+   - **A universal app:** iPhone and iPad (U-14). Build with the iOS 27.1 SDK so the iPhone Duo gets
+     edge-to-edge drawing and toolbars at the side. The scene lifecycle iOS 27 requires is already in use.
+   - **`AdaptiveShell`** reads the window's size and size classes and asks the ported `PaneLayout`.
+     - One pane: today's `TabView`.
+     - Two or three panes: the chat side and the map side with a draggable divider, built from
+       `DragGesture` and `GeometryReader`, since iOS has no ready-made split for this.
+     - On iOS 27.1, `ArrangementView` is used where it fits the pose, and `ReservedRegion` and
+       `onHingeChange` keep controls off the fold and the camera. iOS 17 to 27.0 fall back to the
+       custom split.
+   - **State lives in models, not views.** Switching between the tab view and the split rebuilds
+     SwiftUI views. So drafts, scroll anchors, the map's camera and the open conversation live in
+     observable models, and one `MLNMapView`, owned by the map's model, is reused.
+   - **Storage and window size:** `@SceneStorage` holds the window's arrangement and `@AppStorage` the
+     defaults. `UISceneSizeRestrictions.minimumSize` is 320 × 360 pt, and `isInteractivelyResizing`
+     holds the map's redraw during a live resize.
+   - **With two panes,** Settings opens in a sheet and the map side ignores the keyboard
+     (`.ignoresSafeArea(.keyboard)`). There is one scene (`UIApplicationSupportsMultipleScenes` off).
+4. **The two sides together (both apps).**
+   - **Map:** a filter that follows the open conversation, and a `focus` request (member, pin or point)
+     the chat side can make. Both live in shared workspace state, not in either screen.
+   - **Chat side:** Open map on location cards, pin messages and the member sheet; Show on map on a
+     sender; the Sharing chip in the header.
+   - **Map side:** Message opens the direct chat on the chat side; pins and sharing default to the open
+     room; Show in chat on a pin.
+   - **On a phone,** the same actions switch to the Map tab with the focus applied.
+5. **Continuity and resilience (both).** Every row of UX §6.11.5 becomes a test: fold and unfold in the
+   middle of typing, scrolling, with each sheet open and during a QR scan; rotation; resizing across
+   each threshold; and the app being closed by the system in the background.
+6. **Accessibility and right-to-left (both).** Labelled regions, the divider's actions, focus order across
+   the sides, large text falling back to one pane, mirroring, and Reduce Motion.
+7. **Design and docs.** Figma frames and Android renders at the sizes in UX §12 item 6; UX §6.11
+   corrected to what was built; architecture's Large screens row; the README.
+
+**Before building:** the owner confirms decisions U-8 to U-14 (UX §11.4).
+
+### Tests
+
+- **`PaneLayout`:** one table on both apps (JVM and `swift test`), with the 2026 devices' estimated sizes
+  and every boundary.
+- **Android:**
+  - `DeviceConfigurationOverride.ForcedSize` for sizes.
+  - `window-testing` (`TestWindowLayoutInfo` and the test `FoldingFeature`) for book and tabletop.
+  - The Espresso Device API for folding and unfolding.
+  - Screenshots at 220, 320, 412, 600, 752, 840 and 1200 dp wide, and in each posture.
+- **iOS:**
+  - Xcode Device Hub's iPhone Duo simulator (open, close, fold, rotate) and its resize mode.
+  - iPad windows.
+  - UI and screenshot tests at the same sizes.
+- **Performance:** dragging the divider and resizing a desktop window hold 60 fps, with the map pane at
+  its old size until release, on both MapLibre renderers (Vulkan and OpenGL). No freeze in split screen.
+- **Real devices:** Galaxy Z Fold8 Ultra, Galaxy Z Fold8, Galaxy Z Flip8 (half-folded and the cover
+  screen), Galaxy Z TriFold and Pixel 11 Pro Fold, through Samsung Remote Test Lab and Android Device
+  Streaming where none is on hand. The iPhone Duo from 23 October 2026, and an iPad.
+
+### Exit proofs
+
+- **Unfolding mid-conversation (Fold8 Ultra):** the conversation is on the chat side with the map beside
+  it, following that room. The draft and scroll position are intact, the keyboard is up if it was, and
+  folding again brings the conversation back.
+- **Book posture:** no control, text or marker inside the hinge's bounds, checked on screenshots against
+  the fold the device reports.
+- **Tabletop on a Flip8:** map above, conversation below. Typing takes the whole screen, and the split
+  comes back when the keyboard closes.
+- **The divider** settles at ⅓, ½, ⅔ and on the fold, and the map redraws once per drag, not once per
+  frame.
+- **Half and a third of a split screen:** the phone app with nothing cut off, at 220 dp too.
+- **iPhone Duo simulator:** the outer screen is the phone app, and the inner screen shows chat and map
+  50/50 on the fold. Folding mid-conversation keeps the draft.
+- **Both apps** make the same `PaneLayout` decisions, case for case.
+
+### Risks
+
+- **MapLibre resizing.** Its `SurfaceView` blocks on every size change, which is answered by resizing at
+  the end of a drag. Two open issues to watch: #4622 (a crash when the surface detaches) and #4700
+  (overlays lagging while panning).
+- **Nested adaptive scaffolds** measuring the window instead of their own pane.
+- **iOS 27.1's new APIs are in beta.** Everything that uses them sits behind availability checks, with
+  the custom split as the fallback.
+- **SwiftUI view identity.** Changing container rebuilds views, so state must already live in models.
+- **Samsung does not publish screen densities.** The dp sizes in UX §6.11.2 are estimates until measured
+  on a device.
+- **Keyboards on foldables** may span both panes, cover one, or float. The chat side must cope with all
+  three.
+
+---
+
 ## Test matrix (from Stage 3 onward)
 
 | Device | Why |
@@ -973,6 +1132,12 @@ zero-size rule is ever relaxed.
 | Resizable emulator — Flip cover / 320 dp | the width floor |
 | Tablet 10–13″ | 3-pane, nav rail |
 | Any device, fold/unfold mid-action | state survival (camera + map) |
+| Galaxy Z Fold8 Ultra and Pixel 11 Pro Fold (Remote Test Lab / Device Streaming) | two panes on the fold, book posture (Stage 12) |
+| Galaxy Z Fold8, the wide model | two panes with the inner screen held landscape (Stage 12) |
+| Galaxy Z Flip8 | tabletop: map above, chat below; the cover screen (Stage 12) |
+| Galaxy Z TriFold | two and three panes, DeX on the device (Stage 12) |
+| iPhone Duo (Device Hub simulator; device from 23 Oct 2026) | outer: phone app; inner: chat and map 50/50 (Stage 12) |
+| iPad, full screen and in windows | two and three panes, live resizing (Stage 12) |
 
 Espresso Device API (`setDisplaySize`, `setScreenOrientation`) for automated fold simulation;
 `@PreviewScreenSizes` for review-time checks.

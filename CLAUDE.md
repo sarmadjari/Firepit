@@ -116,7 +116,10 @@ cd android
 Phone portrait and landscape, foldable unfolded (list-detail, hinge-aware), foldable folded outer
 display (**320 dp width floor**), and tablet. No orientation locks, no `configChanges` shortcuts;
 state survives fold/unfold. Every screen is built adaptive from the start — see `docs/build-plan.md`
-Stage 3.
+Stage 3. Large screens are specified in UX §6.11 and planned as Stage 12: the layout comes from the
+window's size and fold through one shared rule (`PaneLayout`, same on both apps), never the device
+model; the conversation and the map sit side by side from 600 dp wide and 480 dp tall; the keyboard
+belongs to the chat side; the map pane is resized once per drag, not per frame.
 
 ## iOS
 
