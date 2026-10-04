@@ -25,7 +25,7 @@ RTL-ready from Stage 3) · invite-link domain deferred until Stage 8.
 | 9 | Release prep: accessibility and RTL pass, R8, store listing | Not started |
 | 10 | The iPhone app | ✅ Built. An iPhone and an Android phone in one room over real radios is still to be tested |
 | 11 | Security within Meshtastic's limits: Signal-grade protections where the radio allows, with no message growing by a byte | In progress: Phase 1 done on both apps, Phase 2 next |
-| 12 | Large screens: the conversation and the map side by side on foldables, tablets and wide windows; the phone app in narrow ones | Planned (UX §6.11). Decisions U-8 to U-14 proposed, to confirm |
+| 12 | Large screens: the conversation and the map side by side on foldables, tablets and wide windows; the phone app in narrow ones | In progress. Decisions U-8 to U-14 locked 2026-10-04 (UX §11.4) |
 
 ---
 
@@ -1070,7 +1070,7 @@ The design is UX §6.11; this is how it gets built.
 7. **Design and docs.** Figma frames and Android renders at the sizes in UX §12 item 6; UX §6.11
    corrected to what was built; architecture's Large screens row; the README.
 
-**Before building:** the owner confirms decisions U-8 to U-14 (UX §11.4).
+**Decisions:** U-8 to U-14 (UX §11.4), locked by the owner on 2026-10-04 as proposed.
 
 ### Tests
 

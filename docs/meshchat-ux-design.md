@@ -1007,13 +1007,13 @@ Rules: platform-native navigation and gestures always win over visual parity; co
 | U-5 | Room avatar — **locked** | Eight fixed icons (tent, trail, car, music, flag, house, star, heart), default tent; no emoji |
 | U-6 | Duration presets — **locked** | 15 min · 1 h · 8 h · Custom (update rate follows automatically) |
 | U-7 | "Secure this node" prompt timing — **locked (default)** | After first successful setup of a headless node, once |
-| U-8 | Arrangement on a wide screen — **proposed** | Chat and map side by side; Chat only and Map only one tap away (§6.11.4) |
-| U-9 | Which side the map takes — **proposed** | The end side: right in left-to-right languages, left in right-to-left; Swap sides changes it |
-| U-10 | Navigation with two panes — **proposed** | No bar or rail; Settings from ⚙ on the chat side. A rail would push the chat side below 320 on an 8″ inner screen split on the fold |
-| U-11 | Half-folded across the screen (tabletop) — **proposed** | Map above, conversation below; typing takes the whole screen until the keyboard closes |
-| U-12 | Divider — **proposed** | On the fold if there is one, otherwise the middle; settles at ⅓ · ½ · ⅔; locked on a separating fold; remembered per upright and wide window |
-| U-13 | Narrow windows — **proposed** | Full design down to 320; one pane with less chrome down to 220 (a third of a split screen) |
-| U-14 | iPad — **proposed** | Yes, from the same code: the iPhone Duo's inner screen and an iPad window are the same regular-width layout |
+| U-8 | Arrangement on a wide screen — **locked 2026-10-04** | Chat and map side by side; Chat only and Map only one tap away (§6.11.4) |
+| U-9 | Which side the map takes — **locked 2026-10-04** | The end side: right in left-to-right languages, left in right-to-left; Swap sides changes it |
+| U-10 | Navigation with two panes — **locked 2026-10-04** | No bar or rail; Settings from ⚙ on the chat side. A rail would push the chat side below 320 on an 8″ inner screen split on the fold |
+| U-11 | Half-folded across the screen (tabletop) — **locked 2026-10-04** | Map above, conversation below; typing takes the whole screen until the keyboard closes |
+| U-12 | Divider — **locked 2026-10-04** | On the fold if there is one, otherwise the middle; settles at ⅓ · ½ · ⅔; locked on a separating fold; remembered per upright and wide window |
+| U-13 | Narrow windows — **locked 2026-10-04** | Full design down to 320; one pane with less chrome down to 220 (a third of a split screen) |
+| U-14 | iPad — **locked 2026-10-04** | Yes, from the same code: the iPhone Duo's inner screen and an iPad window are the same regular-width layout |
 
 ---
 

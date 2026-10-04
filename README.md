@@ -52,7 +52,7 @@ Android and iPhone users can share a room.
 | iPhone app | ✅ Built: a one-to-one port of the Android app, with the same features |
 | Android ↔ iPhone compatibility | ✅ Proven by tests: each app opens what the other encrypts. ⏳ Not yet tested on real radios |
 | Field test | ⏳ Initial field tests under way. The main tests, including a full afternoon outdoors with several phones and radios, decide the release |
-| Large screens | ⏳ Planned: the conversation and the map side by side on foldables such as the Galaxy Z Fold8 and the iPhone Duo, on tablets and in wide windows ([UX §6.11](docs/meshchat-ux-design.md#611-large-screens-foldables-and-split-screen), build plan Stage 12) |
+| Large screens | 🚧 Being built: the conversation and the map side by side on foldables such as the Galaxy Z Fold8 and the iPhone Duo, on tablets and in wide windows ([UX §6.11](docs/meshchat-ux-design.md#611-large-screens-foldables-and-split-screen), build plan Stage 12) |
 | Release | ⏳ Once the main field tests pass. Still to do before then: store listings, accessibility and right-to-left pass, Arabic, licence (see below) |
 
 Known differences between the two apps, such as iOS not allowing apps to block screenshots, are listed in

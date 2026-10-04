@@ -291,7 +291,7 @@ The cost is real and accepted: you cannot add someone who is not with you. That 
 | Roster trust chain | inviter broadcasts a JOINED event to the room | guide D-3 |
 | Room words | sealed under a room key the radio never holds; 171 bytes per packet | design §6, guide §6.8.5 |
 | Removing someone | rotate to a new generation; new keys sent per member as PKI DMs | design §6 |
-| Large screens and foldables | the conversation and the map side by side when the window is wide enough (unfolded, tablet, wide window), the user choosing Chat and map, Chat only or Map only and which side; the phone app in narrow windows; layout from the window, never the device (2026-10, proposed) | UX §6.11, build plan Stage 12 |
+| Large screens and foldables | the conversation and the map side by side when the window is wide enough (unfolded, tablet, wide window), the user choosing Chat and map, Chat only or Map only and which side; the phone app in narrow windows; layout from the window, never the device (locked 2026-10-04) | UX §6.11, build plan Stage 12 |
 | Room keys over time | moved on every hour, one way, with old hours erased; each sender seals under a key of their own; each message opens once. No byte added: the hour rides in the nonce (2026-10, Stage 11 phase 1) | security.md §3, build plan Stage 11 |
 | Room messages | sent with `want_ack` for the "heard by the mesh" tick; no delivery claim | guide D-5, UX §7.2 |
 | Live location | precision toggle per room for start/stop; duration tier change may restart the node; presets 15 min · 1 h · 8 h · Custom | guide D-6, UX U-6 |
