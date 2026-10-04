@@ -51,6 +51,7 @@ Android and iPhone users can share a room.
 | Android app | ✅ Built: all v1 features |
 | iPhone app | ✅ Built: a one-to-one port of the Android app, with the same features |
 | Android ↔ iPhone compatibility | ✅ Proven by tests: each app opens what the other encrypts. ⏳ Not yet tested on real radios |
+| Security | ✅ Built on both apps ([security.md](docs/security.md)): room and direct-message keys that move on every hour, so a stolen phone cannot read old messages; in-person invites that also protect against a future quantum computer; room keys that change on a schedule; Android's phone key in secure hardware, as the iPhone's already is; an encrypted database on both phones. No message grew by a byte. ⏳ An independent review by a person before release |
 | Field test | ⏳ Initial field tests under way. The main tests, including a full afternoon outdoors with several phones and radios, decide the release |
 | Large screens | ✅ Built: the conversation and the map side by side on foldables such as the Galaxy Z Fold8, on tablets including the iPad, and in wide windows; checked on a Galaxy Z Fold. ⏳ The iPhone Duo's fold awaits the iOS 27.1 SDK and the device ([UX §6.11](docs/meshchat-ux-design.md#611-large-screens-foldables-and-split-screen), build plan Stage 12) |
 | Release | ⏳ Once the main field tests pass. Store listings, the accessibility and right-to-left pass, and a smaller release build are done. Still to do: Arabic, the licence (see below), the release key and the store submissions |
