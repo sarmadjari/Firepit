@@ -245,17 +245,14 @@ fun RoomMembersScreen(
                             Text(
                                 text = memberDetail(row),
                                 style = MaterialTheme.typography.bodySmall,
-                                color = if (row.member.isFirstHand) {
-                                    FirepitTheme.colors.textSecondary
-                                } else {
-                                    FirepitTheme.colors.stale
-                                },
+                                // Not first-hand is said in the words; stale grey is too faint for text.
+                                color = FirepitTheme.colors.textSecondary,
                             )
                             if (!row.member.isVouched) {
                                 Text(
                                     text = "Invite unknown",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = FirepitTheme.colors.stale,
+                                    color = FirepitTheme.colors.textSecondary,
                                 )
                             }
                         }

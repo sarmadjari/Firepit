@@ -297,11 +297,11 @@ private struct MemberRowView: View {
                     .lineLimit(1)
                 Text(verbatim: memberDetail(row))
                     .font(FirepitFont.bodySmall)
-                    .foregroundStyle(row.member.isFirstHand ? FirepitColors.textSecondary : FirepitColors.stale)
+                    .foregroundStyle(FirepitColors.textSecondary)
                 if !row.member.isVouched {
                     Text("Invite unknown")
                         .font(FirepitFont.bodySmall)
-                        .foregroundStyle(FirepitColors.stale)
+                        .foregroundStyle(FirepitColors.textSecondary)
                 }
             }
             Spacer(minLength: 0)

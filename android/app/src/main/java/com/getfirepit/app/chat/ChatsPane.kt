@@ -698,7 +698,7 @@ private fun NodeStatusLine(connected: Boolean, myNode: MeshNode?) {
                 }
             },
             style = MaterialTheme.typography.bodySmall,
-            color = if (connected) FirepitTheme.colors.textSecondary else FirepitTheme.colors.stale,
+            color = FirepitTheme.colors.textSecondary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -1198,7 +1198,7 @@ private fun CongestionNotice(load: ChannelLoad?) {
             "Channel is busy — messages may take longer"
         },
         style = MaterialTheme.typography.labelMedium,
-        color = if (congested) FirepitTheme.colors.stale else FirepitTheme.colors.textSecondary,
+        color = if (congested) FirepitTheme.colors.warn else FirepitTheme.colors.textSecondary,
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = FirepitSpacing.m, vertical = FirepitSpacing.xs),
@@ -1523,14 +1523,15 @@ private fun RoomSearchBar(query: String, onQuery: (String) -> Unit, onClose: () 
                             field()
                         }
                         if (query.isNotEmpty()) {
-                            Icon(
-                                painter = painterResource(FirepitIcons.Close),
-                                contentDescription = "Clear search",
-                                tint = FirepitTheme.colors.textSecondary,
-                                modifier = Modifier
-                                    .size(18.dp)
-                                    .clickable { onQuery("") },
-                            )
+                            // A full touch target round a small glyph: an 18 dp target was too easy to miss.
+                            IconButton(onClick = { onQuery("") }) {
+                                Icon(
+                                    painter = painterResource(FirepitIcons.Close),
+                                    contentDescription = "Clear search",
+                                    tint = FirepitTheme.colors.textSecondary,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
                         }
                     }
                 },

@@ -22,7 +22,7 @@ RTL-ready from Stage 3) · invite-link domain deferred until Stage 8.
 | 3–6 | Adaptive shell and design system, rooms and QR invites, chat, map and location | ✅ Built. The exit proofs that need people outdoors wait for the field test |
 | 7–7.9 | Hardening, identity and privacy, sealed rooms, the two-phone bench test, two security reviews | ✅ Built. A full-afternoon field test and battery over 8 h are not yet measured |
 | 8 | v1.0 features | ✅ Built, except emoji reactions |
-| 9 | Release prep: accessibility and RTL pass, R8, store listing | Not started |
+| 9 | Release prep: accessibility and RTL pass, R8, store listing | In progress: no analytics confirmed, store listing written, contrast and touch targets fixed |
 | 10 | The iPhone app | ✅ Built. An iPhone and an Android phone in one room over real radios is still to be tested |
 | 11 | Security within Meshtastic's limits: Signal-grade protections where the radio allows, with no message growing by a byte | In progress: Phase 1 done on both apps, Phase 2 next |
 | 12 | Large screens: the conversation and the map side by side on foldables, tablets and wide windows; the phone app in narrow ones | Built on both apps, 2026-10-04 (decisions U-8 to U-14, UX §11.4). Open: the chat-to-map actions, which need features not built yet; the iOS 27.1 fold APIs; Figma frames; device runs on an iPhone Duo, a Flip and a TriFold |
@@ -813,6 +813,19 @@ of any message the firmware marked as signed, and the radio's details say whethe
 Accessibility sweep (48 dp targets, TalkBack labels on every tick glyph, contrast), **RTL/Arabic
 pass**, R8 config, 16 KB page-alignment check on native libs (SQLCipher, MapLibre), Play listing,
 no analytics confirmed.
+
+**Done (2026-10-04):**
+- **No analytics:** neither app has an analytics, crash-reporting or tracking library, and the only
+  network calls are map tiles from OpenFreeMap, which offline-only mode stops.
+- **Store listing:** `store-listing.md`, with the privacy answers from that audit.
+- **Tick glyphs:** every status glyph already had its spoken label on both apps.
+- **Contrast:** three light-theme tokens fell short of WCAG AA and are now the nearest passing shade
+  of the same hue: `live` #22915C (was 2.45:1 on the surface, now 3.73), `stale` #888179 (2.49, now
+  3.60) and `warn` #895F00 (4.39, now 5.31). `stale` is for rings and icons only; the four places
+  that used it for text now use the secondary text colour, and the congestion warning uses `warn`.
+  `DesignSystemTests` holds every pair: text at 4.5:1, rings, dots and ticks at 3:1.
+- **Touch targets:** the one target under 48 dp, the × that clears a room's search, is now a full
+  target on both apps.
 
 ## Stage 10 — iOS ✅ built
 

@@ -245,7 +245,7 @@ func statusOf(_ radio: SavedRadio, state: RadioUiState) -> DeviceStatus {
     }
     return DeviceStatus(
         detail: whereText,
-        tone: connected ? FirepitColors.textSecondary : FirepitColors.stale,
+        tone: FirepitColors.textSecondary,
         connected: connected,
         active: false
     )

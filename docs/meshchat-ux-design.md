@@ -842,9 +842,9 @@ Tokens (light / dark). **"Ember" palette**: a terracotta primary with warm neutr
 | `text` | `#1A1614` | `#F1ECE7` | 4.5:1+ on surfaces |
 | `text-2` | `#6B625C` | `#A39C95` | secondary |
 | `outline` | `#E8E0D9` | `#2E2926` | dividers, strokes |
-| `live` | `#2BB673` | `#4ED69A` | live markers, connected dot |
-| `stale` | `#A39E98` | `#6F6963` | stale markers, unknown |
-| `warn` | `#9A6B00` | `#F2C94C` | alerts, mesh busy, restarting (deep gold, distinct from the terracotta primary) |
+| `live` | `#22915C` | `#4ED69A` | live markers, connected dot |
+| `stale` | `#888179` | `#6F6963` | stale markers, unknown. Rings and icons only, never text: it is too faint to read at text sizes |
+| `warn` | `#895F00` | `#F2C94C` | alerts, mesh busy, restarting (deep gold, distinct from the terracotta primary) |
 | `danger` | `#C62B4A` | `#F27D8E` | failed, leave/remove (crimson, distinct from primary) |
 | `infra` | `#4A5B8C` | `#93A6DF` | Base/Router markers and tags |
 | `identity[0..11]` | 12 hues, S 50 %, L 42 % (light) / L 64 % (dark) | — | avatars, sender names, markers |

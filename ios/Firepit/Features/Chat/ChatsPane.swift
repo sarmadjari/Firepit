@@ -421,7 +421,7 @@ private struct NodeStatusLine: View {
             LiveRing(size: 8, live: connected)
             Text(verbatim: ChatsCopy.nodeStatus(connected: connected, myNode: myNode))
                 .font(FirepitFont.bodySmall)
-                .foregroundStyle(connected ? FirepitColors.textSecondary : FirepitColors.stale)
+                .foregroundStyle(FirepitColors.textSecondary)
                 .lineLimit(1)
         }
         .accessibilityElement(children: .combine)
@@ -996,7 +996,7 @@ private struct CongestionNotice: View {
                     : "Channel is busy — messages may take longer"
             )
             .font(FirepitFont.labelMedium)
-            .foregroundStyle(congested ? FirepitColors.stale : FirepitColors.textSecondary)
+            .foregroundStyle(congested ? FirepitColors.warn : FirepitColors.textSecondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, FirepitSpacing.m)
             .padding(.vertical, FirepitSpacing.xs)
@@ -1162,6 +1162,8 @@ private struct RoomSearchBar: View {
                     } label: {
                         Image(icon: .close).foregroundStyle(FirepitColors.textSecondary)
                     }
+                    // A 44-point target round a small glyph, without making the bar taller.
+                    .contentShape(.rect.inset(by: -13))
                     .accessibilityLabel(Text("Clear search"))
                 }
             }
