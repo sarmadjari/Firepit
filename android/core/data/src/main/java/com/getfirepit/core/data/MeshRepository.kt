@@ -191,6 +191,9 @@ class MeshRepository @Inject constructor(
     private val _snapshot = MutableStateFlow<RadioSnapshot?>(null)
     val snapshot: StateFlow<RadioSnapshot?> = _snapshot.asStateFlow()
 
+    private val _radioFix = MutableStateFlow<OwnPosition.Fix?>(null)
+    val radioFix: StateFlow<OwnPosition.Fix?> = _radioFix.asStateFlow()
+
     /** Newly stored incoming messages. Replays nothing, so a late collector cannot re-notify. */
     private val _incomingMessages = MutableSharedFlow<ChatMessage>(extraBufferCapacity = 16)
     val incomingMessages: SharedFlow<ChatMessage> = _incomingMessages.asSharedFlow()
@@ -581,6 +584,8 @@ class MeshRepository @Inject constructor(
                     _channels.value = state.snapshot.channels.values
                         .sortedBy { it.index }
                         .map(::roomChannelOf)
+                    state.snapshot.nodes[state.snapshot.myNodeNum]?.position
+                        ?.let { noteRadioFix(it, System.currentTimeMillis()) }
                     state.snapshot.nodes.values.forEach { saveNode(it) }
                 }
             }
@@ -887,12 +892,30 @@ class MeshRepository @Inject constructor(
      * naming a member was put on the air by whoever holds a radio.
      */
     private suspend fun handlePosition(packet: MeshPacket, data: Data) {
+        val position = runCatching { Position.ADAPTER.decode(data.payload) }.getOrNull() ?: return
+        if (packet.from == _myNodeNum.value) {
+            noteRadioFix(position, System.currentTimeMillis())
+            return
+        }
         if (!TrustRules.unsealedPositionAcceptable(senderInOurRooms = memberDao.isInAnyRoom(packet.from))) {
             Log.w(TAG, "dropped an unsealed position for member ${packet.from}")
             return
         }
-        val position = runCatching { Position.ADAPTER.decode(data.payload) }.getOrNull() ?: return
         storePosition(packet.from, position, precision = position.precision_bits.takeIf { it != 0 })
+    }
+
+    private fun noteRadioFix(position: Position, receivedAt: Long) {
+        val latitude = position.latitude_i ?: return
+        val longitude = position.longitude_i ?: return
+        if (latitude == 0 && longitude == 0) return
+        if (position.location_source == Position.LocSource.LOC_EXTERNAL) return
+        _radioFix.value = OwnPosition.Fix(
+            latitude = latitude / 1e7,
+            longitude = longitude / 1e7,
+            altitude = position.altitude,
+            timeMillis = position.time.ifPlausible() ?: receivedAt,
+            source = OwnPosition.Source.RADIO,
+        )
     }
 
     /**

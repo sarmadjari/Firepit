@@ -409,7 +409,9 @@ People sheet rows: avatar, name, distance and bearing from me, age of last posit
 
 Marker sizes, identical on both apps (dp on Android, points on iOS, so a marker is the same physical size on every phone): disc 34 across; ring 3 (4 on your own marker, in `#1B73E8`), drawn inside the disc's edge, `live` when live and `stale` otherwise; tag 14 bold, shrinking to fit 78 % of the disc; Base/Router glyph 62 % of the disc; approximate fix at 60 % opacity; heading arrow 10 × 8 just above the disc; name pill 3 below the disc, 12 semibold, padding 6 × 2, corner 6, `surface-2` with an `outline` hairline. Pins: an amber (`#F59E0B`) teardrop 28 high with a white hole, anchored at its tip, with the pin's name under it. Android draws these into bitmaps scaled by screen density (`MarkerSize` in `MapScreen.kt`); iOS draws the same numbers (`MarkerSize` in `MapAnnotations.swift`).
 
-Marker language: personal = the person's tag (`short_name`) in identity colour with white ring, full name in the label chip below; live = solid + subtle pulse (off with reduce motion); stale = 50 % opacity, grey ring, age label; reduced precision = translucent accuracy circle; Base = house glyph, Router = antenna glyph, both in the reserved infrastructure colour; multiple bases share the glyph and differ by label. Own marker = blue dot like every map app.
+Marker language: personal = the person's tag (`short_name`) in identity colour with white ring, full name in the label chip below; live = solid + subtle pulse (off with reduce motion); stale = 50 % opacity, grey ring, age label; reduced precision = translucent accuracy circle; Base = house glyph, Router = antenna glyph, both in the reserved infrastructure colour; multiple bases share the glyph and differ by label.
+
+You are one dot, in the theme primary colour, using MapLibre's user-location dot. The app never draws the radio connected to this phone as a second "you" marker; Base and Router radios you own still use their normal markers. The dot uses the phone's GPS fix while it is under 10 minutes old, and the connected radio's own GPS fix (also under 10 minutes old) when the phone has none or has gone quiet while the radio kept fixing; with neither, it disappears. If location permission is off, there is no dot at all, including no radio fallback. "Centre on everyone" includes this dot.
 
 ### 6.7 Share location sheet
 
@@ -469,6 +471,7 @@ change only when someone is removed." A scheduled change posts no conversation l
 │ Region          Europe 868 MHz        ▸  │ ← restart
 │ Rooms           Camp, Trail           ▸  │
 │ Range           Group only            ▸  │ ← or "Group + public relays" (D-1); the group must match; may restart
+│ Radio GPS       On                    ▸  │ ← only when connected and GPS hardware is present; restart
 │ Fixed position  Set from phone        ▸  │
 │ Secure Bluetooth PIN   Factory (change)▸ │ ← restart; recommended for headless nodes
 ├──────────────────────────────────────────┤
@@ -477,6 +480,8 @@ change only when someone is removed." A scheduled change posts no conversation l
 ```
 
 Every row that restarts the node says so in its detail screen and shows the checklist progress after applying.
+
+Settings › Radio shows **Radio GPS** only while the connected radio reports GPS hardware. Copy: "Firepit uses this phone's location. Turn the radio's GPS off to save its battery; leave it on if this phone or tablet has no GPS." Changing it says: "Sent to the radio. It restarts to apply the change."
 
 ### 6.10 Diagnostics
 

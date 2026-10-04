@@ -362,8 +362,11 @@ private struct NodeNameFields: View {
 private struct BeaconFields: View {
     let rate: BeaconRate?
     let whenMoved: Bool
+    let radioGpsAvailable: Bool
+    let radioGpsEnabled: Bool
     let onRate: (BeaconRate) -> Void
     let onWhenMoved: (Bool) -> Void
+    let onRadioGps: (Bool) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: FirepitSpacing.xs) {
@@ -394,7 +397,22 @@ private struct BeaconFields: View {
                         .foregroundStyle(FirepitColors.textSecondary)
                 }
             }
-            Text("Changing either restarts the radio.")
+            if radioGpsAvailable {
+                Toggle(isOn: Binding(get: { radioGpsEnabled }, set: { value in onRadioGps(value) })) {
+                        VStack(alignment: .leading) {
+                            Text("Radio GPS")
+                            Text(
+                                """
+                                Firepit uses this phone's location. Turn the radio's GPS off to save its battery; leave it \
+                                on if this phone or tablet has no GPS.
+                                """
+                            )
+                            .font(FirepitFont.bodySmall)
+                            .foregroundStyle(FirepitColors.textSecondary)
+                        }
+                }
+            }
+            Text("Changing these restarts the radio.")
                 .font(FirepitFont.bodySmall)
                 .foregroundStyle(FirepitColors.warn)
         }
@@ -498,8 +516,14 @@ private struct DeviceDetail: View {
             }
             Section {
                 BeaconFields(
-                    rate: state.beaconRate, whenMoved: state.beaconWhenMoved, onRate: viewModel.setBeaconRate,
-                    onWhenMoved: viewModel.setBeaconWhenMoved)
+                    rate: state.beaconRate,
+                    whenMoved: state.beaconWhenMoved,
+                    radioGpsAvailable: state.radioGpsAvailable,
+                    radioGpsEnabled: state.radioGpsEnabled,
+                    onRate: viewModel.setBeaconRate,
+                    onWhenMoved: viewModel.setBeaconWhenMoved,
+                    onRadioGps: viewModel.setRadioGps
+                )
             }
             Section {
                 RelayFields(reach: state.relayReach, channels: details.channels, onReach: viewModel.setRelayReach)

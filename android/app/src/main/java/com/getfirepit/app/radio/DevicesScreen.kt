@@ -534,8 +534,11 @@ private fun NodeNameFields(owner: Owner?, onRename: (String, String) -> Unit) {
 private fun BeaconFields(
     rate: BeaconRate?,
     whenMoved: Boolean,
+    radioGpsAvailable: Boolean,
+    radioGpsEnabled: Boolean,
     onRate: (BeaconRate) -> Unit,
     onWhenMoved: (Boolean) -> Unit,
+    onRadioGps: (Boolean) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
         SectionLabel("Beacon")
@@ -579,8 +582,25 @@ private fun BeaconFields(
             }
             Switch(checked = whenMoved, onCheckedChange = onWhenMoved)
         }
+        if (radioGpsAvailable) {
+            Row(
+                modifier = Modifier.padding(top = FirepitSpacing.s).fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Radio GPS", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = "Firepit uses this phone's location. Turn the radio's GPS off to save its " +
+                            "battery; leave it on if this phone or tablet has no GPS.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = FirepitTheme.colors.textSecondary,
+                    )
+                }
+                Switch(checked = radioGpsEnabled, onCheckedChange = onRadioGps)
+            }
+        }
         Text(
-            text = "Changing either restarts the radio.",
+            text = "Changing these restarts the radio.",
             style = MaterialTheme.typography.bodySmall,
             color = FirepitTheme.colors.warn,
         )
@@ -720,8 +740,11 @@ private fun DeviceDetail(
                         BeaconFields(
                             rate = state.beaconRate,
                             whenMoved = state.beaconWhenMoved,
+                            radioGpsAvailable = state.radioGpsAvailable,
+                            radioGpsEnabled = state.radioGpsEnabled,
                             onRate = viewModel::setBeaconRate,
                             onWhenMoved = viewModel::setBeaconWhenMoved,
+                            onRadioGps = viewModel::setRadioGps,
                         )
                         RelayFields(
                             reach = state.relayReach,
@@ -934,4 +957,3 @@ private fun fixLabel(risk: RadioRisk): String = when (risk) {
     RadioRisk.MQTT_UPLINK, RadioRisk.MQTT_MAP_REPORT -> "Turn off MQTT"
     RadioRisk.MANAGED -> ""
 }
-

@@ -1,11 +1,13 @@
 package com.getfirepit.app.map
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.location.Location
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
@@ -88,11 +90,16 @@ import com.getfirepit.core.designsystem.theme.onIdentityColorFor
 import com.getfirepit.core.protocol.NodeRole
 import com.getfirepit.core.protocol.ShareDuration
 import com.getfirepit.core.model.MapPin
+import com.getfirepit.core.data.OwnPosition
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.delay
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
+import org.maplibre.android.location.LocationComponentActivationOptions
+import org.maplibre.android.location.LocationComponentOptions
+import org.maplibre.android.location.modes.CameraMode
+import org.maplibre.android.location.modes.RenderMode
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
@@ -122,13 +129,20 @@ fun MapScreen(
     var pickingRoom by remember { mutableStateOf(false) }
     var pendingShare by remember { mutableStateOf<PendingShare?>(null) }
     val palette = MarkerPalette.from(FirepitTheme.colors)
+    val ownDotPrimary = MaterialTheme.colorScheme.primary.toArgb()
+    val ownDotOnPrimary = MaterialTheme.colorScheme.onPrimary.toArgb()
+    val ownDotAccuracy = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f).toArgb()
     val context = LocalContext.current
+    var locationAllowed by remember { mutableStateOf(hasLocationPermission(context)) }
+    val ownDot = remember { OwnDotLayer() }
 
     val locationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { granted ->
         // Coarse is enough to publish a position; fine simply makes it better.
-        if (granted.values.any { it }) {
+        locationAllowed = granted.values.any { it }
+        viewModel.setLocationAllowed(locationAllowed)
+        if (locationAllowed) {
             viewModel.setMapVisible(true)
             pendingShare?.let { sharingViewModel.share(it.roomId, it.choice) }
         } else if (pendingShare != null) {
@@ -146,7 +160,9 @@ fun MapScreen(
     // does not dispose this screen, so a plain DisposableEffect left the GPS
     // running with the screen off, drawing power for a map nobody could see.
     LifecycleStartEffect(Unit) {
-        if (hasLocationPermission(context)) {
+        locationAllowed = hasLocationPermission(context)
+        viewModel.setLocationAllowed(locationAllowed)
+        if (locationAllowed) {
             viewModel.setMapVisible(true)
         } else {
             locationPermission.launch(
@@ -188,11 +204,15 @@ fun MapScreen(
         // Framed on its own only when the tiles come from this phone. Online,
         // moving the camera to everyone fetches the tiles around them, which
         // tells the tile server where the group is; that waits for a tap.
-        if (!hasFramedMarkers && state.markers.isNotEmpty() && offlineOnly) {
+        if (!hasFramedMarkers && (state.markers.isNotEmpty() || state.ownPosition != null) && offlineOnly) {
             // Only latch once the camera actually moved, or a first draw that
             // beat the style load would leave the map stuck in the Atlantic.
-            hasFramedMarkers = markerLayer.frameAll(state.markers)
+            hasFramedMarkers = markerLayer.frameAll(state.markers, state.ownPosition)
         }
+    }
+
+    LaunchedEffect(state.ownPosition, locationAllowed, ownDotPrimary, ownDotOnPrimary, ownDotAccuracy) {
+        ownDot.update(state.ownPosition, locationAllowed, ownDotPrimary, ownDotOnPrimary, ownDotAccuracy)
     }
 
     LaunchedEffect(offlineOnly, areas) {
@@ -208,11 +228,12 @@ fun MapScreen(
             initialCamera = viewModel.camera,
         ) { map, view ->
             markerLayer.attach(map, view)
+            ownDot.attach(map, view, state.ownPosition, locationAllowed, ownDotPrimary, ownDotOnPrimary, ownDotAccuracy)
             map.addOnCameraIdleListener { viewModel.camera = map.cameraPosition }
             markerLayer.setOnPinClick { pin -> openPin = pin }
             markerLayer.setOnMarkerClick { marker -> if (!marker.isSelf) openMarker = marker }
                 map.style?.let { coverageMask.apply(it, areas, offlineOnly) }
-                if (offlineOnly) hasFramedMarkers = markerLayer.frameAll(state.markers)
+                if (offlineOnly) hasFramedMarkers = markerLayer.frameAll(state.markers, state.ownPosition)
                 map.addOnMapLongClickListener { point ->
                     droppingAt = point
                     true
@@ -278,7 +299,7 @@ fun MapScreen(
             // are: the tiles it would fetch there tell the tile server the place.
             if (!hasFramedMarkers && !offlineOnly && state.markers.isNotEmpty()) {
                 Button(
-                    onClick = { hasFramedMarkers = markerLayer.frameAll(state.markers, force = true) },
+                    onClick = { hasFramedMarkers = markerLayer.frameAll(state.markers, state.ownPosition, force = true) },
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .statusBarsPadding()
@@ -337,7 +358,7 @@ fun MapScreen(
             },
             onCentre = {
                 showingOptions = false
-                markerLayer.frameAll(state.markers, force = true)
+                markerLayer.frameAll(state.markers, state.ownPosition, force = true)
             },
             onAskEveryone = {
                 showingOptions = false
@@ -365,7 +386,9 @@ fun MapScreen(
             },
             onShare = { roomId, choice ->
                 pickingRoom = false
-                if (hasLocationPermission(context)) {
+                locationAllowed = hasLocationPermission(context)
+                viewModel.setLocationAllowed(locationAllowed)
+                if (locationAllowed) {
                     sharingViewModel.share(roomId, choice)
                 } else {
                     pendingShare = PendingShare(roomId, choice)
@@ -838,13 +861,13 @@ private class MarkerLayer {
     fun style(): Style? = map?.style
 
     /** Frames every marker once. Returns false when the map is not ready yet. */
-    fun frameAll(markers: List<MapMarker>, force: Boolean = false): Boolean {
+    fun frameAll(markers: List<MapMarker>, ownPosition: OwnPosition.Fix?, force: Boolean = false): Boolean {
         val map = map ?: return false
         val points = markers.mapNotNull { marker ->
             val latitude = marker.node.latitude ?: return@mapNotNull null
             val longitude = marker.node.longitude ?: return@mapNotNull null
             LatLng(latitude, longitude)
-        }
+        } + listOfNotNull(ownPosition?.let { LatLng(it.latitude, it.longitude) })
         when {
             points.size == 1 -> map.animateCamera(CameraUpdateFactory.newLatLngZoom(points.first(), 14.0))
             points.size > 1 -> {
@@ -853,6 +876,70 @@ private class MarkerLayer {
             }
         }
         return points.isNotEmpty()
+    }
+}
+
+private class OwnDotLayer {
+    private var map: MapLibreMap? = null
+    private var view: MapView? = null
+
+    fun attach(
+        map: MapLibreMap,
+        view: MapView,
+        fix: OwnPosition.Fix?,
+        locationAllowed: Boolean,
+        primary: Int,
+        onPrimary: Int,
+        accuracy: Int,
+    ) {
+        this.map = map
+        this.view = view
+        update(fix, locationAllowed = locationAllowed, primary = primary, onPrimary = onPrimary, accuracy = accuracy)
+    }
+
+    /** What the dot was set up with; a new style (a reload) or a theme change sets it up again. */
+    private var activatedOn: Any? = null
+
+    @SuppressLint("MissingPermission")
+    fun update(fix: OwnPosition.Fix?, locationAllowed: Boolean, primary: Int, onPrimary: Int, accuracy: Int) {
+        val map = map ?: return
+        val view = view ?: return
+        val style = map.style ?: return
+        val component = map.locationComponent
+        val setup = listOf(System.identityHashCode(style), primary, onPrimary, accuracy)
+        if (activatedOn != setup) {
+            component.activateLocationComponent(
+                LocationComponentActivationOptions.builder(view.context, style)
+                    .useDefaultLocationEngine(false)
+                    .locationComponentOptions(
+                        LocationComponentOptions.builder(view.context)
+                            .foregroundTintColor(primary)
+                            .foregroundStaleTintColor(primary)
+                            .backgroundTintColor(onPrimary)
+                            .backgroundStaleTintColor(onPrimary)
+                            .accuracyColor(accuracy)
+                            .pulseEnabled(false)
+                            .build(),
+                    )
+                    .build(),
+            )
+            component.renderMode = RenderMode.NORMAL
+            component.cameraMode = CameraMode.NONE
+            activatedOn = setup
+        }
+        component.isLocationComponentEnabled = locationAllowed && fix != null
+        if (locationAllowed && fix != null) {
+            component.forceLocationUpdate(
+                Location("firepit").apply {
+                    latitude = fix.latitude
+                    longitude = fix.longitude
+                    fix.altitude?.let {
+                        altitude = it.toDouble()
+                    }
+                    time = fix.timeMillis
+                },
+            )
+        }
     }
 }
 

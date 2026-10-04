@@ -823,11 +823,17 @@ func channelTextPacket(id: Int32, from node: Int32, text: String, channel: Int =
     #expect(adminMessage.addContact.nodeNum == 222)
 }
 
-private func positionPacket(from node: Int32, latitudeI: Int32, precisionBits: UInt32) throws -> MeshPacket {
+private func positionPacket(
+    from node: Int32,
+    latitudeI: Int32,
+    precisionBits: UInt32,
+    source: Position.LocSource = .locUnset
+) throws -> MeshPacket {
     var position = Position()
     position.latitudeI = latitudeI
     position.longitudeI = 20
     position.precisionBits = precisionBits
+    position.locationSource = source
     var data = DataMessage()
     data.portnum = .positionApp
     data.payload = try position.serializedData()
@@ -836,6 +842,39 @@ private func positionPacket(from node: Int32, latitudeI: Int32, precisionBits: U
     packet.from = UInt32(bitPattern: node)
     packet.decoded = data
     return packet
+}
+
+@Test func ownPositionPacketSetsRadioFixAndIsNotStoredAsMemberPosition() async throws {
+    let h = try Harness()
+    try await h.memberDao.record(roomId: 42, nodeNum: 111, now: 1)
+    h.mesh.start()
+    try await h.nodeDao.save(node: MeshNode(nodeNum: 111), now: 1)
+    h.link.push(fromRadio(packet: try positionPacket(from: 111, latitudeI: 10, precisionBits: 32, source: .locInternal)))
+    #expect(await eventually { h.mesh.radioFix.value?.latitudeI == 10 })
+    #expect(try await h.nodeDao.find(nodeNum: 111)?.latitudeI == nil)
+}
+
+@Test func ownExternalPositionPacketIsNotMistakenForRadioGps() async throws {
+    let h = try Harness()
+    h.mesh.start()
+    h.link.push(fromRadio(packet: try positionPacket(from: 111, latitudeI: 10, precisionBits: 32, source: .locExternal)))
+    try? await Task.sleep(for: .milliseconds(20))
+    #expect(h.mesh.radioFix.value == nil)
+}
+
+@Test func ownNodeInfoAtConnectSetsRadioFix() async throws {
+    let h = try Harness()
+    var snapshot = makeSnapshot()
+    var position = Position()
+    position.latitudeI = 12_000_000
+    position.longitudeI = 34_000_000
+    position.locationSource = .locInternal
+    var node = snapshot.nodes[111]!
+    node.position = position
+    snapshot.nodes[111] = node
+    h.mesh.start()
+    await h.connect(snapshot)
+    #expect(await eventually { h.mesh.radioFix.value?.latitudeI == 12_000_000 })
 }
 
 /// Kotlin's handlePosition: an unsealed position is kept for a node outside our rooms, where it is all there is.

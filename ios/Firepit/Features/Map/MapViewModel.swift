@@ -147,6 +147,7 @@ struct MapUiState: Equatable {
     var pins: [MapPin] = []
     var rooms: [RoomChannel] = []
     var sharingRoomId: Int32?
+    var ownPosition: OwnPosition.Fix?
     var myNodeNum: Int32?
     /// Everyone in a room with us, which is everyone we have a private way to ask.
     var roomMembers: Set<Int32> = []
@@ -255,6 +256,7 @@ final class MapViewModel {
             group.addTask { await self.observeChannels() }
             group.addTask { await self.observeNodeNum() }
             group.addTask { await self.observeConnectivity() }
+            group.addTask { await self.observeOwnPosition() }
             group.addTask { await self.tick() }
         }
     }
@@ -386,6 +388,10 @@ final class MapViewModel {
         location.setMapVisible(visible: !visibleScreens.isEmpty)
     }
 
+    func setLocationAllowed(_ allowed: Bool) {
+        location.setLocationAllowed(allowed: allowed)
+    }
+
     func clearError() {
         error = nil
         recompute()
@@ -451,6 +457,10 @@ final class MapViewModel {
         for await _ in mesh.isConnected.subscribe() { recompute() }
     }
 
+    private func observeOwnPosition() async {
+        for await _ in location.chosenOwnPosition.subscribe() { recompute() }
+    }
+
     private func tick() async {
         while !Task.isCancelled {
             nowMillis = currentEpochMillis()
@@ -475,13 +485,14 @@ final class MapViewModel {
             filter: filter,
             ours: ours,
             myNodeNum: mesh.myNodeNum.value
-        )
+        ).filter { $0.nodeNum != mesh.myNodeNum.value }
         uiState = MapUiState(
             connected: mesh.isConnected.value,
             markers: shown.map(marker(for:)),
             pins: MapSelection.pins(pins, following: following),
             rooms: ChannelSlotManager.rooms(channels: mesh.channels.value),
             sharingRoomId: location.sharingRoomId(),
+            ownPosition: location.chosenOwnPosition.value,
             myNodeNum: mesh.myNodeNum.value,
             roomMembers: groupNodes,
             filter: filter,

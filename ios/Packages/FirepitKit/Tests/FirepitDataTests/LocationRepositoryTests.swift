@@ -8,6 +8,76 @@ import Testing
 
 @Suite("LocationRepository port tests", .serialized)
 struct LocationRepositoryTests {
+    @Test func ownPositionChoosesFreshPhoneFirst() {
+        let now: Int64 = 1_000_000
+        let phone = OwnPosition.Fix(latitude: 1, longitude: 2, altitude: nil, timeMillis: now - 30_000, source: .phone)
+        let radio = OwnPosition.Fix(latitude: 3, longitude: 4, altitude: nil, timeMillis: now - 60_000, source: .radio)
+        #expect(OwnPosition.choose(phone: phone, radio: radio, nowMillis: now, locationAllowed: true) == phone)
+    }
+
+    @Test func ownPositionFallsBackToRadioWhenPhoneIsMissingOrStale() {
+        let now: Int64 = 1_000_000
+        let radio = OwnPosition.Fix(latitude: 3, longitude: 4, altitude: nil, timeMillis: now - 60_000, source: .radio)
+        let stalePhone = OwnPosition.Fix(
+            latitude: 1,
+            longitude: 2,
+            altitude: nil,
+            timeMillis: now - OwnPosition.phoneFreshMillis - 1,
+            source: .phone
+        )
+        #expect(OwnPosition.choose(phone: stalePhone, radio: radio, nowMillis: now, locationAllowed: true) == radio)
+        #expect(OwnPosition.choose(phone: nil, radio: radio, nowMillis: now, locationAllowed: true) == radio)
+    }
+
+    @Test func ownPositionReturnsNilWhenBothAreStale() {
+        let now: Int64 = 1_000_000
+        let phone = OwnPosition.Fix(
+            latitude: 1,
+            longitude: 2,
+            altitude: nil,
+            timeMillis: now - OwnPosition.phoneFreshMillis - 1,
+            source: .phone
+        )
+        let radio = OwnPosition.Fix(
+            latitude: 3,
+            longitude: 4,
+            altitude: nil,
+            timeMillis: now - OwnPosition.radioFreshMillis - 1,
+            source: .radio
+        )
+        #expect(OwnPosition.choose(phone: phone, radio: radio, nowMillis: now, locationAllowed: true) == nil)
+    }
+
+    @Test func ownPositionReturnsNilWhenPermissionDeniedEvenWithRadio() {
+        let now: Int64 = 1_000_000
+        let radio = OwnPosition.Fix(latitude: 3, longitude: 4, altitude: nil, timeMillis: now, source: .radio)
+        #expect(OwnPosition.choose(phone: nil, radio: radio, nowMillis: now, locationAllowed: false) == nil)
+    }
+
+    @Test func ownPositionKeepsAStillPhoneRatherThanARadioFixAMomentNewer() {
+        let now: Int64 = 1_000_000
+        let still = OwnPosition.Fix(latitude: 1, longitude: 2, altitude: nil, timeMillis: now - 5 * 60_000, source: .phone)
+        let radio = OwnPosition.Fix(latitude: 3, longitude: 4, altitude: nil, timeMillis: now - 4 * 60_000, source: .radio)
+        #expect(OwnPosition.choose(phone: still, radio: radio, nowMillis: now, locationAllowed: true) == still)
+        #expect(OwnPosition.choose(phone: still, radio: nil, nowMillis: now, locationAllowed: true) == still)
+    }
+
+    @Test func ownPositionTakesTheRadioWhenThePhoneWentQuietWhileTheRadioKeptFixing() {
+        let now: Int64 = 1_000_000
+        let quiet = OwnPosition.Fix(latitude: 1, longitude: 2, altitude: nil, timeMillis: now - 6 * 60_000, source: .phone)
+        let radio = OwnPosition.Fix(latitude: 3, longitude: 4, altitude: nil, timeMillis: now - 30_000, source: .radio)
+        #expect(OwnPosition.choose(phone: quiet, radio: radio, nowMillis: now, locationAllowed: true) == radio)
+    }
+
+    @Test func ownPositionAcceptsAFixALittleAheadOfOurClockButNotFarAhead() {
+        let now: Int64 = 1_000_000
+        let ahead = OwnPosition.Fix(latitude: 1, longitude: 2, altitude: nil, timeMillis: now + 60_000, source: .phone)
+        #expect(OwnPosition.choose(phone: ahead, radio: nil, nowMillis: now, locationAllowed: true) == ahead)
+        let farAhead = OwnPosition.Fix(
+            latitude: 1, longitude: 2, altitude: nil, timeMillis: now + OwnPosition.clockSkewMillis + 1, source: .phone)
+        #expect(OwnPosition.choose(phone: farAhead, radio: nil, nowMillis: now, locationAllowed: true) == nil)
+    }
+
     @Test func shareWithRecordsDeadline() async throws {
         let harness = try d4Harness()
         let source = ScriptedLocationSource()
@@ -118,9 +188,10 @@ struct LocationRepositoryTests {
             sharingStore: harness.sharing
         )
         repository.start()
+        repository.setLocationAllowed(allowed: true)
         try await repository.shareWith(roomId: 42, choice: .hour)
         try? await Task.sleep(for: .milliseconds(20))
-        source.push(location(lat: 1.0, lon: 2.0, altitude: 9, speed: 3, timeMillis: 2_000))
+        source.push(location(lat: 1.0, lon: 2.0, altitude: 9, speed: 3, timeMillis: currentEpochMillis()))
         #expect(await waitUntil { harness.base.link.sent.contains { $0.packet.decoded.portnum == .privateApp } })
         let packet = try lastSentPacket(harness)
         #expect(packet.decoded.portnum == .privateApp)
@@ -173,6 +244,7 @@ struct LocationRepositoryTests {
             nowMillis: { now.withLock { $0 } }
         )
         repository.start()
+        repository.setLocationAllowed(allowed: true)
         try await repository.shareWith(roomId: 42, choice: .hour)
         try? await Task.sleep(for: .milliseconds(20))
         source.push(location(lat: 1, lon: 2, timeMillis: now.withLock { $0 }))
@@ -206,6 +278,7 @@ struct LocationRepositoryTests {
             nowMillis: { now.withLock { $0 } }
         )
         repository.start()
+        repository.setLocationAllowed(allowed: true)
         try await repository.shareWith(roomId: 42, choice: .hour)
         try? await Task.sleep(for: .milliseconds(20))
         source.push(location(lat: 1, lon: 2, timeMillis: now.withLock { $0 }))

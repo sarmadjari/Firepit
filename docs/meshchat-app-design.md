@@ -40,7 +40,7 @@ Kept intentionally simple: no accounts, no servers, no public directory. Just a 
 - **Pin drops with a comment** — sealed under the room key (name, description, expiry, lock-to-creator), so only members see them and only a member can change one. Stock Meshtastic apps no longer see Firepit pins
 - **Position precision** — always full precision in v1: finding each other in a crowd is the point, and only the room can read it
 - **Live map** — everyone shown by name with an auto-assigned color; live vs. stale last-known positions look visually different
-- **Smart GPS source** — prefer the node's own GPS; briefly fall back to phone GPS over BLE only when the node has no fix yet; throttle GPS use when node battery is low
+- **Smart GPS source** — show and share one chosen fix: the phone's GPS when fresh, otherwise the connected radio's own GPS when fresh, and only with app location permission. The radio connected to this phone is never drawn as a second "you" marker. A Radio GPS switch lets the user turn the radio's GPS off to save its battery, or leave it on for phones and tablets with no GPS
 
 ### Status
 - **Node battery** for everyone — native Telemetry packets, read-only, no extra traffic
@@ -296,6 +296,7 @@ The cost is real and accepted: you cannot add someone who is not with you. That 
 | Room keys over time | moved on every hour, one way, with old hours erased; each sender seals under a key of their own; each message opens once. No byte added: the hour rides in the nonce (2026-10, Stage 11 phase 1) | security.md §3, build plan Stage 11 |
 | Room messages | sent with `want_ack` for the "heard by the mesh" tick; no delivery claim | guide D-5, UX §7.2 |
 | Live location | precision toggle per room for start/stop; duration tier change may restart the node; presets 15 min · 1 h · 8 h · Custom | guide D-6, UX U-6 |
+| Your place on the map | the phone's GPS, the radio's only when the phone has none; one dot, never a second you; a Radio GPS switch to save the radio's battery (2026-10-04) | UX §6.6, guide §6.3 |
 | Telemetry | device telemetry on, every 30 min, primary channel | guide D-7 |
 | Favorites | all room members favorited on the Personal node | guide D-8 |
 | Reactions | yes, six fixed emoji 👍 ❤️ 😂 😮 😢 🙏 (built on both apps) | UX U-1 |

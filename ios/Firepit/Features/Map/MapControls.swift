@@ -1,3 +1,5 @@
+import CoreLocation
+import FirepitData
 import FirepitModel
 import MapLibre
 import SwiftUI
@@ -284,10 +286,12 @@ struct PersonSheet: View {
 nonisolated enum CameraDecision {
     @MainActor
     @discardableResult
-    static func frameMarkers(on mapView: MLNMapView, markers: [MapMarker]) -> Bool {
+    static func frameMarkers(on mapView: MLNMapView, markers: [MapMarker], ownPosition: OwnPosition.Fix? = nil) -> Bool {
         let points = markers.compactMap { marker -> CLLocationCoordinate2D? in
             guard let coordinate = marker.coordinate else { return nil }
             return CLLocationCoordinate2D(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        } + [ownPosition].compactMap { fix in
+            fix.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
         }
         switch points.count {
         case 0:

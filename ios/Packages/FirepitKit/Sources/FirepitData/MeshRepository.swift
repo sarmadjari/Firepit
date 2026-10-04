@@ -115,6 +115,7 @@ public final class MeshRepository: Sendable {
 
     public let channels = CurrentValue<[RoomChannel]>([])
     public let snapshot = CurrentValue<RadioSnapshot?>(nil)
+    public let radioFix = CurrentValue<OwnPosition.Fix?>(nil)
 
     /// Newly stored incoming messages. Replays nothing, so a late collector cannot re-notify.
     public let incomingMessages = Broadcast<ChatMessage>()
@@ -933,6 +934,9 @@ public final class MeshRepository: Sendable {
             .sorted { $0.index < $1.index }
             .map(roomChannelOf(channel:))
         channels.set(roomChannels)
+        if let myNodeNum = next.myNodeNum, let position = next.nodes[myNodeNum]?.position {
+            noteRadioFix(position: position, receivedAt: currentEpochMillis())
+        }
         Task { [weak self] in
             guard let self else {
                 return
@@ -1244,12 +1248,16 @@ public final class MeshRepository: Sendable {
     /// positions sealed, so an unsealed one naming a member was put on the air by whoever holds a radio.
     private func handlePosition(packet: MeshPacket, data: DataMessage) async {
         let from = Int32(bitPattern: packet.from)
+        guard let position = try? Position(serializedBytes: data.payload) else {
+            return
+        }
+        if from == myNodeNum.value {
+            noteRadioFix(position: position, receivedAt: currentEpochMillis())
+            return
+        }
         let isMember = (try? await memberDao.isInAnyRoom(nodeNum: from)) == true
         if !TrustRules.unsealedPositionAcceptable(senderInOurRooms: isMember) {
             log.warning("dropped an unsealed position for a room member")
-            return
-        }
-        guard let position = try? Position(serializedBytes: data.payload) else {
             return
         }
         await storePosition(
@@ -1257,6 +1265,28 @@ public final class MeshRepository: Sendable {
             position: position,
             precision: position.precisionBits == 0 ? nil : Int(position.precisionBits)
         )
+    }
+
+    private func noteRadioFix(position: Position, receivedAt: Int64) {
+        guard position.hasLatitudeI, position.hasLongitudeI else {
+            return
+        }
+        let latitude = position.latitudeI
+        let longitude = position.longitudeI
+        if latitude == 0 && longitude == 0 {
+            return
+        }
+        if position.locationSource == .locExternal {
+            return
+        }
+        radioFix.set(
+            OwnPosition.Fix(
+                latitude: Double(latitude) / 1e7,
+                longitude: Double(longitude) / 1e7,
+                altitude: position.hasAltitude ? Int(position.altitude) : nil,
+                timeMillis: ifPlausible(position.time) ?? receivedAt,
+                source: .radio
+            ))
     }
 
     /**

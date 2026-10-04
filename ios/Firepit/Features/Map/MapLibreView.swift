@@ -17,6 +17,7 @@ struct MapLibreView: UIViewRepresentable {
     var markers: [MapMarker] = []
     var pins: [MapPin] = []
     var showsUserLocation = false
+    var ownLocation: CLLocation?
     var onMarkerTap: (MapMarker) -> Void = { _ in }
     var onPinTap: (MapPin) -> Void = { _ in }
     var onLongPress: (CLLocationCoordinate2D) -> Void = { _ in }
@@ -35,6 +36,9 @@ struct MapLibreView: UIViewRepresentable {
         let view = MLNMapView(frame: .zero, styleURL: URL(string: styleUrl))
         view.delegate = context.coordinator
         context.coordinator.installLongPress(on: view)
+        view.locationManager = context.coordinator.locationManager
+        view.tintColor = UIColor(FirepitColors.primary)
+        context.coordinator.locationManager.update(location: ownLocation, allowed: showsUserLocation)
         view.showsUserLocation = showsUserLocation
         view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         // The mesh has no use for the tilt or rotation gestures, and a rotated map misleads anyone reading a
@@ -57,6 +61,9 @@ struct MapLibreView: UIViewRepresentable {
         context.coordinator.onMarkerTap = onMarkerTap
         context.coordinator.onPinTap = onPinTap
         context.coordinator.onLongPress = onLongPress
+        view.locationManager = context.coordinator.locationManager
+        view.tintColor = UIColor(FirepitColors.primary)
+        context.coordinator.locationManager.update(location: ownLocation, allowed: showsUserLocation)
         view.showsUserLocation = showsUserLocation
         context.coordinator.updateAnnotations(on: view, markers: markers, pins: pins)
     }
@@ -70,6 +77,7 @@ struct MapLibreView: UIViewRepresentable {
         var onLongPress: (CLLocationCoordinate2D) -> Void
         private var markerIds: Set<Int32> = []
         private var pinIds: Set<Int32> = []
+        fileprivate let locationManager = FirepitMapLocationManager()
 
         init(
             onReady: @escaping (MLNMapView, MLNStyle) -> Void,
@@ -150,7 +158,47 @@ struct MapLibreView: UIViewRepresentable {
             let point = recognizer.location(in: mapView)
             onLongPress(mapView.convert(point, toCoordinateFrom: mapView))
         }
+    }
+}
 
+@MainActor
+private final class FirepitMapLocationManager: NSObject, MLNLocationManager {
+    weak var delegate: MLNLocationManagerDelegate?
+    var headingOrientation: CLDeviceOrientation = .portrait
+    private var location: CLLocation?
+    private var allowed = false
+    private var updating = false
+
+    var authorizationStatus: CLAuthorizationStatus {
+        allowed ? .authorizedWhenInUse : .denied
+    }
+
+    func requestAlwaysAuthorization() {}
+    func requestWhenInUseAuthorization() {}
+
+    func startUpdatingLocation() {
+        updating = true
+        send()
+    }
+
+    func stopUpdatingLocation() {
+        updating = false
+    }
+
+    func startUpdatingHeading() {}
+    func stopUpdatingHeading() {}
+    func dismissHeadingCalibrationDisplay() {}
+
+    func update(location: CLLocation?, allowed: Bool) {
+        self.location = location
+        self.allowed = allowed
+        delegate?.locationManagerDidChangeAuthorization(self)
+        send()
+    }
+
+    private func send() {
+        guard updating, allowed, let location else { return }
+        delegate?.locationManager(self, didUpdate: [location])
     }
 }
 

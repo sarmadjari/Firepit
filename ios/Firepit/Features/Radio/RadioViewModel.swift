@@ -65,6 +65,8 @@ struct RadioUiState: Equatable {
     var relayReach: RelayReach?
     var beaconRate: BeaconRate?
     var beaconWhenMoved = false
+    var radioGpsAvailable = false
+    var radioGpsEnabled = false
     /// Settings on the connected radio that let people read it or run it.
     var risks: [RadioRisk] = []
     /// A Bluetooth PIN just set, shown until dismissed: the phone will ask for it.
@@ -432,6 +434,14 @@ final class RadioViewModel {
         }
     }
 
+    func setRadioGps(_ enabled: Bool) {
+        writePosition { position in
+            var copy = position
+            copy.gpsMode = enabled ? .enabled : .disabled
+            return copy
+        }
+    }
+
     /** Built from what the radio reported, since the firmware replaces the section. */
     func writePosition(_ change: @escaping @Sendable (Config.PositionConfig) -> Config.PositionConfig) {
         guard case .ready(let snapshot) = link.state.value, let position = snapshot.position else { return }
@@ -440,6 +450,7 @@ final class RadioViewModel {
         Task {
             do {
                 try await admin.setPositionConfig(position: change(position))
+                say("Sent to the radio. It restarts to apply the change.")
             } catch {
                 self.error = error.localizedDescription
                 rebuildState()
@@ -552,6 +563,8 @@ final class RadioViewModel {
             relayReach: linkState.relayReach,
             beaconRate: linkState.beaconRate,
             beaconWhenMoved: linkState.beaconWhenMoved,
+            radioGpsAvailable: linkState.radioGpsAvailable,
+            radioGpsEnabled: linkState.radioGpsEnabled,
             risks: linkState.risks,
             newPin: newPin,
             identityDoubt: session.identityDoubt
@@ -650,6 +663,16 @@ extension LinkState {
     var beaconWhenMoved: Bool {
         guard case .ready(let snapshot) = self else { return false }
         return snapshot.position?.positionBroadcastSmartEnabled == true
+    }
+
+    var radioGpsAvailable: Bool {
+        guard case .ready(let snapshot) = self else { return false }
+        return snapshot.position?.gpsMode != .notPresent
+    }
+
+    var radioGpsEnabled: Bool {
+        guard case .ready(let snapshot) = self else { return false }
+        return snapshot.position?.gpsMode == .enabled
     }
 
     var risks: [RadioRisk] {

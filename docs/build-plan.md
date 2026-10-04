@@ -352,11 +352,19 @@ the session through 70 s of confirmed Dozing with zero link transitions.
 - **`PositionSharing`** — the one-channel rule as data, re-asserted whenever the radio reports its
   channels rather than trusted to the UI. Two enabled channels means two audiences, one of which the
   user never chose, so it fails closed by disabling both.
-- **Phone GPS** — the platform `LocationManager`, not Play Services: an off-grid app should not need
-  Google services to know where it is. Fed to the radio via `localPacket` with hop limit 0, so the
-  injection never goes on air itself.
+- **Own position source (as built 2026-10-04)** — both apps choose one local fix in `OwnPosition`:
+  the phone's fix while it is under 10 minutes old (a phone standing still reports less often),
+  the connected radio's own fix (under 10 minutes old) when the phone has none or has gone quiet
+  for 2 minutes longer than the radio, and only with app location permission. A fix stamped up to
+  5 minutes ahead of the phone's clock still counts. The chosen fix feeds the map's one orange "you" dot,
+  sealed sharing and sealed position-query answers; the connected radio is not drawn as a second
+  marker.
 - **Map** — MapLibre + OpenFreeMap, node markers as identity-coloured tag discs with a live ring,
-  a blue you-are-here dot for yourself, and reduced opacity when the sender truncated their fix.
+  a primary-colour MapLibre user-location dot for yourself, and reduced opacity when the sender
+  truncated their fix.
+- **Radio GPS switch (as built 2026-10-04)** — Settings › Radio shows Radio GPS only for a connected
+  radio with GPS hardware, writes the whole reported position config, and tells the user the radio
+  restarts to apply it.
 - **Waypoints** — native Meshtastic waypoints, so other clients see our pins and we see theirs.
   Deletion is re-broadcast with `expire = 1`, because there is no delete on the wire. New pins are
   `locked_to` the person who dropped them.

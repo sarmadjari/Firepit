@@ -105,6 +105,11 @@ enum LocationPermission {
         return status == .denied || status == .restricted
     }
 
+    static var isAllowed: Bool {
+        let status = manager.authorizationStatus
+        return status == .authorizedAlways || status == .authorizedWhenInUse
+    }
+
     static func requestIfNeeded() {
         if manager.authorizationStatus == .notDetermined {
             manager.requestWhenInUseAuthorization()

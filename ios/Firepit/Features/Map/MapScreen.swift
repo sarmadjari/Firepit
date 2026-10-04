@@ -1,4 +1,5 @@
 import CoreLocation
+import FirepitData
 import FirepitModel
 import FirepitProtocol
 import MapLibre
@@ -191,12 +192,14 @@ struct MapScreen: View {
             initialCamera: model.camera,
             markers: model.uiState.markers,
             pins: model.uiState.pins,
-            showsUserLocation: true,
+            showsUserLocation: LocationPermission.isAllowed && model.uiState.ownPosition != nil,
+            ownLocation: model.uiState.ownPosition?.clLocation,
             onMarkerTap: { marker in if !marker.isSelf { openMarker = marker } },
             onPinTap: { pin in openPin = pin },
             onLongPress: { coordinate in droppingAt = DropTarget(coordinate: coordinate) }
         )
         .onChange(of: model.uiState.markers) { _, _ in frameMarkersIfNeeded() }
+        .onChange(of: model.uiState.ownPosition) { _, _ in frameMarkersIfNeeded() }
         .onChange(of: model.offlineOnly) { _, _ in frameMarkersIfNeeded(force: model.offlineOnly) }
     }
 
@@ -305,9 +308,11 @@ struct MapScreen: View {
 
     private func mapAppeared() {
         LocationPermission.requestIfNeeded()
+        model.setLocationAllowed(LocationPermission.isAllowed)
         if LocationPermission.isDenied {
             model.reportPermissionDenied()
-        } else {
+        }
+        if LocationPermission.isAllowed {
             model.setMapVisible(true, screen: screenId)
         }
     }
@@ -319,15 +324,32 @@ struct MapScreen: View {
                 return
             }
         #endif
-        guard (force || !hasFramedMarkers) && model.offlineOnly && !model.uiState.markers.isEmpty else { return }
+        guard (force || !hasFramedMarkers) && model.offlineOnly &&
+            (!model.uiState.markers.isEmpty || model.uiState.ownPosition != nil) else { return }
         frameAll(force: force)
     }
 
     private func frameAll(force: Bool) {
         guard let mapView else { return }
-        if CameraDecision.frameMarkers(on: mapView, markers: model.uiState.markers) || force {
+        if CameraDecision.frameMarkers(
+            on: mapView,
+            markers: model.uiState.markers,
+            ownPosition: model.uiState.ownPosition
+        ) || force {
             hasFramedMarkers = true
         }
+    }
+}
+
+private extension OwnPosition.Fix {
+    var clLocation: CLLocation {
+        CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
+            altitude: altitude.map(Double.init) ?? 0,
+            horizontalAccuracy: kCLLocationAccuracyBest,
+            verticalAccuracy: altitude == nil ? -1 : kCLLocationAccuracyBest,
+            timestamp: Date(timeIntervalSince1970: Double(timeMillis) / 1_000)
+        )
     }
 }
 

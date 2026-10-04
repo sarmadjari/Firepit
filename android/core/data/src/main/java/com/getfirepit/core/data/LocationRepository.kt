@@ -26,6 +26,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -33,6 +34,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.meshtastic.proto.Config
@@ -91,17 +93,41 @@ class LocationRepository @Inject constructor(
      * deliberate act below.
      */
     private val mapVisible = MutableStateFlow(false)
+    private val locationAllowed = MutableStateFlow(false)
 
     fun setMapVisible(visible: Boolean) {
         mapVisible.value = visible
+    }
+
+    fun setLocationAllowed(allowed: Boolean) {
+        locationAllowed.value = allowed
     }
 
     /** The newest fix the phone has, for answering "where are you?" without waiting on GPS. */
     @Volatile
     private var lastFix: Location? = null
 
+    private val _phoneFix = MutableStateFlow<Location?>(null)
+
+    /**
+     * Where the phone itself is, for the map's own dot. Kept apart from the
+     * radio's node: it is the phone's GPS, so it shows with no radio connected,
+     * as the iPhone's does. Only on this phone; nothing here is sent.
+     */
+    val phoneFix: StateFlow<Location?> = _phoneFix
+
+    val chosenOwnPosition: StateFlow<OwnPosition.Fix?> =
+        combine(_phoneFix, mesh.radioFix, locationAllowed) { phone, radio, allowed ->
+            OwnPosition.choose(
+                phone = phone?.toOwnFix(),
+                radio = radio,
+                nowMillis = System.currentTimeMillis(),
+                locationAllowed = allowed,
+            )
+        }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), null)
+
     @Volatile
-    private var lastShared: Location? = null
+    private var lastShared: OwnPosition.Fix? = null
 
     @Volatile
     private var lastSharedAt = 0L
@@ -167,8 +193,18 @@ class LocationRepository @Inject constructor(
                 }
                 .collect { (location, sharing) ->
                     lastFix = location
+                    _phoneFix.value = location
                     storeOwnPosition(location)
-                    if (sharing) shareIfDue(location)
+                }
+        }
+
+        scope.launch {
+            val sharing = combine(sharingStore.deadline, mesh.isConnected) { deadline, connected ->
+                deadline != null && connected
+            }
+            combine(chosenOwnPosition, sharing) { fix, isSharing -> fix to isSharing }
+                .collect { (fix, isSharing) ->
+                    if (isSharing && fix != null) shareIfDue(fix)
                 }
         }
 
@@ -208,7 +244,7 @@ class LocationRepository @Inject constructor(
      * smart beaconing is on and we have moved far enough — the same rule the
      * radio's own broadcast followed, read from the radio's own settings.
      */
-    private suspend fun shareIfDue(location: Location) {
+    private suspend fun shareIfDue(location: OwnPosition.Fix) {
         val roomId = activeSharingRoom() ?: return
         val now = System.currentTimeMillis()
         val config = mesh.snapshot.value?.position
@@ -223,24 +259,27 @@ class LocationRepository @Inject constructor(
         if (due) share(roomId, location)
     }
 
-    private fun movedEnough(location: Location, config: Config.PositionConfig): Boolean {
+    private fun movedEnough(location: OwnPosition.Fix, config: Config.PositionConfig): Boolean {
         val previous = lastShared ?: return true
         val minimum = config.broadcast_smart_minimum_distance.takeIf { it > 0 } ?: SMART_DISTANCE_METRES
-        return previous.distanceTo(location) >= minimum
+        return OwnPosition.distanceMetres(previous, location) >= minimum
     }
 
     private fun smartInterval(config: Config.PositionConfig): Duration =
         config.broadcast_smart_minimum_interval_secs.takeIf { it > 0 }?.seconds ?: SMART_MINIMUM_INTERVAL
 
     /** Seals the fix under the room's key and sends it to the room. */
-    private suspend fun share(roomId: Int, location: Location) {
+    private suspend fun share(roomId: Int, location: OwnPosition.Fix) {
         val position = Position(
-            latitude_i = (location.latitude * 1e7).toInt(),
-            longitude_i = (location.longitude * 1e7).toInt(),
-            altitude = location.altitude.toInt().takeIf { location.hasAltitude() },
-            time = (location.time / 1000L).toInt(),
-            location_source = Position.LocSource.LOC_EXTERNAL,
-            ground_speed = location.speed.toInt().takeIf { location.hasSpeed() },
+            latitude_i = location.latitudeI,
+            longitude_i = location.longitudeI,
+            altitude = location.altitude,
+            time = (location.timeMillis / 1000L).toInt(),
+            location_source = if (location.source == OwnPosition.Source.RADIO) {
+                Position.LocSource.LOC_INTERNAL
+            } else {
+                Position.LocSource.LOC_EXTERNAL
+            },
             precision_bits = PositionPrecision.FULL,
         )
         val sent = rooms.sendSealed(roomId, MeshChatControl(version = InviteCodec.VERSION, position = position))
@@ -282,7 +321,7 @@ class LocationRepository @Inject constructor(
         if (!answerable) return
         val now = System.currentTimeMillis()
         if (now - lastAnsweredAt < ANSWER_GAP.inWholeMilliseconds) return
-        val fix = lastFix?.takeIf { now - it.time < FRESH_FIX.inWholeMilliseconds } ?: return
+        val fix = chosenOwnPosition.value ?: return
         lastAnsweredAt = now
         share(opened.roomId, fix)
     }
@@ -327,7 +366,7 @@ class LocationRepository @Inject constructor(
         sharingStore.remember(room.id, choice, System.currentTimeMillis())
         // A fresh share is sent at once rather than at the next beacon.
         lastSharedAt = 0L
-        lastFix?.let { shareIfDue(it) }
+        chosenOwnPosition.value?.let { shareIfDue(it) }
     }
 
     /** Stops sharing if its time has run out. Safe to call as often as you like. */
@@ -429,9 +468,15 @@ class LocationRepository @Inject constructor(
         /** One answer to many askers at once is enough. */
         val ANSWER_GAP = 1.minutes
 
-        /** Older than this, a fix is not "where I am now". */
-        val FRESH_FIX = 5.minutes
-
         val ModuleSettingsDefault = ModuleSettings()
     }
 }
+
+private fun Location.toOwnFix(): OwnPosition.Fix =
+    OwnPosition.Fix(
+        latitude = latitude,
+        longitude = longitude,
+        altitude = altitude.toInt().takeIf { hasAltitude() },
+        timeMillis = time,
+        source = OwnPosition.Source.PHONE,
+    )

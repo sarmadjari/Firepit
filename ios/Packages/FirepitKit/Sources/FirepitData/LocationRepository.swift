@@ -53,10 +53,14 @@ public final class LocationRepository: Sendable {
      * deliberate act below.
      */
     private let mapVisible = CurrentValue(false)
+    private let locationAllowed = CurrentValue(false)
 
     /** The newest fix the phone has, for answering "where are you?" without waiting on GPS. */
     private let lastFix = Mutex<CLLocation?>(nil)
-    private let lastShared = Mutex<CLLocation?>(nil)
+    private let phoneOwnFix = CurrentValue<OwnPosition.Fix?>(nil)
+    public let chosenOwnPosition = CurrentValue<OwnPosition.Fix?>(nil)
+    public var phoneFix: OwnPosition.Fix? { phoneOwnFix.value }
+    private let lastShared = Mutex<OwnPosition.Fix?>(nil)
     private let lastSharedAt = Mutex<Int64>(0)
     private let lastAnsweredAt = Mutex<Int64>(0)
 
@@ -94,6 +98,11 @@ public final class LocationRepository: Sendable {
 
     public func setMapVisible(visible: Bool) {
         mapVisible.set(visible)
+    }
+
+    public func setLocationAllowed(allowed: Bool) {
+        locationAllowed.set(allowed)
+        updateChosenOwnPosition()
     }
 
     /**
@@ -163,6 +172,13 @@ public final class LocationRepository: Sendable {
             jobs.append(
                 Task { [weak self] in
                     guard let self else { return }
+                    for await _ in mesh.radioFix.subscribe() {
+                        await ownPositionChanged()
+                    }
+                })
+            jobs.append(
+                Task { [weak self] in
+                    guard let self else { return }
                     for await opened in rooms.openedInRooms.subscribe() {
                         do {
                             if case .position = opened.control.payload {
@@ -214,14 +230,30 @@ public final class LocationRepository: Sendable {
                     guard let self else { return }
                     for await location in phoneLocation.updates(interval: .seconds(30)) {
                         lastFix.withLock { $0 = location }
+                        phoneOwnFix.set(location.ownFix)
                         await storeOwnPosition(location: location)
-                        if sharingIsLive() {
-                            await shareIfDue(location: location)
-                        }
+                        await ownPositionChanged()
                     }
                 }
             }
         }
+    }
+
+    private func ownPositionChanged() async {
+        updateChosenOwnPosition()
+        if sharingIsLive(), let fix = chosenOwnPosition.value {
+            await shareIfDue(location: fix)
+        }
+    }
+
+    private func updateChosenOwnPosition() {
+        chosenOwnPosition.set(
+            OwnPosition.choose(
+                phone: phoneOwnFix.value,
+                radio: mesh.radioFix.value,
+                nowMillis: nowMillis(),
+                locationAllowed: locationAllowed.value
+            ))
     }
 
     /**
@@ -249,7 +281,7 @@ public final class LocationRepository: Sendable {
      * smart beaconing is on and we have moved far enough — the same rule the
      * radio would apply if it were allowed to broadcast for us.
      */
-    private func shareIfDue(location: CLLocation) async {
+    private func shareIfDue(location: OwnPosition.Fix) async {
         guard let roomId = activeSharingRoom() else {
             return
         }
@@ -269,13 +301,13 @@ public final class LocationRepository: Sendable {
         }
     }
 
-    private func movedEnough(location: CLLocation, config: Config.PositionConfig?) -> Bool {
+    private func movedEnough(location: OwnPosition.Fix, config: Config.PositionConfig?) -> Bool {
         guard let previous = lastShared.withLock({ $0 }) else {
             return true
         }
         let configured = config?.broadcastSmartMinimumDistance ?? 0
         let minimum = configured > 0 ? Double(configured) : Self.smartDistanceMetres
-        return previous.distance(from: location) >= minimum
+        return OwnPosition.distanceMetres(previous, location) >= minimum
     }
 
     private func smartInterval(config: Config.PositionConfig?) -> Duration {
@@ -284,18 +316,15 @@ public final class LocationRepository: Sendable {
     }
 
     /** Seals the fix under the room's key and sends it to the room. */
-    private func share(roomId: Int32, location: CLLocation) async {
+    private func share(roomId: Int32, location: OwnPosition.Fix) async {
         var position = Position()
-        position.latitudeI = Int32(location.coordinate.latitude * 1e7)
-        position.longitudeI = Int32(location.coordinate.longitude * 1e7)
-        if location.verticalAccuracy >= 0 {
-            position.altitude = Int32(location.altitude)
+        position.latitudeI = location.latitudeI
+        position.longitudeI = location.longitudeI
+        if let altitude = location.altitude {
+            position.altitude = Int32(altitude)
         }
-        position.time = UInt32(location.timestamp.timeIntervalSince1970)
-        position.locationSource = .locExternal
-        if location.speed >= 0 {
-            position.groundSpeed = UInt32(location.speed)
-        }
+        position.time = UInt32(location.timeMillis / 1_000)
+        position.locationSource = location.source == .radio ? .locInternal : .locExternal
         position.precisionBits = UInt32(PositionPrecision.full)
         var control = Meshchat_MeshChatControl()
         control.version = InviteCodec.version
@@ -347,11 +376,7 @@ public final class LocationRepository: Sendable {
         if now - lastAnsweredAt.withLock({ $0 }) < durationMillis(Self.answerGap) {
             return
         }
-        guard let fix = lastFix.withLock({ $0 }) else {
-            return
-        }
-        let fixTime = Int64(fix.timestamp.timeIntervalSince1970 * 1_000)
-        if now - fixTime >= durationMillis(Self.freshFix) {
+        guard let fix = chosenOwnPosition.value else {
             return
         }
         lastAnsweredAt.withLock { $0 = now }
@@ -395,7 +420,7 @@ public final class LocationRepository: Sendable {
         }
         sharingStore.remember(roomId: roomId, choice: choice, nowMillis: nowMillis())
         lastSharedAt.withLock { $0 = 0 }
-        if let fix = lastFix.withLock({ $0 }) {
+        if let fix = chosenOwnPosition.value {
             await shareIfDue(location: fix)
         }
     }
@@ -507,6 +532,17 @@ public final class LocationRepository: Sendable {
     private static let smartMinimumInterval: Duration = .seconds(30)
     /// One answer to many askers at once is enough.
     private static let answerGap: Duration = .seconds(60)
-    private static let freshFix: Duration = .seconds(300)
     private static let deadlineCheck: Duration = .seconds(30)
+}
+
+private extension CLLocation {
+    var ownFix: OwnPosition.Fix {
+        OwnPosition.Fix(
+            latitude: coordinate.latitude,
+            longitude: coordinate.longitude,
+            altitude: verticalAccuracy >= 0 ? Int(altitude) : nil,
+            timeMillis: Int64(timestamp.timeIntervalSince1970 * 1_000),
+            source: .phone
+        )
+    }
 }

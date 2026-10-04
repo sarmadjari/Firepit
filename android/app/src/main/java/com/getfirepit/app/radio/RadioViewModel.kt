@@ -99,6 +99,8 @@ data class RadioUiState(
     val relayReach: RelayReach? = null,
     val beaconRate: BeaconRate? = null,
     val beaconWhenMoved: Boolean = false,
+    val radioGpsAvailable: Boolean = false,
+    val radioGpsEnabled: Boolean = false,
     /** Settings on the connected radio that let people read it or run it. */
     val risks: List<RadioRisk> = emptyList(),
     /** A Bluetooth PIN just set, shown until dismissed: the phone will ask for it. */
@@ -178,6 +180,10 @@ class RadioViewModel @Inject constructor(
             ),
             beaconWhenMoved =
                 (linkState as? LinkState.Ready)?.snapshot?.position?.position_broadcast_smart_enabled == true,
+            radioGpsAvailable = (linkState as? LinkState.Ready)?.snapshot?.position?.gps_mode
+                ?.let { it != Config.PositionConfig.GpsMode.NOT_PRESENT } == true,
+            radioGpsEnabled = (linkState as? LinkState.Ready)?.snapshot?.position?.gps_mode ==
+                Config.PositionConfig.GpsMode.ENABLED,
             risks = (linkState as? LinkState.Ready)?.snapshot?.let(RadioSecurityCheck::risksOf).orEmpty(),
             newPin = extras.newPin,
             identityDoubt = extras.identityDoubt,
@@ -451,14 +457,25 @@ class RadioViewModel @Inject constructor(
     fun setBeaconWhenMoved(enabled: Boolean) =
         writePosition { it.copy(position_broadcast_smart_enabled = enabled) }
 
+    fun setRadioGps(enabled: Boolean) =
+        writePosition {
+            it.copy(
+                gps_mode = if (enabled) {
+                    Config.PositionConfig.GpsMode.ENABLED
+                } else {
+                    Config.PositionConfig.GpsMode.DISABLED
+                },
+            )
+        }
+
     /** Built from what the radio reported, since the firmware replaces the section. */
     private fun writePosition(change: (Config.PositionConfig) -> Config.PositionConfig) {
         val position = (link.state.value as? LinkState.Ready)?.snapshot?.position ?: return
         error.value = null
         viewModelScope.launch {
             runCatching { admin.setPositionConfig(change(position)) }
-                .exceptionOrNull()
-                ?.let { error.value = it.message }
+                .onSuccess { say("Sent to the radio. It restarts to apply the change.") }
+                .onFailure { error.value = it.message }
         }
     }
 

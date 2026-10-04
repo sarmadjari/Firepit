@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.getfirepit.core.data.LocationRepository
 import com.getfirepit.core.data.MeshRepository
+import com.getfirepit.core.data.OwnPosition
 import com.getfirepit.core.data.PositionAnswer
 import com.getfirepit.core.data.RoomRepository
 import com.getfirepit.core.data.WaypointRepository
@@ -125,6 +126,7 @@ data class MapUiState(
     val pins: List<MapPin> = emptyList(),
     val rooms: List<RoomChannel> = emptyList(),
     val sharingRoomId: Int? = null,
+    val ownPosition: OwnPosition.Fix? = null,
     val myNodeNum: Int? = null,
     /** Everyone in a room with us, which is everyone we have a private way to ask. */
     val roomMembers: Set<Int> = emptySet(),
@@ -322,12 +324,15 @@ class MapViewModel @Inject constructor(
         mesh.channels,
         mesh.myNodeNum,
         combine(
-            busy,
-            error,
-            waypoints.observePins(),
-            savedRadios.radios,
-            people.person,
-        ) { busy, error, pins, radios, person -> Aside(busy, error, pins, radios, person) },
+            combine(
+                busy,
+                error,
+                waypoints.observePins(),
+                savedRadios.radios,
+                people.person,
+            ) { busy, error, pins, radios, person -> Aside(busy, error, pins, radios, person, null) },
+            location.chosenOwnPosition,
+        ) { aside, own -> aside.copy(ownPosition = own) },
     ) { lens, nodes, channels, myNodeNum, aside ->
         val hidden = SavedRadios.hiddenNodes(aside.radios)
         // Ours is the room roster plus the hardware we put out ourselves; a
@@ -340,6 +345,7 @@ class MapViewModel @Inject constructor(
         val onMap = nodes.filterNot { it.nodeNum in hidden }
         val followed = lens.followed
         val shown = MapSelection.nodes(onMap, followed, lens.filter, ours, myNodeNum)
+            .filterNot { it.nodeNum == myNodeNum }
         val pins = MapSelection.pins(aside.pins, followed?.target)
         MapUiState(
             connected = lens.connected,
@@ -381,6 +387,7 @@ class MapViewModel @Inject constructor(
             pins = pins,
             rooms = ChannelSlotManager.rooms(channels),
             sharingRoomId = location.sharingRoomId(),
+            ownPosition = aside.ownPosition,
             myNodeNum = myNodeNum,
             roomMembers = lens.group,
             filter = lens.filter,
@@ -443,6 +450,8 @@ class MapViewModel @Inject constructor(
     /** Called while the map is on screen, so the phone's own fix can be shown. */
     fun setMapVisible(visible: Boolean) = location.setMapVisible(visible)
 
+    fun setLocationAllowed(allowed: Boolean) = location.setLocationAllowed(allowed)
+
     fun clearError() {
         error.value = null
     }
@@ -483,6 +492,7 @@ private data class Aside(
     val pins: List<MapPin>,
     val radios: List<SavedRadio>,
     val person: Person?,
+    val ownPosition: OwnPosition.Fix?,
 )
 
 /** Likewise: what the map is looking at, rather than what it is looking for. */
