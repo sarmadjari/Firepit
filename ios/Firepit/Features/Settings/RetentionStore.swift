@@ -84,7 +84,7 @@ final class RetentionStore {
             roomActivity: daos.roomActivityDao,
             myNodeNum: { mesh.myNodeNum.value },
             heldRooms: { Self.heldRooms(channels: mesh.channels.value) },
-            leaveRoom: { roomId in try await rooms.leaveRoom(roomId: roomId) },
+            leaveRoom: { roomId in try await rooms.leaveRoom(roomId: roomId, announce: false) },
             forgetBrowsedTiles: { await offlineMaps.forgetBrowsedTiles() }
         )
     }

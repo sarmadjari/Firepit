@@ -154,7 +154,7 @@ class RetentionStore @Inject constructor(
 
         RoomLifetime.silentRooms(lastActivity, lifetime, nowMillis).forEach { roomId ->
             Log.i(TAG, "leaving room $roomId, silent past the chosen lifetime")
-            runCatching { rooms.leaveRoom(roomId) }
+            runCatching { rooms.leaveRoom(roomId, announce = false) }
                 .onFailure { cause -> Log.w(TAG, "could not leave silent room $roomId", cause) }
         }
     }

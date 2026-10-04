@@ -1,5 +1,6 @@
 import FirepitData
 import FirepitModel
+import FirepitProtocol
 import FirepitTransport
 import Foundation
 import Observation
@@ -43,6 +44,7 @@ final class AppContainer {
     let sessionStore: SessionStore
     let sharingStore: SharingStore
     let roomKeys: RoomKeyStore
+    let roomKeyMade: RoomKeyMadeStore
     let phoneKeys: PhoneKeyStore
     let primaryBackup: PrimaryBackup
     let chatPresence = ChatPresence()
@@ -79,6 +81,7 @@ final class AppContainer {
     let themePreferences = ThemePreferences()
     let notificationPreferences = NotificationPreferences()
     let screenPrivacy = ScreenPrivacyPreferences()
+    let roomKeyChangePreferences = RoomKeyChangePreferences()
     let quickReplies = QuickReplyStore()
     let mapPreferences = MapPreferences()
     let secureWindow = SecureWindow()
@@ -101,6 +104,7 @@ final class AppContainer {
             defaults = .standard
             // Beside the database, so it shares its protection and stays out of backups.
             roomKeys = RoomKeyStore(seen: SeenSeals(file: databaseDirectory.appendingPathComponent("seen-seals")))
+            roomKeyMade = RoomKeyMadeStore(defaults: defaults)
             phoneKeys = PhoneKeyStore()
             primaryBackup = PrimaryBackup()
             radio = link
@@ -110,6 +114,7 @@ final class AppContainer {
                 daos = try FirepitDaos.inMemory()
                 defaults = DemoWorld.freshDefaults()
                 roomKeys = RoomKeyStore(store: InMemorySecretStore())
+                roomKeyMade = RoomKeyMadeStore(defaults: defaults)
                 phoneKeys = PhoneKeyStore(store: InMemorySecretStore(), source: SoftwarePhoneKeySource())
                 primaryBackup = PrimaryBackup(store: InMemorySecretStore())
                 radio = DemoRadio()
@@ -182,9 +187,13 @@ final class AppContainer {
             peerKeyDao: peerKeyDao,
             pinDao: mapPinDao,
             roomActivity: roomActivityDao,
+            roomKeyMade: roomKeyMade,
             handovers: pendingHandoverDao,
             history: history,
-            sharingStore: sharingStore
+            sharingStore: sharingStore,
+            keyChangeSetting: {
+                defaults.string(forKey: "room_key_change").flatMap(RoomKeyChange.init(rawValue:)) ?? .daily
+            }
         )
         location = LocationRepository(
             mesh: mesh,

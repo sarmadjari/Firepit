@@ -567,6 +567,9 @@ interface PersonCardDao {
     @Upsert
     suspend fun upsert(card: PersonCardEntity)
 
+    @Query("SELECT * FROM person_cards WHERE nodeNum = :nodeNum")
+    suspend fun find(nodeNum: Int): PersonCardEntity?
+
     @Query("DELETE FROM person_cards WHERE nodeNum = :nodeNum")
     suspend fun forget(nodeNum: Int)
 

@@ -7,10 +7,12 @@ import com.getfirepit.core.data.NodeAdminClient
 import com.getfirepit.core.data.Owner
 import com.getfirepit.core.data.OwnerRepository
 import com.getfirepit.core.data.RangeRepository
+import com.getfirepit.core.data.RoomKeyChangePreferences
 import com.getfirepit.core.protocol.MessageAlerts
 import com.getfirepit.core.protocol.MessageRetention
 import com.getfirepit.core.protocol.RadioPrivacy
 import com.getfirepit.core.protocol.RangeMode
+import com.getfirepit.core.protocol.RoomKeyChange
 import com.getfirepit.core.protocol.RoomLifetime
 import com.getfirepit.core.protocol.Person
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -31,6 +33,7 @@ class SettingsViewModel @Inject constructor(
     private val retention: RetentionStore,
     private val notifications: NotificationPreferences,
     private val screenPrivacy: ScreenPrivacyPreferences,
+    private val roomKeyChangePreferences: RoomKeyChangePreferences,
     private val range: RangeRepository,
     private val admin: NodeAdminClient,
     private val mesh: MeshRepository,
@@ -93,6 +96,10 @@ class SettingsViewModel @Inject constructor(
     val allowScreenCapture: StateFlow<Boolean> = screenPrivacy.allowCapture
 
     fun setAllowScreenCapture(allow: Boolean) = screenPrivacy.setAllowCapture(allow)
+
+    val roomKeyChange: StateFlow<RoomKeyChange> = roomKeyChangePreferences.choice
+
+    fun chooseRoomKeyChange(choice: RoomKeyChange) = roomKeyChangePreferences.choose(choice)
 
     /** Deletes everything this phone kept about what was said and where anyone was. */
     fun eraseHistory() {

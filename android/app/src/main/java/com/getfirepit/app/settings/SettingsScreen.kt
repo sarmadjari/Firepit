@@ -78,6 +78,7 @@ import com.getfirepit.core.protocol.RadioCapabilities
 import com.getfirepit.core.protocol.RadioPrivacy
 import com.getfirepit.core.protocol.RangeMode
 import com.getfirepit.core.protocol.RoomLifetime
+import com.getfirepit.core.protocol.RoomKeyChange
 import com.getfirepit.core.protocol.OwnerName
 import com.getfirepit.core.protocol.Person
 import com.getfirepit.core.transport.LinkState
@@ -107,6 +108,7 @@ fun SettingsScreen(
     val connected by settingsViewModel.connected.collectAsStateWithLifecycle()
     val retention by settingsViewModel.retentionChoice.collectAsStateWithLifecycle()
     val roomLifetime by settingsViewModel.roomLifetime.collectAsStateWithLifecycle()
+    val roomKeyChange by settingsViewModel.roomKeyChange.collectAsStateWithLifecycle()
     val showMessageText by settingsViewModel.showMessageText.collectAsStateWithLifecycle()
     val allowScreenCapture by settingsViewModel.allowScreenCapture.collectAsStateWithLifecycle()
     val messageAlerts by settingsViewModel.messageAlerts.collectAsStateWithLifecycle()
@@ -181,6 +183,8 @@ fun SettingsScreen(
             onChooseRetention = settingsViewModel::chooseRetention,
             roomLifetime = roomLifetime,
             onChooseRoomLifetime = settingsViewModel::chooseRoomLifetime,
+            roomKeyChange = roomKeyChange,
+            onChooseRoomKeyChange = settingsViewModel::chooseRoomKeyChange,
             quickReplyCount = quickReplies.size,
             showMessageText = showMessageText,
             onShowMessageText = settingsViewModel::setShowMessageText,
@@ -250,6 +254,8 @@ private fun SettingsList(
     onChooseRetention: (MessageRetention) -> Unit,
     roomLifetime: RoomLifetime,
     onChooseRoomLifetime: (RoomLifetime) -> Unit,
+    roomKeyChange: RoomKeyChange,
+    onChooseRoomKeyChange: (RoomKeyChange) -> Unit,
     quickReplyCount: Int,
     showMessageText: Boolean,
     onShowMessageText: (Boolean) -> Unit,
@@ -395,6 +401,15 @@ private fun SettingsList(
                     labelOf = RoomLifetime::label,
                     onChoose = onChooseRoomLifetime,
                 )
+
+                SettingsChoice(
+                    label = "Change room keys",
+                    caption = roomKeyChange.footnote,
+                    entries = RoomKeyChange.entries,
+                    selected = roomKeyChange,
+                    labelOf = RoomKeyChange::label,
+                    onChoose = onChooseRoomKeyChange,
+                )
             }
             ListItem(
                 headlineContent = { Text("Quick replies") },
@@ -482,6 +497,24 @@ private fun SettingsList(
 
 /** The physical side, as the setting names it, whatever the reading direction. */
 private enum class PhysicalSide(val label: String) { RIGHT("Right"), LEFT("Left") }
+
+private val RoomKeyChange.label: String
+    get() = when (this) {
+        RoomKeyChange.DAILY -> "Daily"
+        RoomKeyChange.WEEKLY -> "Weekly"
+        RoomKeyChange.NEVER -> "Never"
+    }
+
+private val RoomKeyChange.footnote: String
+    get() = when (this) {
+        RoomKeyChange.DAILY ->
+            "Rooms you made get new keys once a day, so anyone who copied keys off a phone stops " +
+                "being able to read them. The room gets a short notice and each member gets one private message."
+        RoomKeyChange.WEEKLY ->
+            "Rooms you made get new keys once a week, so anyone who copied keys off a phone stops " +
+                "being able to read them. The room gets a short notice and each member gets one private message."
+        RoomKeyChange.NEVER -> "Room keys change only when someone is removed."
+    }
 
 /** Settings › Appearance › Wide screens (UX §6.11.4). */
 @Composable

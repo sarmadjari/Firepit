@@ -12,6 +12,7 @@ struct SettingsUiState: Equatable {
     var connected = false
     var retention: MessageRetention = .default
     var roomLifetime: RoomLifetime = .default
+    var roomKeyChange: RoomKeyChange = .daily
     var showMessageText = false
     var allowScreenCapture = false
     var messageAlerts: MessageAlerts = .phoneOnly
@@ -38,6 +39,7 @@ final class SettingsViewModel {
     @ObservationIgnored private let retention: RetentionStore
     @ObservationIgnored private let notifications: NotificationPreferences
     @ObservationIgnored private let screenPrivacy: ScreenPrivacyPreferences
+    @ObservationIgnored private let roomKeyChangePreferences: RoomKeyChangePreferences
     @ObservationIgnored private let range: RangeRepository
     @ObservationIgnored private let admin: NodeAdminClient
     @ObservationIgnored private let mesh: MeshRepository
@@ -55,6 +57,7 @@ final class SettingsViewModel {
             connected: radio.connected,
             retention: retention.choice,
             roomLifetime: retention.roomLifetime,
+            roomKeyChange: roomKeyChangePreferences.choice,
             showMessageText: notifications.showText,
             allowScreenCapture: screenPrivacy.allowCapture,
             messageAlerts: Self.messageAlerts(snapshot: radio.snapshot),
@@ -78,6 +81,7 @@ final class SettingsViewModel {
         retention: RetentionStore,
         notifications: NotificationPreferences,
         screenPrivacy: ScreenPrivacyPreferences,
+        roomKeyChangePreferences: RoomKeyChangePreferences,
         range: RangeRepository,
         admin: NodeAdminClient,
         mesh: MeshRepository
@@ -88,6 +92,7 @@ final class SettingsViewModel {
         self.retention = retention
         self.notifications = notifications
         self.screenPrivacy = screenPrivacy
+        self.roomKeyChangePreferences = roomKeyChangePreferences
         self.range = range
         self.admin = admin
         self.mesh = mesh
@@ -109,6 +114,7 @@ final class SettingsViewModel {
             retention: app.retention,
             notifications: app.notificationPreferences,
             screenPrivacy: app.screenPrivacy,
+            roomKeyChangePreferences: app.roomKeyChangePreferences,
             range: app.range,
             admin: app.admin,
             mesh: app.mesh
@@ -201,6 +207,10 @@ final class SettingsViewModel {
 
     func chooseRoomLifetime(_ choice: RoomLifetime) {
         retention.chooseRoomLifetime(choice)
+    }
+
+    func chooseRoomKeyChange(_ choice: RoomKeyChange) {
+        roomKeyChangePreferences.choose(choice)
     }
 
     /// You. Needs no radio, and changing it changes no radio.

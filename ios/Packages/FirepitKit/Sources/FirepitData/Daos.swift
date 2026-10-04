@@ -621,6 +621,11 @@ public struct PersonCardDao: Sendable {
         }
     }
     public func upsert(card: PersonCardEntity) async throws { try await writer.write { db in try card.save(db) } }
+    public func find(nodeNum: Int32) async throws -> PersonCardEntity? {
+        try await writer.read { db in
+            try PersonCardEntity.fetchOne(db, sql: "SELECT * FROM person_cards WHERE nodeNum = ?", arguments: [nodeNum])
+        }
+    }
     public func forget(nodeNum: Int32) async throws {
         try await writer.write { db in
             try db.execute(sql: "DELETE FROM person_cards WHERE nodeNum = ?", arguments: [nodeNum])

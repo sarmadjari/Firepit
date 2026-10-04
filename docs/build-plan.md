@@ -24,7 +24,7 @@ RTL-ready from Stage 3) · invite-link domain deferred until Stage 8.
 | 8 | v1.0 features | ✅ Built, emoji reactions last (2026-10-04) |
 | 9 | Release prep: accessibility and RTL pass, R8, store listing | ✅ Done 2026-10-04: accessibility, right to left, R8, 16 KB pages, store listing, no analytics. Left for release day: the release key and store submission |
 | 10 | The iPhone app | ✅ Built. An iPhone and an Android phone in one room over real radios is still to be tested |
-| 11 | Security within Meshtastic's limits: Signal-grade protections where the radio allows, with no message growing by a byte | In progress: Phases 1, 2, 3, 5 and 6 done on both apps; Phase 4 next |
+| 11 | Security within Meshtastic's limits: Signal-grade protections where the radio allows, with no message growing by a byte | ✅ Phases 1–6 done on both apps, 2026-10-04. Before release: an independent review by a person, and every phone in a room on this build |
 | 12 | Large screens: the conversation and the map side by side on foldables, tablets and wide windows; the phone app in narrow ones | Built on both apps, 2026-10-04 (decisions U-8 to U-14, UX §11.4). Open: the chat-to-map actions, which need features not built yet; the iOS 27.1 fold APIs; Figma frames; device runs on an iPhone Duo, a Flip and a TriFold |
 
 ---
@@ -1045,6 +1045,51 @@ Done on both apps, with no change to any radio packet size (`ProtocolContractTes
   recorded grant will not open with only the joiner's phone key, and a stripped
   invite cannot be used. `scripts/check-android-interop.sh` writes and opens
   hedged envelopes in both directions.
+
+### Phase 4 record
+
+Done on both apps, with no chat message, receipt, position or pin growing by a byte:
+
+- Android fresh installs on Android 12+ generate the phone P-256 key inside Android Keystore with
+  `PURPOSE_AGREE_KEY`; the private half is a non-exportable handle used directly by `KeyEnvelope` and
+  `DirectSeal`. Existing wrapped software keys stay in place, because peers already know that public key.
+  Android 10–11, or a KeyMint that refuses ECDH, falls back to the wrapped software key.
+- `DirectSeal` v2 opening does the phone ECDH once per direct message and reuses the shared secret across
+  room candidates, so hardware ECDH is not multiplied by room/hour search.
+- Settings › Messages has **Change room keys**: Daily (default), Weekly, Never. Only the room maker changes
+  keys on schedule. `ScheduledKeyChange` is the shared pure decision helper: maker, setting, age,
+  current-generation evidence, connection and already-rotating state all have to agree.
+- Each phone records when it made the current generation outside the Room/GRDB schema
+  (`RoomKeyMadeStore`, in SharedPreferences/UserDefaults). A due room changes
+  only after opening a fresh current-generation sealed message from another member, received after the
+  due time — never from this phone's own send, never from a timer, and never by polling. Scheduled
+  changes use the existing rotation handover and set quiet key handovers, so no daily/weekly success
+  line or short moved notice appears. Removals are the exception: if `removed` is non-empty, receivers
+  announce the removal even when a modified app sets quiet.
+- `RosterEvent.Kind.LEFT = 2`. Leaving broadcasts one sealed LEFT event on the room's slot before the phone
+  forgets the room. Receivers believe it only under the current generation with `node_num == packet.from`,
+  remove the member, delete pending handovers to them, post "`<name> left the room`", and the maker marks
+  the room due so the next sign of life moves the remaining members on.
+- Owed handovers are sealed under every generation a member might actually hold. If a member misses more
+  than eight generations, the owed record is dropped and they recover by scanning a fresh invite.
+- Tests: `ScheduledKeyChangeTest`/`ScheduledKeyChangeTests`; iOS simulated-mesh coverage in
+  `RoomEndToEndTests` for scheduled member-triggered maker rotation with no room line and retry handover
+  (`scheduledKeyChangeRunsOnMembersMessageAndPostsNoLine`), maker-send non-trigger
+  (`scheduledKeyChangeDoesNotRunOnMakersOwnSend`), non-maker with a made-at record and Never
+  (`nonMakerAndNeverDoNotChangeKeysOnSchedule`), LEFT not being its own rotation evidence and post-LEFT
+  lockout (`leftRemovesMemberAndMakerChangesKeysAtNextSignOfLife`), missed generations and sent-generation
+  handover retry (`memberMissingOneChangeTakesTheLaterKeyWhenHeard`), maker status surviving own JOINED
+  and a member grant (`makerStillSchedulesAfterOwnJoinedAndMemberGrant`), quiet removal announcements
+  (`quietKeyRotationWithRemovalStillPostsRemovalLine`), an absent owed member not blocking a scheduled
+  change (`absentMemberOwedHandoverDoesNotBlockNextScheduledChange`), and the missed-generation cap
+  (`owedHandoverBeyondGenerationCapIsDroppedAndMemberSeesInviteAgainExplanation`). Android has no
+  RoomRepository simulated-mesh harness for Phase 4 behaviour, so the iOS simulated mesh is the
+  behavioural coverage while Android covers the pure helper, protocol contracts and device keystore;
+  Android device `PhoneKeyStoreTest` for hardware generation, non-exportability, ECDH agreement,
+  exact old wrapped-key upgrade, KeyEnvelope and DirectSeal v1/v2 round trips, and fallback source
+  selection.
+
+The contact phone-key-change alert was built with Phase 6, which reworks how phone keys are learned.
 
 ### Phase 6 record
 

@@ -264,10 +264,15 @@ message RoomGrant {
 // being replaced, before the sender's own radio moves on. A member who then
 // misses their own copy of the new key still hears that the room has gone,
 // and stops talking into a room only a removed member can still read.
+//
+// LEFT is sent by a member just before forgetting the room. It is believed only
+// sealed under the room's current key, on the room's own channel, with node_num
+// equal to packet.from.
 message RosterEvent {
   enum Kind {
     JOINED = 0;
     KEY_ROTATED = 1;
+    LEFT = 2;
   }
   Kind kind = 1;
   uint32 node_num = 2;
@@ -276,6 +281,9 @@ message RosterEvent {
   // For JOINED: the newcomer's phone key, vouched for by whoever let them in,
   // so any member can hand them a future room key.
   bytes phone_key = 5;
+  // For KEY_ROTATED: true when the change was scheduled, so phones that hear
+  // the notice before their own key arrives do not post a daily/weekly line.
+  bool quiet = 6;
 }
 
 // Member -> member, as a PKI direct message. Asking only; the recipient's app
@@ -336,4 +344,6 @@ message KeyRotation {
   // Which hour sealed_key is the key for (hours since 1970, UTC); see
   // RoomGrant.key_hour.
   uint32 key_hour = 8;
+  // Scheduled changes set this so taking the key posts no success line.
+  bool quiet = 9;
 }

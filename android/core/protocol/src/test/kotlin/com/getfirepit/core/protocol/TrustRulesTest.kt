@@ -76,6 +76,15 @@ class TrustRulesTest {
         assertTrue(TrustRules.mayTakeGrant(alreadyHeld = true, senderIsMember = true, grantGeneration = 3, currentGeneration = 2))
         assertFalse(TrustRules.mayTakeGrant(alreadyHeld = true, senderIsMember = true, grantGeneration = 2, currentGeneration = 2))
         assertFalse(TrustRules.mayTakeGrant(alreadyHeld = true, senderIsMember = true, grantGeneration = 1, currentGeneration = 2))
+        assertTrue(
+            TrustRules.mayTakeGrant(
+                alreadyHeld = true,
+                senderIsMember = true,
+                grantGeneration = 2,
+                currentGeneration = 2,
+                awaitingScannedInvite = true,
+            ),
+        )
     }
 
     // --- rotation ------------------------------------------------------------

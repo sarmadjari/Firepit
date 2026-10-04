@@ -96,6 +96,18 @@ private func storedTexts(_ phone: SimulatedPhone, channel: Int) async throws -> 
     try await firstValue(phone.messageDao.observeChannel(channel: channel))
 }
 
+private func storedTextStrings(_ phone: SimulatedPhone, channel: Int) async throws -> [String] {
+    try await storedTexts(phone, channel: channel).map(\.text)
+}
+
+private func assertNoKeyChangeLines(_ phones: [SimulatedPhone], channel: Int) async throws {
+    for phone in phones {
+        let texts = try await storedTextStrings(phone, channel: channel)
+        #expect(!texts.contains { $0.contains("moved to a new key") })
+        #expect(!texts.contains { $0.contains("The room's key was changed") })
+    }
+}
+
 private func arrivesDirect(_ text: String, at phone: SimulatedPhone, from sender: SimulatedPhone) async -> Bool {
     await waitUntil {
         let messages = try? await firstValue(phone.messageDao.observeDirect(peer: sender.radio.nodeNum))
@@ -422,7 +434,9 @@ struct RoomEndToEndTests {
         #expect(await directKeysLearned(phones[0], phones[1]))
         let low = first.id < second.id ? first : second
         let high = first.id < second.id ? second : first
+        mesh.silence(phones[1].radio.nodeNum)
         try await phones[1].roomRepository.leaveRoom(roomId: low.id, slot: low.index)
+        mesh.silence(phones[1].radio.nodeNum, false)
         let channel = high.index
         let before = mesh.airPackets.count
 
@@ -806,6 +820,128 @@ struct RoomEndToEndTests {
         #expect((try await storedTexts(phones[2], channel: room.index)).contains { $0.text == "before rotate" })
     }
 
+    @Test func scheduledKeyChangeRunsOnMembersMessageAndPostsNoLine() async throws {
+        let (mesh, phones) = try await makeMesh(3)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await join(phones[1], invite: invite, approver: phones[0])
+        try await join(
+            phones[2], invite: try await phones[0].roomRepository.buildInvite(roomId: room.id), approver: phones[0])
+        try await phones[1].meshRepository.sendText(channel: room.index, text: "evidence")
+        #expect(await arrives("evidence", at: phones[0], channel: room.index))
+        await settle(mesh)
+
+        mesh.takeOffline(phones[2].radio.nodeNum)
+        mesh.advanceClock(byMillis: 24 * hourMillis)
+        try await phones[1].meshRepository.sendText(channel: room.index, text: "daily trigger")
+        #expect(await arrives("daily trigger", at: phones[0], channel: room.index))
+        await settle(mesh)
+        #expect(await waitUntil { phones[0].roomKeys.generationOf(roomId: room.id) == 2 })
+        #expect(await waitUntil { phones[1].roomKeys.generationOf(roomId: room.id) == 2 })
+        #expect(phones[2].roomKeys.generationOf(roomId: room.id) == 1)
+        try await assertNoKeyChangeLines(phones, channel: room.index)
+
+        mesh.bringOnline(phones[2].radio.nodeNum)
+        #expect(await waitUntil { phones[2].meshRepository.isConnected.value })
+        mesh.advanceClock(byMillis: 11 * 60 * 1000)
+        try await phones[2].meshRepository.sendText(channel: room.index, text: "back for retry")
+        await settle(mesh)
+        #expect(await waitUntil(10_000) { phones[2].roomKeys.generationOf(roomId: room.id) == 2 })
+        try await assertNoKeyChangeLines(phones, channel: room.index)
+
+        try await phones[0].meshRepository.sendText(channel: room.index, text: "after daily")
+        #expect(await arrives("after daily", at: phones[1], channel: room.index))
+        try await phones[2].meshRepository.sendText(channel: room.index, text: "after retry")
+        #expect(await arrives("after retry", at: phones[0], channel: room.index))
+        #expect(await arrives("after retry", at: phones[1], channel: room.index))
+    }
+
+    @Test func scheduledKeyChangeDoesNotRunOnMakersOwnSend() async throws {
+        let (mesh, phones) = try await makeMesh(2)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await join(phones[1], invite: invite, approver: phones[0])
+        try await phones[1].meshRepository.sendText(channel: room.index, text: "evidence")
+        #expect(await arrives("evidence", at: phones[0], channel: room.index))
+        await settle(mesh)
+
+        mesh.advanceClock(byMillis: 24 * hourMillis)
+        try await phones[0].meshRepository.sendText(channel: room.index, text: "maker due send")
+        #expect(await arrives("maker due send", at: phones[1], channel: room.index))
+        await settle(mesh)
+        #expect(phones[0].roomKeys.generationOf(roomId: room.id) == 1)
+        #expect(phones[1].roomKeys.generationOf(roomId: room.id) == 1)
+
+        try await phones[1].meshRepository.sendText(channel: room.index, text: "member due send")
+        #expect(await arrives("member due send", at: phones[0], channel: room.index))
+        await settle(mesh)
+        #expect(await waitUntil { phones[0].roomKeys.generationOf(roomId: room.id) == 2 })
+        #expect(await waitUntil { phones[1].roomKeys.generationOf(roomId: room.id) == 2 })
+    }
+
+    @Test func nonMakerAndNeverDoNotChangeKeysOnSchedule() async throws {
+        let (mesh, phones) = try await makeMesh(2)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await join(phones[1], invite: invite, approver: phones[0])
+        try await phones[1].meshRepository.sendText(channel: room.index, text: "evidence")
+        #expect(await arrives("evidence", at: phones[0], channel: room.index))
+        await settle(mesh)
+
+        phones[1].roomKeyMade.record(roomId: room.id, generation: 1, at: currentEpochMillis() + mesh.clockOffsetMillis)
+        phones[0].keyChange.set(.never)
+        mesh.advanceClock(byMillis: 24 * hourMillis)
+        try await phones[0].meshRepository.sendText(channel: room.index, text: "non maker evidence")
+        #expect(await arrives("non maker evidence", at: phones[1], channel: room.index))
+        await settle(mesh)
+        #expect(phones[1].roomKeys.generationOf(roomId: room.id) == 1)
+        #expect(phones[0].roomKeys.generationOf(roomId: room.id) == 1)
+
+        mesh.advanceClock(byMillis: 24 * hourMillis)
+        try await phones[1].meshRepository.sendText(channel: room.index, text: "never")
+        #expect(await arrives("never", at: phones[0], channel: room.index))
+        await settle(mesh)
+        #expect(phones[0].roomKeys.generationOf(roomId: room.id) == 1)
+    }
+
+    @Test func leftRemovesMemberAndMakerChangesKeysAtNextSignOfLife() async throws {
+        let (_, phones) = try await makeMesh(3)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await join(phones[1], invite: invite, approver: phones[0])
+        try await join(
+            phones[2], invite: try await phones[0].roomRepository.buildInvite(roomId: room.id), approver: phones[0])
+        try await phones[2].meshRepository.sendText(channel: room.index, text: "stayer evidence")
+        #expect(await arrives("stayer evidence", at: phones[0], channel: room.index))
+        let stolen = try #require(phones[1].roomKeys.currentKey(roomId: room.id))
+        let thiefKeys = RoomKeyStore(store: InMemorySecretStore())
+        try thiefKeys.remember(roomId: room.id, key: stolen, generation: phones[1].roomKeys.generationOf(roomId: room.id))
+
+        try await phones[1].roomRepository.leaveRoom(roomId: room.id, slot: room.index)
+        #expect(await waitUntil { (try? await phones[0].memberDao.findEntity(roomId: room.id, nodeNum: phones[1].radio.nodeNum)) == nil })
+        #expect(await waitUntil { (try? await phones[2].memberDao.findEntity(roomId: room.id, nodeNum: phones[1].radio.nodeNum)) == nil })
+        #expect((try await storedTexts(phones[0], channel: room.index)).contains { $0.text.contains("left the room") })
+        await settle(phones[0].radio.mesh!)
+        #expect(phones[0].roomKeys.generationOf(roomId: room.id) == 1)
+        #expect(phones[2].roomKeys.generationOf(roomId: room.id) == 1)
+
+        try await phones[2].meshRepository.sendText(channel: room.index, text: "after left")
+        #expect(await arrives("after left", at: phones[0], channel: room.index))
+        await settle(phones[0].radio.mesh!)
+        #expect(await waitUntil { phones[0].roomKeys.generationOf(roomId: room.id) == 2 })
+        #expect(await waitUntil { phones[2].roomKeys.generationOf(roomId: room.id) == 2 })
+        let beforeLockedOut = phones[0].radio.mesh!.airPackets.count
+        try await phones[0].meshRepository.sendText(channel: room.index, text: "leaver locked out")
+        try? await Task.sleep(for: .milliseconds(200))
+        #expect(try await !storedTexts(phones[1], channel: room.index).contains { $0.text == "leaver locked out" })
+        let sealed = try #require(
+            phones[0].radio.mesh!.airPackets.dropFirst(beforeLockedOut).lazy.compactMap { packet -> Meshchat_SealedMessage? in
+                guard packet.from == phones[0].radio.nodeNum,
+                    packet.channel == room.index,
+                    let control = try? Meshchat_MeshChatControl(serializedBytes: packet.payload)
+                else { return nil }
+                if case .sealedMessage(let sealed) = control.payload { return sealed }
+                return nil
+            }.first)
+        #expect(thiefKeys.open(roomId: room.id, generation: Int(sealed.generation), sender: phones[0].radio.nodeNum, payload: sealed.ciphertext) == .noKey)
+    }
+
     @Test func aHandoverToAnAbsentMemberIsRetriedWhenTheyAreHeard() async throws {
         let (mesh, phones) = try await makeMesh(3)
         let (room, invite) = try await createAndInvite(phones[0])
@@ -895,6 +1031,191 @@ struct RoomEndToEndTests {
         try await phones[1].meshRepository.sendText(channel: room.index, text: "got both")
         #expect(await arrives("got both", at: phones[0], channel: room.index))
         #expect(await waitUntil { (try? await phones[0].handovers.forNode(nodeNum: member).isEmpty) == true })
+    }
+
+    @Test func memberMissingOneChangeTakesTheLaterKeyWhenHeard() async throws {
+        let (mesh, phones) = try await makeMesh(3)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await join(phones[1], invite: invite, approver: phones[0])
+        try await join(
+            phones[2], invite: try await phones[0].roomRepository.buildInvite(roomId: room.id), approver: phones[0])
+        _ = try await phones[0].roomRepository.rotateRoom(roomId: room.id)
+        #expect(await waitUntil { phones[1].roomKeys.generationOf(roomId: room.id) == 2 })
+        #expect(await waitUntil { phones[2].roomKeys.generationOf(roomId: room.id) == 2 })
+        try await phones[1].meshRepository.sendText(channel: room.index, text: "confirm gen two")
+        #expect(await arrives("confirm gen two", at: phones[0], channel: room.index))
+        await settle(mesh)
+
+        mesh.takeOffline(phones[1].radio.nodeNum)
+        _ = try await phones[0].roomRepository.rotateRoom(roomId: room.id)
+        await settle(mesh)
+        #expect(phones[1].roomKeys.generationOf(roomId: room.id) == 2)
+        #expect(phones[0].roomKeys.generationOf(roomId: room.id) == 3)
+
+        _ = try await phones[0].roomRepository.rotateRoom(roomId: room.id)
+        await settle(mesh)
+        #expect(phones[1].roomKeys.generationOf(roomId: room.id) == 2)
+        #expect(phones[0].roomKeys.generationOf(roomId: room.id) == 4)
+
+        mesh.bringOnline(phones[1].radio.nodeNum)
+        #expect(await waitUntil { phones[1].meshRepository.isConnected.value })
+        mesh.advanceClock(byMillis: 11 * 60 * 1000)
+        var data = DataMessage()
+        data.portnum = .textMessageApp
+        data.payload = Data("old generation proof".utf8)
+        var packet = MeshPacket()
+        packet.from = UInt32(bitPattern: phones[1].radio.nodeNum)
+        packet.to = UInt32(bitPattern: broadcastNodeNum)
+        packet.channel = UInt32(room.index)
+        packet.id = 777_039
+        packet.decoded = data
+        mesh.inject(packet: packet, to: phones[0].radio.nodeNum)
+        await settle(mesh)
+        #expect(await waitUntil(10_000) { phones[1].roomKeys.generationOf(roomId: room.id) == 4 })
+        try await phones[1].meshRepository.sendText(channel: room.index, text: "caught up")
+        #expect(await arrives("caught up", at: phones[0], channel: room.index))
+    }
+
+    @Test func makerStillSchedulesAfterOwnJoinedAndMemberGrant() async throws {
+        let (mesh, phones) = try await makeMesh(2)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await join(phones[1], invite: invite, approver: phones[0])
+
+        var joined = Meshchat_RosterEvent()
+        joined.kind = .joined
+        joined.nodeNum = UInt32(bitPattern: phones[0].radio.nodeNum)
+        joined.invitedBy = UInt32(bitPattern: phones[1].radio.nodeNum)
+        joined.generation = 1
+        joined.phoneKey = try phones[0].phoneKeys.publicKey()
+        var joinedControl = Meshchat_MeshChatControl()
+        joinedControl.version = InviteCodec.version
+        joinedControl.rosterEvent = joined
+        #expect(await phones[1].roomRepository.sendSealed(roomId: room.id, control: joinedControl))
+        await settle(mesh)
+
+        let memberInvite = try await phones[1].roomRepository.buildInvite(roomId: room.id)
+        try await phones[0].roomRepository.joinRoom(invite: memberInvite)
+        #expect(await waitUntil { !phones[1].roomRepository.pendingJoins.value.isEmpty })
+        try await phones[1].roomRepository.approveJoin(nodeNum: phones[0].radio.nodeNum)
+        #expect(await waitUntil { phones[0].roomRepository.awaiting.value == nil })
+        await settle(mesh)
+
+        try await phones[1].meshRepository.sendText(channel: room.index, text: "maker evidence")
+        #expect(await arrives("maker evidence", at: phones[0], channel: room.index))
+        mesh.advanceClock(byMillis: 24 * hourMillis)
+        try await phones[1].meshRepository.sendText(channel: room.index, text: "maker still rotates")
+        #expect(await arrives("maker still rotates", at: phones[0], channel: room.index))
+        await settle(mesh)
+        #expect(await waitUntil { phones[0].roomKeys.generationOf(roomId: room.id) == 2 })
+        #expect(await waitUntil { phones[1].roomKeys.generationOf(roomId: room.id) == 2 })
+        #expect(
+            try await phones[0].memberDao.findEntity(roomId: room.id, nodeNum: phones[0].radio.nodeNum)?.invitedBy
+                == phones[0].radio.nodeNum)
+    }
+
+    @Test func quietKeyRotationWithRemovalStillPostsRemovalLine() async throws {
+        let (mesh, phones) = try await makeMesh(3)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await join(phones[1], invite: invite, approver: phones[0])
+        try await join(
+            phones[2], invite: try await phones[0].roomRepository.buildInvite(roomId: room.id), approver: phones[0])
+        await settle(mesh)
+
+        try injectQuietRemovalRotation(
+            from: phones[0], to: phones[1], room: room, remove: phones[2].radio.nodeNum, on: mesh)
+        await settle(mesh)
+
+        #expect(await waitUntil { phones[1].roomKeys.generationOf(roomId: room.id) == 2 })
+        let texts = try await storedTextStrings(phones[1], channel: room.index)
+        #expect(texts.contains { $0.contains("The room's key was changed") && $0.contains(MeshConstants.formatNodeId(phones[2].radio.nodeNum)) })
+    }
+
+    @Test func absentMemberOwedHandoverDoesNotBlockNextScheduledChange() async throws {
+        let (mesh, phones) = try await makeMesh(3)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await join(phones[1], invite: invite, approver: phones[0])
+        try await join(
+            phones[2], invite: try await phones[0].roomRepository.buildInvite(roomId: room.id), approver: phones[0])
+        try await phones[0].handovers.upsert(
+            handover: PendingHandoverEntity(
+                roomId: room.id,
+                nodeNum: phones[1].radio.nodeNum,
+                generation: 2,
+                heldGeneration: 1,
+                removed: "",
+                createdAt: currentEpochMillis(),
+                lastTriedAt: currentEpochMillis()
+            )
+        )
+        phones[0].roomKeyMade.record(roomId: room.id, generation: 1, at: currentEpochMillis() + mesh.clockOffsetMillis)
+        mesh.takeOffline(phones[1].radio.nodeNum)
+        try await phones[2].meshRepository.sendText(channel: room.index, text: "stayer heard")
+        #expect(await arrives("stayer heard", at: phones[0], channel: room.index))
+        await settle(mesh)
+
+        mesh.advanceClock(byMillis: 24 * hourMillis)
+        try await phones[2].meshRepository.sendText(channel: room.index, text: "second scheduled")
+        #expect(await arrives("second scheduled", at: phones[0], channel: room.index))
+        await settle(mesh)
+        #expect(await waitUntil { phones[0].roomKeys.generationOf(roomId: room.id) == 2 })
+        #expect(await waitUntil { phones[2].roomKeys.generationOf(roomId: room.id) == 2 })
+        #expect(!(try await phones[0].handovers.forNode(nodeNum: phones[1].radio.nodeNum)).isEmpty)
+    }
+
+    @Test func owedHandoverBeyondGenerationCapIsDroppedAndMemberSeesInviteAgainExplanation() async throws {
+        let (mesh, phones) = try await makeMesh(2)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await join(phones[1], invite: invite, approver: phones[0])
+        let member = phones[1].radio.nodeNum
+        try await phones[0].handovers.upsert(
+            handover: PendingHandoverEntity(
+                roomId: room.id,
+                nodeNum: member,
+                generation: 10,
+                heldGeneration: 1,
+                removed: "",
+                createdAt: currentEpochMillis(),
+                lastTriedAt: currentEpochMillis()
+            )
+        )
+
+        mesh.advanceClock(byMillis: 11 * 60 * 1000)
+        var data = DataMessage()
+        data.portnum = .textMessageApp
+        data.payload = Data("hello from the past".utf8)
+        var packet = MeshPacket()
+        packet.from = UInt32(bitPattern: member)
+        packet.to = UInt32(bitPattern: broadcastNodeNum)
+        packet.channel = UInt32(room.index)
+        packet.id = 777_040
+        packet.decoded = data
+        mesh.inject(packet: packet, to: phones[0].radio.nodeNum)
+        #expect(await waitUntil { (try? await phones[0].handovers.forNode(nodeNum: member).isEmpty) == true })
+
+        var event = Meshchat_RosterEvent()
+        event.kind = .keyRotated
+        event.nodeNum = UInt32(bitPattern: phones[0].radio.nodeNum)
+        event.generation = 2
+        event.quiet = false
+        var control = Meshchat_MeshChatControl()
+        control.version = InviteCodec.version
+        control.rosterEvent = event
+        let sealed = try #require(phones[0].roomKeys.seal(roomId: room.id, sender: phones[0].radio.nodeNum, plaintext: try control.serializedData()))
+        var outer = Meshchat_MeshChatControl()
+        outer.sealedMessage = sealed
+        var notice = MeshPacket()
+        notice.from = UInt32(bitPattern: phones[0].radio.nodeNum)
+        notice.to = UInt32(bitPattern: broadcastNodeNum)
+        notice.channel = UInt32(room.index)
+        notice.id = 777_041
+        notice.decoded = DataMessage.with {
+            $0.portnum = .privateApp
+            $0.payload = try! outer.serializedData()
+        }
+        mesh.inject(packet: notice, to: member)
+        await settle(mesh)
+        #expect(phones[1].roomKeys.isSuperseded(roomId: room.id))
+        #expect(phones[1].roomRepository.rooms().first { $0.id == room.id }?.kind.summary.contains("Ask a member to invite you again") == true)
     }
 
     @Test func leavingARoomForgetsItsKeysAndChannel() async throws {
@@ -1246,6 +1567,61 @@ private func injectRefusal(from sender: SimulatedPhone, to receiver: SimulatedPh
     packet.id = 880_000 &+ requestId
     packet.pkiEncrypted = true
     packet.decoded = data
+    mesh.inject(packet: packet, to: receiver.radio.nodeNum)
+}
+
+private func injectQuietRemovalRotation(
+    from sender: SimulatedPhone,
+    to receiver: SimulatedPhone,
+    room: RoomChannel,
+    remove removed: Int32,
+    on mesh: SimulatedMesh
+) throws {
+    let nextGeneration = sender.roomKeys.generationOf(roomId: room.id) + 1
+    let firepitKey = HourKey(
+        hour: RoomRatchet.hourOf(unixMillis: currentEpochMillis() + mesh.clockOffsetMillis),
+        key: RoomCipher.generateKey()
+    )
+    var rotation = Meshchat_KeyRotation()
+    rotation.roomID = UInt32(bitPattern: room.id)
+    rotation.generation = UInt32(nextGeneration)
+    rotation.roomPsk = RoomCrypto.generatePsk()
+    rotation.roomName = room.name
+    rotation.removed = [UInt32(bitPattern: removed)]
+    rotation.keyHour = UInt32(firepitKey.hour)
+    rotation.quiet = true
+    rotation.sealedKey = try KeyEnvelope.seal(
+        recipient: receiver.phoneKeys.publicKey(),
+        secret: firepitKey.key,
+        context: KeyEnvelope.contextOf(
+            roomId: room.id,
+            generation: Int32(nextGeneration),
+            recipientNodeNum: receiver.radio.nodeNum,
+            hour: Int32(firepitKey.hour)
+        )
+    )
+    var inner = Meshchat_MeshChatControl()
+    inner.version = InviteCodec.version
+    inner.keyRotation = rotation
+    let sealed = try #require(
+        sender.roomKeys.seal(
+            roomId: room.id,
+            sender: sender.radio.nodeNum,
+            plaintext: try inner.serializedData()
+        )
+    )
+    var outer = Meshchat_MeshChatControl()
+    outer.sealedMessage = sealed
+    var packet = MeshPacket()
+    packet.from = UInt32(bitPattern: sender.radio.nodeNum)
+    packet.to = UInt32(bitPattern: receiver.radio.nodeNum)
+    packet.channel = 0
+    packet.id = 777_050
+    packet.pkiEncrypted = true
+    packet.decoded = DataMessage.with {
+        $0.portnum = .privateApp
+        $0.payload = try! outer.serializedData()
+    }
     mesh.inject(packet: packet, to: receiver.radio.nodeNum)
 }
 

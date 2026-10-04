@@ -165,6 +165,7 @@ final class SimulatedPhone: @unchecked Sendable {
     let range: RangeRepository
     let roomRepository: RoomRepository
     let roomKeys: RoomKeyStore
+    let roomKeyMade: RoomKeyMadeStore
     let phoneKeys: PhoneKeyStore
     let messageDao: MessageDao
     let nodeDao: NodeDao
@@ -175,6 +176,7 @@ final class SimulatedPhone: @unchecked Sendable {
     let receiptDao: ReceiptDao
     let handovers: PendingHandoverDao
     let sharing: SharingStore
+    let keyChange = CurrentValue<RoomKeyChange>(.daily)
 
     /// How far this phone's own clock is from everyone else's, for scenarios where phones disagree on the time.
     let clockSkewMillis = Mutex<Int64>(0)
@@ -185,6 +187,8 @@ final class SimulatedPhone: @unchecked Sendable {
         radio.mesh = mesh
         // Room keys follow the phone's own clock: the mesh's, plus whatever this phone is out by.
         roomKeys = RoomKeyStore(store: InMemorySecretStore(), time: SimulatedKeyTime(mesh: mesh, skew: clockSkewMillis))
+        let defaults = UserDefaults(suiteName: "firepit-sim-\(nodeNum)-\(UUID().uuidString)")!
+        roomKeyMade = RoomKeyMadeStore(defaults: defaults)
         phoneKeys = PhoneKeyStore(store: InMemorySecretStore(), source: SoftwarePhoneKeySource())
         messageDao = MessageDao(db)
         nodeDao = NodeDao(db)
@@ -194,7 +198,6 @@ final class SimulatedPhone: @unchecked Sendable {
         pinDao = MapPinDao(db)
         receiptDao = ReceiptDao(db)
         handovers = PendingHandoverDao(db)
-        let defaults = UserDefaults(suiteName: "firepit-sim-\(nodeNum)-\(UUID().uuidString)")!
         let session = SessionStore(defaults: defaults)
         session.myNodeNum = nodeNum
         let roomActivity = RoomActivityDao(db)
@@ -250,9 +253,11 @@ final class SimulatedPhone: @unchecked Sendable {
             peerKeyDao: peerKeyDao,
             pinDao: pinDao,
             roomActivity: roomActivity,
+            roomKeyMade: roomKeyMade,
             handovers: handovers,
             history: roomHistory,
             sharingStore: sharing,
+            keyChangeSetting: { [keyChange] in keyChange.value },
             clock: { [weak mesh] in currentEpochMillis() + (mesh?.clockOffsetMillis ?? 0) }
         )
     }

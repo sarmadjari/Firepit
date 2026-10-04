@@ -188,6 +188,13 @@ private struct SettingsPage: View {
                     Text("Leaving takes the room's messages and its key with it, and cannot be undone.")
                 }
                 Section {
+                    choicePicker(
+                        "Change room keys", selection: state.roomKeyChange, options: RoomKeyChange.allCases,
+                        label: \.label, onChoose: model.chooseRoomKeyChange)
+                } footer: {
+                    Text(state.roomKeyChange.footnote)
+                }
+                Section {
                     NavigationRow(title: "Quick replies", subtitle: quickReplySummary) {
                         onOpen(.quickReplies)
                     }
@@ -323,6 +330,27 @@ private struct SettingsPage: View {
         .pickerStyle(.menu)
         .tint(FirepitColors.primary)
         .disabled(!enabled)
+    }
+}
+
+private extension RoomKeyChange {
+    var label: String {
+        switch self {
+        case .daily: String(localized: "Daily")
+        case .weekly: String(localized: "Weekly")
+        case .never: String(localized: "Never")
+        }
+    }
+
+    var footnote: String {
+        switch self {
+        case .daily:
+            String(localized: "Rooms you made get new keys once a day, so anyone who copied keys off a phone stops being able to read them. The room gets a short notice and each member gets one private message.")
+        case .weekly:
+            String(localized: "Rooms you made get new keys once a week, so anyone who copied keys off a phone stops being able to read them. The room gets a short notice and each member gets one private message.")
+        case .never:
+            String(localized: "Room keys change only when someone is removed.")
+        }
     }
 }
 

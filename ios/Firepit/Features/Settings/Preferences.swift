@@ -116,3 +116,23 @@ final class QuickReplyStore {
 
     private static let key = "quick_replies"
 }
+
+/// How often rooms this phone made get fresh keys.
+@Observable
+final class RoomKeyChangePreferences {
+    private(set) var choice: RoomKeyChange
+
+    @ObservationIgnored private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        choice = defaults.string(forKey: Self.key).flatMap(RoomKeyChange.init(rawValue:)) ?? .daily
+    }
+
+    func choose(_ choice: RoomKeyChange) {
+        defaults.set(choice.rawValue, forKey: Self.key)
+        self.choice = choice
+    }
+
+    private static let key = "room_key_change"
+}
