@@ -3,7 +3,9 @@ package com.getfirepit.core.data
 import android.util.Log
 import com.getfirepit.core.database.MessageDao
 import com.getfirepit.core.database.NodeDao
+import com.getfirepit.core.database.PendingHandoverDao
 import com.getfirepit.core.database.PeerKeyDao
+import com.getfirepit.core.database.ReceiptDao
 import com.getfirepit.core.database.RoomActivityDao
 import com.getfirepit.core.database.RoomMemberDao
 import com.getfirepit.core.database.directLatest
@@ -46,6 +48,7 @@ import com.getfirepit.core.transport.LinkState
 import com.getfirepit.core.transport.RadioLink
 import javax.inject.Inject
 import javax.inject.Singleton
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -130,6 +133,11 @@ sealed class SendError(message: String) : Exception(message) {
 /** What a radio said about one of our packets: the id it answers, who said it, and how it went. */
 data class RoutingEvent(val requestId: Int, val from: Int, val error: Routing.Error)
 
+internal fun directRoomChoices(rooms: List<RoomChannel>, pendingRoomIds: Set<Int>): List<RoomChannel> =
+    rooms
+        .filter { it.id != 0 && it.id !in pendingRoomIds }
+        .sortedBy { it.id }
+
 /**
  * Single source of truth for chat and node state.
  *
@@ -148,9 +156,24 @@ class MeshRepository @Inject constructor(
     private val memberDao: RoomMemberDao,
     private val phoneKeys: PhoneKeyStore,
     private val roomActivity: RoomActivityDao,
+    private val handovers: PendingHandoverDao,
+    private val receiptDao: ReceiptDao,
     @param:ApplicationScope private val scope: CoroutineScope,
 ) {
     private val pacer = OutboundPacer(System::currentTimeMillis)
+    private val directAttempts = ConcurrentHashMap<Int, DirectAttempt>()
+
+    internal data class DirectAttempt(
+        val peer: Int,
+        val roomId: Int?,
+        val generation: Int?,
+        val channel: Int,
+        val text: String?,
+        val replyId: Int?,
+        val emoji: Int?,
+        val sentAt: Long,
+        val createdAt: Long,
+    )
 
     // Seeded from the last session so the map can identify us before, or
     // without, a radio connection.
@@ -248,6 +271,155 @@ class MeshRepository @Inject constructor(
             ?.let { runCatching { it.decodeBase64() }.getOrNull() }
             ?.toByteArray()
             ?.takeIf(KeyEnvelope::isValidPublicKey)
+
+    internal suspend fun directRoomSecretFor(nodeNum: Int): DirectSeal.RoomSecret? =
+        directRoomChoices(
+            rooms = ChannelSlotManager.rooms(channels.value),
+            pendingRoomIds = handovers.forNode(nodeNum).map { it.roomId }.toSet(),
+        )
+            .firstNotNullOfOrNull { room ->
+                val generation = roomKeys.generationOf(room.id)
+                if (
+                    roomKeys.canSeal(room.id) &&
+                    memberDao.openedGeneration(room.id, nodeNum, generation)
+                ) {
+                    roomKeys.directSecretForSealing(room.id)
+                } else {
+                    null
+                }
+            }
+
+    internal fun recordDirectAttempt(
+        packetId: Int,
+        peer: Int,
+        room: DirectSeal.RoomSecret?,
+        channel: Int,
+        text: String?,
+        replyId: Int?,
+        emoji: Int? = null,
+        sentAt: Long = System.currentTimeMillis(),
+    ) {
+        pruneDirectAttempts(System.currentTimeMillis())
+        directAttempts[packetId] = DirectAttempt(
+            peer = peer,
+            roomId = room?.roomId,
+            generation = room?.generation,
+            channel = channel,
+            text = text,
+            replyId = replyId,
+            emoji = emoji,
+            sentAt = sentAt,
+            createdAt = System.currentTimeMillis(),
+        )
+    }
+
+    internal fun confirmDirectAttempt(messageId: Int, by: Int) {
+        if (directAttempts[messageId]?.peer == by) directAttempts.remove(messageId)
+    }
+
+    internal suspend fun handleDirectRefusal(messageId: Int, by: Int): Boolean {
+        pruneDirectAttempts(System.currentTimeMillis())
+        val attempt = directAttempts[messageId]
+        val message = messageDao.find(messageId)
+        if (attempt == null || attempt.peer != by || message == null || !message.isOutgoing || message.toNodeNum != by) {
+            Log.w(TAG, "direct refusal for $messageId from $by did not match an active send; ignored")
+            return false
+        }
+        if (receiptDao.hasFrom(messageId, by)) return false
+        if (attempt.roomId != null && attempt.generation != null) {
+            memberDao.clearOpenedGeneration(attempt.roomId, by, attempt.generation)
+            val related = directAttempts.entries
+                .filter { (_, other) ->
+                    other.peer == by && other.roomId == attempt.roomId && other.generation == attempt.generation
+                }
+                .map { it.key to it.value }
+            var sharedCard = false
+            related.forEach { (id, other) ->
+                if (!receiptDao.hasFrom(id, by) && messageDao.find(id)?.toNodeNum == by) {
+                    if (!resendV2Replacement(id, other)) {
+                        markNotOpened(id, by, "They could not open it.")
+                        directAttempts.remove(id)
+                    }
+                    sharedCard = true
+                }
+            }
+            return sharedCard
+        }
+        directAttempts.remove(messageId)
+        return markNotOpened(messageId, by)
+    }
+
+    private fun pruneDirectAttempts(now: Long) {
+        directAttempts.entries.removeIf { now - it.value.createdAt > DIRECT_ATTEMPT_TTL_MILLIS }
+        if (directAttempts.size > MAX_DIRECT_ATTEMPTS) {
+            directAttempts.entries
+                .sortedBy { it.value.createdAt }
+                .take(directAttempts.size - MAX_DIRECT_ATTEMPTS)
+                .forEach { directAttempts.remove(it.key) }
+        }
+    }
+
+    private suspend fun resendV2Replacement(oldId: Int, attempt: DirectAttempt): Boolean {
+        val text = attempt.text ?: return false
+        val peerKey = publicKeyOf(attempt.peer) ?: return false
+        val peerPhoneKey = phoneKeyOf(attempt.peer) ?: return false
+        val room = directRoomSecretFor(attempt.peer) ?: return false
+        val packet = try {
+            val sealed = phoneKeys.sealDirect(
+                peerPhoneKey,
+                MeshChatControl(
+                    version = InviteCodec.VERSION,
+                    room_text = RoomText(text = text, reply_id = attempt.replyId ?: 0),
+                ).encode(),
+                DirectSeal.contextOf(myNodeNum.value ?: return false, attempt.peer),
+                room,
+            )
+            MeshPacketBuilder.meshPacket(
+                to = attempt.peer,
+                channel = attempt.channel,
+                portNum = PortNum.PRIVATE_APP,
+                payload = MeshChatControl(
+                    version = InviteCodec.VERSION,
+                    sealed_direct = SealedDirect(ciphertext = sealed.toByteString()),
+                ).encode().let(ByteString::of),
+                hopLimit = hopLimitForSending(),
+                wantAck = true,
+                pkiEncrypted = true,
+                publicKey = peerKey,
+            )
+        } finally {
+            room.key.fill(0)
+        }
+        val myNodeNum = myNodeNum.value ?: return false
+        messageDao.save(
+            ChatMessage(
+                id = packet.id,
+                channel = attempt.channel,
+                fromNodeNum = myNodeNum,
+                toNodeNum = attempt.peer,
+                text = text,
+                sentAt = attempt.sentAt,
+                status = MessageStatus.QUEUED,
+                isOutgoing = true,
+                replyId = attempt.replyId,
+                emoji = attempt.emoji,
+            ),
+            myNodeNum,
+        )
+        messageDao.delete(oldId)
+        directAttempts.remove(oldId)
+        recordDirectAttempt(packet.id, attempt.peer, room, attempt.channel, text, attempt.replyId, attempt.emoji, attempt.sentAt)
+        // Words, paced and timed as sendText paces and times them.
+        pacer.awaitSlot(PortNum.TEXT_MESSAGE_APP)
+        val sent = runCatching { link.send(ToRadio(packet = packet)) }
+            .onFailure { cause ->
+                Log.w(TAG, "could not send v2 replacement direct message", cause)
+                setStatus(packet.id, MessageStatus.FAILED, "Send failed")
+            }
+            .isSuccess
+        scheduleAckTimeout(packet.id)
+        return sent
+    }
 
     /**
      * Which conversation a slot holds, for filing its history: the room id when
@@ -461,6 +633,7 @@ class MeshRepository @Inject constructor(
         if (carriage !is Carriage.Refused && payload.size > limit) {
             throw SendError.TooLong(payload.size, limit)
         }
+        val sentAt = System.currentTimeMillis()
 
         val packet = when (carriage) {
             is Carriage.Refused -> throw when (carriage.reason) {
@@ -474,14 +647,20 @@ class MeshRepository @Inject constructor(
             // Sealed to their phone, then to their radio by the firmware. The
             // radios carry it without being able to open it.
             is Carriage.SealedDirect -> {
-                val sealed = phoneKeys.sealDirect(
-                    requireNotNull(peerPhoneKey),
-                    MeshChatControl(
-                        version = InviteCodec.VERSION,
-                        room_text = RoomText(text = text, reply_id = replyId ?: 0),
-                    ).encode(),
-                    DirectSeal.contextOf(myNodeNum, carriage.nodeNum),
-                )
+                val directRoom = directRoomSecretFor(carriage.nodeNum)
+                val sealed = try {
+                    phoneKeys.sealDirect(
+                        requireNotNull(peerPhoneKey),
+                        MeshChatControl(
+                            version = InviteCodec.VERSION,
+                            room_text = RoomText(text = text, reply_id = replyId ?: 0),
+                        ).encode(),
+                        DirectSeal.contextOf(myNodeNum, carriage.nodeNum),
+                        directRoom,
+                    )
+                } finally {
+                    directRoom?.key?.fill(0)
+                }
                 MeshPacketBuilder.meshPacket(
                     to = carriage.nodeNum,
                     channel = channel,
@@ -495,7 +674,17 @@ class MeshRepository @Inject constructor(
                     wantAck = true,
                     pkiEncrypted = true,
                     publicKey = requireNotNull(peerKey),
-                )
+                ).also { packet ->
+                    recordDirectAttempt(
+                        packetId = packet.id,
+                        peer = carriage.nodeNum,
+                        room = directRoom,
+                        channel = channel,
+                        text = text,
+                        replyId = replyId,
+                        sentAt = sentAt,
+                    )
+                }
             }
 
             is Carriage.ToOneNode -> MeshPacketBuilder.meshPacket(
@@ -548,7 +737,7 @@ class MeshRepository @Inject constructor(
                 fromNodeNum = myNodeNum,
                 toNodeNum = to,
                 text = text,
-                sentAt = System.currentTimeMillis(),
+                sentAt = sentAt,
                 status = MessageStatus.QUEUED,
                 isOutgoing = true,
                 replyId = replyId,
@@ -817,13 +1006,17 @@ class MeshRepository @Inject constructor(
      * already have marked it delivered, which it was — to a radio, not a
      * reader. False when [messageId] is not ours to [by].
      */
-    internal suspend fun markNotOpened(messageId: Int, by: Int): Boolean {
+    internal suspend fun markNotOpened(
+        messageId: Int,
+        by: Int,
+        reason: String = "Their phone could not open it: it has not learned your key yet. Try again once you've " +
+            "both been connected in a room you share.",
+    ): Boolean {
         val message = messageDao.find(messageId)?.takeIf { it.isOutgoing && it.toNodeNum == by } ?: return false
         messageDao.updateStatus(
             message.id,
             MessageStatus.FAILED,
-            "Their phone could not open it: it has not learned your key yet. Try again once you've " +
-                "both been connected in a room you share.",
+            reason,
         )
         return true
     }
@@ -879,5 +1072,7 @@ class MeshRepository @Inject constructor(
 
         /** Curve25519 public key length; anything else cannot be a PKI key. */
         const val PUBLIC_KEY_SIZE = 32
+        const val DIRECT_ATTEMPT_TTL_MILLIS = 10 * 60 * 1000L
+        const val MAX_DIRECT_ATTEMPTS = 64
     }
 }

@@ -68,11 +68,24 @@ class CrossPlatformIosVerify {
         assertArrayEquals(bytes("directContext"), DirectSeal.contextOf(11, sender))
         assertArrayEquals(
             bytes("directPlain"),
-            DirectSeal.open(privateFrom("bobScalar"), bytes("bobPublic"), bytes("alicePublic"), bytes("direct"), bytes("directContext")),
+            DirectSeal.open(privateFrom("bobScalar"), bytes("bobPublic"), bytes("alicePublic"), bytes("direct"), bytes("directContext"))?.plain,
         )
         assertArrayEquals(
             bytes("directPlain"),
-            DirectSeal.open(privateFrom("aliceScalar"), bytes("alicePublic"), bytes("bobPublic"), bytes("direct"), bytes("directContext")),
+            DirectSeal.open(privateFrom("aliceScalar"), bytes("alicePublic"), bytes("bobPublic"), bytes("direct"), bytes("directContext"))?.plain,
+        )
+        val room = DirectSeal.RoomSecret(
+            vectors.getValue("directRoomId").toInt(),
+            vectors.getValue("directRoomGeneration").toInt(),
+            vectors.getValue("directRoomHour").toInt(),
+            bytes("directRoomHourly"),
+        )
+        assertArrayEquals(
+            bytes("directPlain"),
+            DirectSeal.open(
+                privateFrom("bobScalar"), bytes("bobPublic"), bytes("alicePublic"),
+                bytes("directV2"), bytes("directContext"), listOf(room),
+            )?.plain,
         )
     }
 

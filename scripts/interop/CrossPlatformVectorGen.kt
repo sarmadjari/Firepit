@@ -67,6 +67,12 @@ class CrossPlatformVectorGen {
         put("bobScalar", hex(scalar(bob.private))); put("bobPublic", hex(bobPub))
         put("directContext", hex(dmCtx)); put("directPlain", hex(words))
         put("direct", hex(DirectSeal.seal(alice.private, alicePub, bobPub, words, dmCtx)))
+        val directRoom = DirectSeal.RoomSecret(0x0BADF00D, generation, sealHour, hourKey)
+        put("directRoomId", directRoom.roomId.toString())
+        put("directRoomGeneration", directRoom.generation.toString())
+        put("directRoomHour", directRoom.hour.toString())
+        put("directRoomHourly", hex(directRoom.key))
+        put("directV2", hex(DirectSeal.seal(alice.private, alicePub, bobPub, words, dmCtx, directRoom)))
 
         val psk = ByteArray(32) { (255 - it).toByte() }
         val inviteKey = RoomCrypto.inviteKey(psk, 0x0BADF00D, 3)

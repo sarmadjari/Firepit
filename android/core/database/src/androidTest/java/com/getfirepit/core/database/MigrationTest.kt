@@ -36,7 +36,7 @@ class MigrationTest {
             db.execSQL("INSERT INTO channel_state (channel, lastReadAt, muted) VALUES (2, 50, 1)")
         }
 
-        helper.runMigrationsAndValidate(DB, 12, true, *FirepitDatabase.MIGRATIONS).use { db ->
+        helper.runMigrationsAndValidate(DB, 13, true, *FirepitDatabase.MIGRATIONS).use { db ->
             db.query("SELECT text, roomId FROM messages WHERE id = 1").use { cursor ->
                 cursor.moveToFirst()
                 assertEquals("kept", cursor.getString(0))
@@ -56,13 +56,31 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun twelveToThirteenAddsMemberEvidenceAndKeepsRosterRows() {
+        helper.createDatabase("$DB-12-13", 12).use { db ->
+            db.execSQL(
+                "INSERT INTO room_members (roomId, nodeNum, invitedBy, firstSeen, lastHeard) " +
+                    "VALUES (42, 7, NULL, 100, 200)",
+            )
+        }
+
+        helper.runMigrationsAndValidate("$DB-12-13", 13, true, *FirepitDatabase.MIGRATIONS).use { db ->
+            db.query("SELECT nodeNum, lastOpenedGeneration FROM room_members WHERE roomId = 42").use { cursor ->
+                cursor.moveToFirst()
+                assertEquals(7, cursor.getInt(0))
+                assertEquals(true, cursor.isNull(1))
+            }
+        }
+    }
+
     /** Every version still in the wild reaches the current one through the chain. */
     @Test
     fun everyExportedVersionUpgradesToTheCurrentOne() {
-        (1..11).forEach { version ->
+        (1..12).forEach { version ->
             val name = "$DB-from-$version"
             helper.createDatabase(name, version).close()
-            helper.runMigrationsAndValidate(name, 12, true, *FirepitDatabase.MIGRATIONS).close()
+            helper.runMigrationsAndValidate(name, 13, true, *FirepitDatabase.MIGRATIONS).close()
         }
     }
 

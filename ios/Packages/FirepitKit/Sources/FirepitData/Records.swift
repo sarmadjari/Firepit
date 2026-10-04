@@ -256,12 +256,21 @@ public struct RoomMemberEntity: Codable, FetchableRecord, PersistableRecord, Sen
     public var invitedBy: Int32?
     public var firstSeen: Int64
     public var lastHeard: Int64?
-    public init(roomId: Int32, nodeNum: Int32, invitedBy: Int32?, firstSeen: Int64, lastHeard: Int64?) {
+    public var lastOpenedGeneration: Int?
+    public init(
+        roomId: Int32,
+        nodeNum: Int32,
+        invitedBy: Int32?,
+        firstSeen: Int64,
+        lastHeard: Int64?,
+        lastOpenedGeneration: Int? = nil
+    ) {
         self.roomId = roomId
         self.nodeNum = nodeNum
         self.invitedBy = invitedBy
         self.firstSeen = firstSeen
         self.lastHeard = lastHeard
+        self.lastOpenedGeneration = lastOpenedGeneration
     }
     public func toDomain() -> RoomMember {
         RoomMember(roomId: roomId, nodeNum: nodeNum, invitedBy: invitedBy, firstSeen: firstSeen, lastHeard: lastHeard)

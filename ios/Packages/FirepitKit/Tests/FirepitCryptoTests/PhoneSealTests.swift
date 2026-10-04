@@ -128,6 +128,12 @@ struct PhoneSealTests {
     var bobPublic: Data { KeyEnvelope.publicBytes(bob.publicKey) }
     let words = Data("Meet at the ridge at six".utf8)
     let aliceToBob = DirectSeal.contextOf(senderNodeNum: 11, recipientNodeNum: 22)
+    let directRoom = DirectSeal.RoomSecret(
+        roomId: 0x0BAD_F00D,
+        generation: 3,
+        hour: 491_234,
+        key: Data((0..<32).map { UInt8($0) })
+    )
 
     private func sealAliceToBob() throws -> Data {
         try DirectSeal.seal(
@@ -141,7 +147,7 @@ struct PhoneSealTests {
         #expect(
             DirectSeal.open(
                 ownPrivate: bob, ownPublic: bobPublic, peerPublic: alicePublic, sealed: sealed,
-                context: aliceToBob) == words)
+                context: aliceToBob)?.plain == words)
     }
 
     @Test func theSenderCanReadBackWhatItSealed() throws {
@@ -149,7 +155,7 @@ struct PhoneSealTests {
         #expect(
             DirectSeal.open(
                 ownPrivate: alice, ownPublic: alicePublic, peerPublic: bobPublic, sealed: sealed,
-                context: aliceToBob) == words)
+                context: aliceToBob)?.plain == words)
     }
 
     @Test func anyThirdPhoneCannot() throws {
@@ -227,12 +233,77 @@ struct PhoneSealTests {
         #expect(
             DirectSeal.open(
                 ownPrivate: bob, ownPublic: bobPublic, peerPublic: alicePublic,
-                sealed: Data([0x02]) + sealed.dropFirst(), context: aliceToBob) == nil)
+                sealed: Data([0x03]) + sealed.dropFirst(), context: aliceToBob) == nil)
+    }
+
+    @Test func directRoomPartIsTheHmacTheProtocolDescribes() {
+        #expect(
+            DirectSeal.roomPart(directRoom).hex
+                == "8e350523e13aac797e216c73f3e101593033477d1c191a00da5ebbf37745edc3")
+    }
+
+    @Test func v2UsesTheRoomPartInThePhoneKey() throws {
+        let expected = try v2Key(
+            privateKey: alice, ownPublic: alicePublic, peerPublic: bobPublic, context: aliceToBob, room: directRoom)
+        let tag = RoomRatchet.tagOf(directRoom.hour)
+        let nonce = Data([UInt8(truncatingIfNeeded: tag >> 8), UInt8(truncatingIfNeeded: tag)])
+            + Data((1...10).map { UInt8($0) })
+        let sealed = Data([0x02]) + RoomCipher.seal(key: expected, plaintext: words, context: aliceToBob, nonce: nonce)
+
+        let opened = DirectSeal.open(
+            ownPrivate: bob, ownPublic: bobPublic, peerPublic: alicePublic, sealed: sealed, context: aliceToBob,
+            rooms: [directRoom])
+
+        #expect(opened?.plain == words)
+        #expect(opened?.room?.roomId == directRoom.roomId)
+        #expect(opened?.hour == directRoom.hour)
+        #expect(opened?.nonce == nonce)
+    }
+
+    @Test func v2FailsWithTheWrongRoomKey() throws {
+        let sealed = try DirectSeal.seal(
+            ownPrivate: alice, ownPublic: alicePublic, peerPublic: bobPublic, plaintext: words, context: aliceToBob,
+            room: directRoom)
+        var wrongKey = directRoom.key
+        wrongKey[wrongKey.startIndex] ^= 0x01
+        let wrong = DirectSeal.RoomSecret(
+            roomId: directRoom.roomId, generation: directRoom.generation, hour: directRoom.hour, key: wrongKey)
+
+        #expect(
+            DirectSeal.open(
+                ownPrivate: bob, ownPublic: bobPublic, peerPublic: alicePublic, sealed: sealed, context: aliceToBob,
+                rooms: [wrong]) == nil)
+    }
+
+    @Test func v2AChangedByteAnywhereIsRefused() throws {
+        let sealed = try DirectSeal.seal(
+            ownPrivate: alice, ownPublic: alicePublic, peerPublic: bobPublic, plaintext: words, context: aliceToBob,
+            room: directRoom)
+        for index in sealed.indices {
+            var tampered = sealed
+            tampered[index] ^= 0x01
+            #expect(
+                DirectSeal.open(
+                    ownPrivate: bob, ownPublic: bobPublic, peerPublic: alicePublic, sealed: tampered,
+                    context: aliceToBob, rooms: [directRoom]) == nil, "byte \(index)")
+        }
     }
 
     @Test func bothPhonesOrderTheirKeysAlike() {
         #expect(DirectSeal.ordered(alicePublic, bobPublic) == DirectSeal.ordered(bobPublic, alicePublic))
         #expect(DirectSeal.ordered(Data([1, 2]), Data([1, 2, 0])) == Data([1, 2, 1, 2, 0]))
         #expect(DirectSeal.ordered(Data([0x80]), Data([0x7F])) == Data([0x7F, 0x80]))
+    }
+
+    private func v2Key(
+        privateKey: P256.KeyAgreement.PrivateKey,
+        ownPublic: Data,
+        peerPublic: Data,
+        context: Data,
+        room: DirectSeal.RoomSecret
+    ) throws -> Data {
+        let shared = try privateKey.sharedSecretFromKeyAgreement(with: #require(KeyEnvelope.decode(peerPublic)))
+        let prk = RoomCrypto.hmac(key: DirectSeal.ordered(ownPublic, peerPublic), message: rawBytes(shared) + DirectSeal.roomPart(room))
+        return RoomCrypto.hmac(key: prk, message: Data("firepit-direct-v2".utf8) + context + Data([1]))
     }
 }

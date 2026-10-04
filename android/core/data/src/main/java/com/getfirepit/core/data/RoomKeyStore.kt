@@ -6,6 +6,7 @@ import android.os.SystemClock
 import android.provider.Settings
 import android.util.Base64
 import androidx.core.content.edit
+import com.getfirepit.core.crypto.DirectSeal
 import com.getfirepit.core.crypto.HourKey
 import com.getfirepit.core.crypto.RoomCipher
 import com.getfirepit.core.crypto.RoomRatchet
@@ -165,6 +166,56 @@ class RoomKeyStore @Inject constructor(
             held.key.fill(0)
         } ?: return null
         return HourKey(hour, key)
+    }
+
+    fun directSecretForSealing(roomId: Int): DirectSeal.RoomSecret? = synchronized(lock) {
+        if (isSuperseded(roomId)) return null
+        val generation = generationOf(roomId)
+        val now = RoomRatchet.hourOf(time.wallMillis())
+        val held = advanced(roomId, generation, erasableHour()) ?: return null
+        val hour = RoomRatchet.currentHour(held.hour, now)
+        val key = try {
+            RoomRatchet.forward(held.key, roomId, generation, held.hour, hour)
+        } finally {
+            held.key.fill(0)
+        } ?: return null
+        DirectSeal.RoomSecret(roomId, generation, hour, key)
+    }
+
+    fun directSecretsForOpening(tag: Int): List<DirectSeal.RoomSecret> = synchronized(lock) {
+        val now = RoomRatchet.hourOf(time.wallMillis())
+        val erasable = erasableHour()
+        preferences.all.keys
+            .mapNotNull(::parseSlot)
+            .distinct()
+            .sortedWith(compareBy<RoomGeneration> { it.roomId }.thenBy { it.generation })
+            .mapNotNull { generation ->
+                val held = advanced(generation.roomId, generation.generation, erasable) ?: return@mapNotNull null
+                val hour = RoomRatchet.hourNear(tag, RoomRatchet.currentHour(held.hour, now))
+                if (!RoomRatchet.opens(held.hour, now, hour)) {
+                    held.key.fill(0)
+                    return@mapNotNull null
+                }
+                val key = try {
+                    RoomRatchet.forward(held.key, generation.roomId, generation.generation, held.hour, hour)
+                } finally {
+                    held.key.fill(0)
+                } ?: return@mapNotNull null
+                DirectSeal.RoomSecret(generation.roomId, generation.generation, hour, key)
+            }
+    }
+
+    fun directTagInWindow(tag: Int): Boolean {
+        val now = RoomRatchet.hourOf(time.wallMillis())
+        val hour = RoomRatchet.hourNear(tag, now)
+        return hour in (now - 1)..(now + 1)
+    }
+
+    fun firstDirectSight(sender: Int, opening: DirectSeal.Opening): Boolean {
+        val room = opening.room ?: return true
+        val hour = opening.hour ?: return true
+        val nonce = opening.nonce ?: return true
+        return seen.firstSight(room.roomId, room.generation, sender, hour, nonce, erasableHour())
     }
 
     fun remember(roomId: Int, key: HourKey, generation: Int = FIRST) {

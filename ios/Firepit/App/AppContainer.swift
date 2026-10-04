@@ -141,7 +141,9 @@ final class AppContainer {
             peerKeyDao: peerKeyDao,
             memberDao: roomMemberDao,
             phoneKeys: phoneKeys,
-            roomActivity: roomActivityDao
+            roomActivity: roomActivityDao,
+            handovers: pendingHandoverDao,
+            receiptDao: receiptDao
         )
         admin = NodeAdminClient(link: radio, repository: mesh)
         alerts = AlertClient(link: radio, mesh: mesh)

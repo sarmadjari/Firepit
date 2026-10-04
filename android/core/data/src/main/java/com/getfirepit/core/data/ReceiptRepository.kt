@@ -132,8 +132,14 @@ class ReceiptRepository @Inject constructor(
      * anybody could put themselves on a message's "read by" list.
      */
     suspend fun handle(from: Int, receipt: ReceiptProto, at: Long = System.currentTimeMillis()) {
-        receipt.delivered.filter { mayReport(it, from) }.forEach { receiptDao.recordReceived(it, from, at) }
-        receipt.read.filter { mayReport(it, from) }.forEach { receiptDao.recordRead(it, from, at) }
+        receipt.delivered.filter { mayReport(it, from) }.forEach {
+            receiptDao.recordReceived(it, from, at)
+            mesh.confirmDirectAttempt(it, from)
+        }
+        receipt.read.filter { mayReport(it, from) }.forEach {
+            receiptDao.recordRead(it, from, at)
+            mesh.confirmDirectAttempt(it, from)
+        }
     }
 
     private suspend fun mayReport(messageId: Int, from: Int): Boolean {
@@ -243,11 +249,17 @@ class ReceiptRepository @Inject constructor(
             }
 
             is ReceiptCarriage.SealedDirect -> {
-                val sealed = phoneKeys.sealDirect(
-                    requireNotNull(peerPhoneKey),
-                    control.encode(),
-                    DirectSeal.contextOf(myNodeNum, carriage.nodeNum),
-                )
+                val directRoom = mesh.directRoomSecretFor(carriage.nodeNum)
+                val sealed = try {
+                    phoneKeys.sealDirect(
+                        requireNotNull(peerPhoneKey),
+                        control.encode(),
+                        DirectSeal.contextOf(myNodeNum, carriage.nodeNum),
+                        directRoom,
+                    )
+                } finally {
+                    directRoom?.key?.fill(0)
+                }
                 MeshPacketBuilder.meshPacket(
                     to = carriage.nodeNum,
                     channel = conversation.channel,
@@ -260,7 +272,16 @@ class ReceiptRepository @Inject constructor(
                     pkiEncrypted = true,
                     publicKey = requireNotNull(publicKey),
                     priority = MeshPacket.Priority.BACKGROUND,
-                )
+                ).also { packet ->
+                    mesh.recordDirectAttempt(
+                        packetId = packet.id,
+                        peer = carriage.nodeNum,
+                        room = directRoom,
+                        channel = conversation.channel,
+                        text = null,
+                        replyId = null,
+                    )
+                }
             }
 
             ReceiptCarriage.None -> {

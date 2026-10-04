@@ -2,6 +2,7 @@ package com.getfirepit.core.data
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import com.getfirepit.core.crypto.DirectSeal
 import com.getfirepit.core.crypto.HourKey
 import com.getfirepit.core.crypto.RoomCipher
 import com.getfirepit.core.crypto.RoomRatchet
@@ -224,6 +225,37 @@ class RoomKeyStoreTest {
         first.key.fill(0)
 
         assertArrayEquals(key.key, store.currentKey(room)?.key)
+    }
+
+    @Test
+    fun directSecretsForOpeningResolveOnlyTheRoomMessageWindow() {
+        store.generate(room)
+        val tag = RoomRatchet.tagOf(hour)
+
+        assertEquals(hour, store.directSecretsForOpening(tag).single().hour)
+        assertTrue(store.directTagInWindow(tag))
+
+        now += RoomRatchet.HOUR_MILLIS
+        assertEquals(hour, store.directSecretsForOpening(tag).single().hour)
+        assertTrue(store.directTagInWindow(tag))
+
+        now += RoomRatchet.HOUR_MILLIS
+        assertTrue(store.directSecretsForOpening(tag).isEmpty())
+        assertFalse(store.directTagInWindow(tag))
+    }
+
+    @Test
+    fun firstDirectSightRefusesASecondCopy() {
+        val key = store.generate(room)
+        val opening = DirectSeal.Opening(
+            plain = "direct".encodeToByteArray(),
+            room = DirectSeal.RoomSecret(room, 1, key.hour, key.key),
+            hour = key.hour,
+            nonce = ByteArray(12) { it.toByte() },
+        )
+
+        assertTrue(store.firstDirectSight(sender, opening))
+        assertFalse(store.firstDirectSight(sender, opening))
     }
 
     private fun storeAtNow() = RoomKeyStore(context).also {

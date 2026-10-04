@@ -167,11 +167,13 @@ public final class ReceiptRepository: Sendable {
         for messageId in receipt.delivered.map({ Int32(bitPattern: $0) }) {
             if await mayReport(messageId: messageId, from: from) {
                 try? await receiptDao.recordReceived(messageId: messageId, nodeNum: from, at: at)
+                mesh.confirmDirectAttempt(messageId: messageId, by: from)
             }
         }
         for messageId in receipt.read.map({ Int32(bitPattern: $0) }) {
             if await mayReport(messageId: messageId, from: from) {
                 try? await receiptDao.recordRead(messageId: messageId, nodeNum: from, at: at)
+                mesh.confirmDirectAttempt(messageId: messageId, by: from)
             }
         }
     }
@@ -325,10 +327,12 @@ public final class ReceiptRepository: Sendable {
                 priority: .background
             )
         case .sealedDirect(let nodeNum):
+            let directRoom = await mesh.directRoomSecretFor(nodeNum: nodeNum)
             let sealed = try phoneKeys.sealDirect(
                 peerPublic: peerPhoneKey!,
                 plaintext: try control.serializedData(),
-                context: DirectSeal.contextOf(senderNodeNum: myNodeNum, recipientNodeNum: nodeNum)
+                context: DirectSeal.contextOf(senderNodeNum: myNodeNum, recipientNodeNum: nodeNum),
+                room: directRoom
             )
             var direct = Meshchat_SealedDirect()
             direct.ciphertext = sealed
@@ -344,6 +348,14 @@ public final class ReceiptRepository: Sendable {
                 priority: .background,
                 pkiEncrypted: true,
                 publicKey: publicKey!
+            )
+            mesh.recordDirectAttempt(
+                packetId: Int32(bitPattern: packet.id),
+                peer: nodeNum,
+                room: directRoom,
+                channel: conversation.channel,
+                text: nil,
+                replyId: nil
             )
         case .none:
             log.info("no private way to send a receipt")

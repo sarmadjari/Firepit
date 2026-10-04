@@ -207,7 +207,9 @@ final class SimulatedPhone: @unchecked Sendable {
             peerKeyDao: peerKeyDao,
             memberDao: memberDao,
             phoneKeys: phoneKeys,
-            roomActivity: roomActivity
+            roomActivity: roomActivity,
+            handovers: handovers,
+            receiptDao: receiptDao
         )
         admin = NodeAdminClient(link: radio, repository: meshRepository)
         range = RangeRepository(
@@ -285,6 +287,7 @@ private final class SimulatedKeyTime: KeyTime, @unchecked Sendable {
 }
 
 struct AirPacket: Sendable, Equatable {
+    var id: UInt32
     var from: Int32
     var to: Int32
     var channel: Int
@@ -383,6 +386,7 @@ final class SimulatedMesh: @unchecked Sendable {
         lock.withLock { state in
             state.air.append(
                 AirPacket(
+                    id: packet.id,
                     from: sender.nodeNum,
                     to: Int32(bitPattern: packet.to),
                     channel: Int(original.channel),

@@ -111,39 +111,104 @@ public enum KeyEnvelope {
 /// private key to any phone that connects to it, so whoever holds either radio could read everything it carried. This
 /// seals the words again under a key only the two phones can derive, from the same P-256 keys a room key is sealed to.
 ///
-/// Static-static ECDH, HKDF-SHA256 and AES-256-GCM. Both phones derive the same secret; the direction and both node
-/// numbers are mixed into the key and bound as associated data, so a message cannot be turned round or re-addressed.
-/// Opening one proves it came from whoever holds the sender's phone key, which a radio in between cannot forge.
+/// Static-static ECDH, HMAC-SHA256 and AES-256-GCM. Both phones derive the same secret; when they share a room, that
+/// room's hourly key is mixed in too. The direction and both node numbers are mixed into the key and bound as
+/// associated data, so a message cannot be turned round or re-addressed. Opening one proves it came from whoever holds
+/// the sender's phone key, which a radio in between cannot forge.
 public enum DirectSeal {
-    private static let version: UInt8 = 0x01
+    private static let firstVersion: UInt8 = 0x01
+    private static let version: UInt8 = 0x02
     private static let header = 1
-    private static let info = Data("firepit-direct-v1".utf8)
+    private static let firstInfo = Data("firepit-direct-v1".utf8)
+    private static let info = Data("firepit-direct-v2".utf8)
+    private static let roomInfo = Data("firepit-direct-room-v1".utf8)
+    private static let randomSize = RoomCipher.nonceSize - RoomRatchet.hourTagSize
 
     /// What sealing costs against the message budget.
     public static let overhead = header + RoomCipher.overhead
+
+    public struct RoomSecret: Sendable, Equatable {
+        public let roomId: Int32
+        public let generation: Int
+        public let hour: Int
+        public let key: Data
+
+        public init(roomId: Int32, generation: Int, hour: Int, key: Data) {
+            self.roomId = roomId
+            self.generation = generation
+            self.hour = hour
+            self.key = key
+        }
+    }
+
+    public struct Opening: Sendable, Equatable {
+        public let plain: Data
+        public let room: RoomSecret?
+        public let hour: Int?
+        public let nonce: Data?
+    }
 
     /// Seals `plaintext` for the holder of `peerPublic`. `ownPublic` is this phone's own public key; both halves go
     /// into
     /// the derivation in a fixed order, so the two phones agree on it.
     public static func seal(
         ownPrivate: any PhoneKeyAgreementKey, ownPublic: Data, peerPublic: Data,
-        plaintext: Data, context: Data
+        plaintext: Data, context: Data, room: RoomSecret? = nil
     ) throws -> Data {
-        guard let key = keyFor(ownPrivate: ownPrivate, ownPublic: ownPublic, peerPublic: peerPublic, context: context)
+        guard
+            let key = keyFor(
+                ownPrivate: ownPrivate, ownPublic: ownPublic, peerPublic: peerPublic, context: context, room: room)
         else { throw FirepitCryptoError.unusablePublicKey }
-        return Data([version]) + RoomCipher.seal(key: key, plaintext: plaintext, context: context)
+        if let room {
+            let tag = RoomRatchet.tagOf(room.hour)
+            let nonce =
+                Data([UInt8(truncatingIfNeeded: tag >> 8), UInt8(truncatingIfNeeded: tag)])
+                + randomBytes(randomSize)
+            return Data([version]) + RoomCipher.seal(key: key, plaintext: plaintext, context: context, nonce: nonce)
+        }
+        return Data([firstVersion]) + RoomCipher.seal(key: key, plaintext: plaintext, context: context)
     }
 
     /// Nil when this was not sealed between these two phones, the context differs, a byte was changed, or the version
     /// is one this build does not know.
     public static func open(
         ownPrivate: any PhoneKeyAgreementKey, ownPublic: Data, peerPublic: Data, sealed: Data,
-        context: Data
-    ) -> Data? {
-        guard sealed.count > header + RoomCipher.overhead, sealed[sealed.startIndex] == version,
-            let key = keyFor(ownPrivate: ownPrivate, ownPublic: ownPublic, peerPublic: peerPublic, context: context)
-        else { return nil }
-        return RoomCipher.open(key: key, sealed: Data(sealed.dropFirst(header)), context: context)
+        context: Data, rooms: [RoomSecret] = []
+    ) -> Opening? {
+        guard sealed.count > header + RoomCipher.overhead else { return nil }
+        if sealed[sealed.startIndex] == firstVersion {
+            guard
+                let key = keyFor(
+                    ownPrivate: ownPrivate, ownPublic: ownPublic, peerPublic: peerPublic, context: context, room: nil),
+                let plain = RoomCipher.open(key: key, sealed: Data(sealed.dropFirst(header)), context: context)
+            else { return nil }
+            return Opening(plain: plain, room: nil, hour: nil, nonce: nil)
+        }
+        guard sealed[sealed.startIndex] == version, let nonce = nonceOf(sealed) else { return nil }
+        for room in rooms {
+            guard
+                let key = keyFor(
+                    ownPrivate: ownPrivate, ownPublic: ownPublic, peerPublic: peerPublic, context: context, room: room),
+                let plain = RoomCipher.open(key: key, sealed: Data(sealed.dropFirst(header)), context: context)
+            else { continue }
+            return Opening(plain: plain, room: room, hour: room.hour, nonce: nonce)
+        }
+        return nil
+    }
+
+    public static func hourTagOf(_ payload: Data) -> Int? {
+        guard payload.count >= header + RoomCipher.overhead, payload[payload.startIndex] == version else {
+            return nil
+        }
+        let high = Int(payload[payload.startIndex + header])
+        let low = Int(payload[payload.startIndex + header + 1])
+        return (high << 8) | low
+    }
+
+    public static func nonceOf(_ payload: Data) -> Data? {
+        guard hourTagOf(payload) != nil else { return nil }
+        let start = payload.startIndex + header
+        return Data(payload[start..<(start + RoomCipher.nonceSize)])
     }
 
     /// Binds a message to who sent it and who it is for, in that order, so the reply direction uses a different key and
@@ -154,15 +219,23 @@ public enum DirectSeal {
 
     private static func keyFor(
         ownPrivate: any PhoneKeyAgreementKey, ownPublic: Data, peerPublic: Data,
-        context: Data
+        context: Data, room: RoomSecret?
     ) -> Data? {
         // Validated before use: agreeing on a point that is not on the curve is how a static private key is leaked a
         // few bits at a time.
         guard let peer = KeyEnvelope.decode(peerPublic),
             let shared = try? ownPrivate.sharedSecretFromKeyAgreement(with: peer)
         else { return nil }
-        let prk = RoomCrypto.hmac(key: ordered(ownPublic, peerPublic), message: rawBytes(shared))
-        return RoomCrypto.hmac(key: prk, message: info + context + Data([1]))
+        let material = room.map { rawBytes(shared) + roomPart($0) } ?? rawBytes(shared)
+        let prk = RoomCrypto.hmac(key: ordered(ownPublic, peerPublic), message: material)
+        return RoomCrypto.hmac(key: prk, message: (room == nil ? firstInfo : info) + context + Data([1]))
+    }
+
+    public static func roomPart(_ room: RoomSecret) -> Data {
+        RoomCrypto.hmac(
+            key: room.key,
+            message: roomInfo + bigEndian(room.roomId) + bigEndian(Int32(truncatingIfNeeded: room.generation))
+                + bigEndian(Int32(truncatingIfNeeded: room.hour)) + Data([1]))
     }
 
     /// Both public keys in one order both phones agree on, whichever of them is asking: unsigned bytewise, and the
@@ -176,6 +249,6 @@ public enum DirectSeal {
 }
 
 /// The shared point's x coordinate, exactly the bytes Java's `KeyAgreement.generateSecret()` returns.
-private func rawBytes(_ secret: SharedSecret) -> Data {
+func rawBytes(_ secret: SharedSecret) -> Data {
     secret.withUnsafeBytes { Data($0) }
 }

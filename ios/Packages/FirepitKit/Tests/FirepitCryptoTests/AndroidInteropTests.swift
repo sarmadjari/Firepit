@@ -91,11 +91,21 @@ struct AndroidInteropTests {
         #expect(
             DirectSeal.open(
                 ownPrivate: bob, ownPublic: bobPublic, peerPublic: alicePublic, sealed: sealed,
-                context: context) == words)
+                context: context)?.plain == words)
         #expect(
             DirectSeal.open(
                 ownPrivate: alice, ownPublic: alicePublic, peerPublic: bobPublic, sealed: sealed,
-                context: context) == words)
+                context: context)?.plain == words)
+        let room = DirectSeal.RoomSecret(
+            roomId: Int32(try value("directRoomId")) ?? 0,
+            generation: Int(try value("directRoomGeneration")) ?? 0,
+            hour: Int(try value("directRoomHour")) ?? 0,
+            key: try bytes("directRoomHourly")
+        )
+        #expect(
+            DirectSeal.open(
+                ownPrivate: bob, ownPublic: bobPublic, peerPublic: alicePublic, sealed: try bytes("directV2"),
+                context: context, rooms: [room])?.plain == words)
     }
 
     @Test func inviteKeysAndQRTokensAreIdentical() throws {

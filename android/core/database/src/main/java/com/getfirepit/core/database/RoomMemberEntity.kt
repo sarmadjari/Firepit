@@ -11,6 +11,7 @@ data class RoomMemberEntity(
     val invitedBy: Int?,
     val firstSeen: Long,
     val lastHeard: Long?,
+    val lastOpenedGeneration: Int?,
 )
 
 internal fun RoomMemberEntity.toDomain() = RoomMember(

@@ -129,19 +129,30 @@ public final class PhoneKeyStore: Sendable {
     }
 
     /// Seals plaintext from this phone to the phone holding peerPublic. See DirectSeal.
-    public func sealDirect(peerPublic: Data, plaintext: Data, context: Data) throws -> Data {
+    public func sealDirect(
+        peerPublic: Data,
+        plaintext: Data,
+        context: Data,
+        room: DirectSeal.RoomSecret? = nil
+    ) throws -> Data {
         let pair = try pair()
         return try DirectSeal.seal(
             ownPrivate: pair.private,
             ownPublic: pair.public,
             peerPublic: peerPublic,
             plaintext: plaintext,
-            context: context
+            context: context,
+            room: room
         )
     }
 
     /// Nil when this was not sealed between that phone and this one, or was tampered with.
     public func openDirect(peerPublic: Data, sealed: Data, context: Data) -> Data? {
+        openDirect(peerPublic: peerPublic, sealed: sealed, context: context, rooms: [])?.plain
+    }
+
+    /// Nil when this was not sealed between that phone and this one, or was tampered with.
+    public func openDirect(peerPublic: Data, sealed: Data, context: Data, rooms: [DirectSeal.RoomSecret]) -> DirectSeal.Opening? {
         guard let pair = try? pair() else {
             phoneKeyLog.error("could not restore this phone's key")
             return nil
@@ -151,7 +162,8 @@ public final class PhoneKeyStore: Sendable {
             ownPublic: pair.public,
             peerPublic: peerPublic,
             sealed: sealed,
-            context: context
+            context: context,
+            rooms: rooms
         )
     }
 

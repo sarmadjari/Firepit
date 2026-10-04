@@ -110,6 +110,9 @@ public struct MessageDao: Sendable {
         try await execute(
             "UPDATE messages SET channel = ? WHERE channel = ? AND roomId = 0 AND toNodeNum = ?", [to, from, broadcast])
     }
+    public func delete(id: Int32) async throws {
+        try await execute("DELETE FROM messages WHERE id = ?", [id])
+    }
     public func upsert(message: MessageEntity) async throws { try await writer.write { db in try message.save(db) } }
     public func insertIfNew(message: MessageEntity) async throws -> Int64 {
         try await writer.write { db in
@@ -475,6 +478,37 @@ public struct RoomMemberDao: Sendable {
             try Int32.fetchAll(db, sql: "SELECT nodeNum FROM room_members WHERE roomId = ?", arguments: [roomId])
         }
     }
+    public func openedGeneration(roomId: Int32, nodeNum: Int32, generation: Int) async throws -> Bool {
+        try await writer.read { db in
+            try Bool.fetchOne(
+                db,
+                sql: """
+                     SELECT EXISTS(
+                       SELECT 1 FROM room_members
+                       WHERE roomId = ? AND nodeNum = ? AND lastOpenedGeneration = ?
+                     )
+                     """,
+                arguments: [roomId, nodeNum, generation]
+            ) ?? false
+        }
+    }
+    public func recordOpenedGeneration(roomId: Int32, nodeNum: Int32, generation: Int) async throws {
+        try await writer.write { db in
+            try db.execute(
+                sql: "UPDATE room_members SET lastOpenedGeneration = ? WHERE roomId = ? AND nodeNum = ?",
+                arguments: [generation, roomId, nodeNum])
+        }
+    }
+    public func clearOpenedGeneration(roomId: Int32, nodeNum: Int32, generation: Int) async throws {
+        try await writer.write { db in
+            try db.execute(
+                sql: """
+                     UPDATE room_members SET lastOpenedGeneration = NULL
+                     WHERE roomId = ? AND nodeNum = ? AND lastOpenedGeneration = ?
+                     """,
+                arguments: [roomId, nodeNum, generation])
+        }
+    }
     public func observeAllNodeNums() -> AsyncStream<[Int32]> {
         stream(writer) { db in try Int32.fetchAll(db, sql: "SELECT DISTINCT nodeNum FROM room_members") }
     }
@@ -497,14 +531,16 @@ public struct RoomMemberDao: Sendable {
         try await upsert(
             member: RoomMemberEntity(
                 roomId: roomId, nodeNum: nodeNum, invitedBy: invitedBy ?? existing?.invitedBy,
-                firstSeen: existing?.firstSeen ?? now, lastHeard: max(now, existing?.lastHeard ?? now)))
+                firstSeen: existing?.firstSeen ?? now, lastHeard: max(now, existing?.lastHeard ?? now),
+                lastOpenedGeneration: existing?.lastOpenedGeneration))
     }
     public func recordReported(roomId: Int32, nodeNum: Int32, now: Int64, invitedBy: Int32?) async throws {
         let existing = try await findEntity(roomId: roomId, nodeNum: nodeNum)
         try await upsert(
             member: RoomMemberEntity(
                 roomId: roomId, nodeNum: nodeNum, invitedBy: invitedBy ?? existing?.invitedBy,
-                firstSeen: existing?.firstSeen ?? now, lastHeard: existing?.lastHeard))
+                firstSeen: existing?.firstSeen ?? now, lastHeard: existing?.lastHeard,
+                lastOpenedGeneration: existing?.lastOpenedGeneration))
     }
 }
 
@@ -515,6 +551,13 @@ public struct ReceiptDao: Sendable {
         stream(writer) { db in
             try ReceiptEntity.fetchAll(
                 db, sql: "SELECT * FROM receipts WHERE messageId = ? ORDER BY at ASC", arguments: [messageId])
+        }
+    }
+    public func hasFrom(messageId: Int32, nodeNum: Int32) async throws -> Bool {
+        try await writer.read { db in
+            try Bool.fetchOne(
+                db, sql: "SELECT EXISTS(SELECT 1 FROM receipts WHERE messageId = ? AND nodeNum = ?)",
+                arguments: [messageId, nodeNum]) ?? false
         }
     }
     public func observeForAll(messageIds: [Int32]) -> AsyncStream<[ReceiptEntity]> {

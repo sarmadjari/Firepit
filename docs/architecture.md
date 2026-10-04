@@ -80,6 +80,11 @@ other, which automatic time gives them ([security.md §3](security.md#3-key-hier
 nothing permanent: keys are erased on the time that has really passed, measured by a clock nobody can set
 ([security.md §8](security.md#8-time)).
 
+Direct messages between two Firepit users also use the hourly room keys when the phones share a room. The phone-to-phone
+secret is mixed with that room's current hourly key, while the message stays the same size because the hour tag uses the
+nonce bytes already present. Other room members still cannot read it: they have the room key, but not either phone's
+private key. If the phones share no room, the app keeps the older phone-to-phone seal and labels the privacy accordingly.
+
 ---
 
 ## 4. What travels on the air
@@ -92,7 +97,7 @@ choose to share it.
 | What | How it is sent | Who can read it |
 |---|---|---|
 | A message in a Firepit room | Sealed with the sender's key for this hour, from the room's firepit key (AES-256-GCM) | Room members' phones |
-| A direct message to someone you share a room with | Sealed phone to phone, inside the radios' own encryption | That person's phone |
+| A direct message to someone you share a room with | Sealed phone to phone and mixed with a shared room's hourly key, inside the radios' own encryption | That person's phone |
 | A direct message to someone outside your rooms | The radios' own encryption only (the composer warns you) | That person, and whoever holds either radio |
 | A message in a Meshtastic channel | Ordinary Meshtastic text | Anyone with the channel key, by design |
 | Your position while sharing | Sealed to the room you share with | That room's members |

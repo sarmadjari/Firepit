@@ -30,7 +30,7 @@ here is about what travels on the air and what sits on the phone.
 | Another Meshtastic user | Holds the published primary key | Sees a node broadcast NodeInfo. Cannot read any conversation, and nothing they send on the primary is kept as a message or a pin. |
 | Someone who photographs an invite | Camera on the QR | Gets no key, but does learn the room id. Can ask to join for about 30 seconds, which a person must approve after comparing a fingerprint of the joiner's radio and phone keys. Cannot use the room id to join the roster or change the room's keys. |
 | A relay carrying our packets | Between two nodes | Forwards ciphertext. Cannot read or alter anything Firepit sends undetected. |
-| Someone holding a member's radio | Physical access, USB, or a Bluetooth pairing | Reads the channel layer: the room PSK, the radio's own name and battery, and its node list. **Cannot** read sealed room text, positions or pins, or direct messages between Firepit users: the room key only ever travels sealed to a phone key (§3), and direct messages are sealed phone to phone, neither of which the radio holds. Unsealed text, pins or positions they send into a room are dropped. |
+| Someone holding a member's radio | Physical access, USB, or a Bluetooth pairing | Reads the channel layer: the room PSK, the radio's own name and battery, and its node list. **Cannot** read sealed room text, positions or pins, or direct messages between Firepit users: the room key only ever travels sealed to a phone key (§3), and direct messages are sealed phone to phone, mixed with an hourly room key when the phones share one, neither of which the radio holds. Unsealed text, pins or positions they send into a room are dropped. |
 | Someone nearby with Bluetooth | In range while the owner's phone is not connected | Can pair only with the radio's PIN. Firepit checks on every connection whether the radio has no PIN or the published default one, and offers to set a new one (§7). |
 | Someone who later takes a member's phone, its key store or a backup | Holds recordings of the air from before | Reads what the phone still shows, since history is stored opened (§4). **Cannot** decrypt recorded room traffic from before the hour preceding the theft: room keys move on every hour, one way, and the old hours' keys are destroyed (§3). |
 | Someone who records a room and plays it back | Any radio holding the room's channel key | Nothing. Each sealed message opens once, and only in the hours its key is still kept (§2). |
@@ -107,7 +107,7 @@ must open what the other sealed.
 | Sealing room content | AES-256-GCM | 32-byte key of one sender for one hour, 12-byte nonce (2 bytes of the hour, 10 random), 16-byte tag |
 | Moving a room key on, once an hour | HKDF-SHA256 expand (HMAC-SHA256) | next hour's key from this hour's; each sender's key from the hour's key and their node number |
 | Handing a room key to one phone | ECDH P-256 (one-off key) + HKDF-SHA256 + AES-256-GCM | 33-byte compressed keys, bound to room id + generation + recipient + hour |
-| Direct messages between phones | ECDH P-256 (both phones' keys) + HKDF-SHA256 + AES-256-GCM | bound to sender + recipient, in that order |
+| Direct messages between phones | ECDH P-256 (both phones' keys) + HMAC-SHA256 + AES-256-GCM, mixed with a shared room's hourly key when there is one | bound to sender + recipient, in that order; v2 nonce carries the room hour tag |
 | Direct messages, radio layer | X25519 + AES-CCM | Meshtastic firmware PKI, 32-byte public keys; the outer layer only |
 | Invite tokens | HMAC-SHA256 | truncated to 8 bytes |
 | Key derivation | HMAC-SHA256 | context string + room id + generation |
@@ -161,7 +161,13 @@ the slot of the room it names, or privately to us (`TrustRules.sealedPlacementOk
 so someone in two rooms cannot have one room's words shown in the other. A
 direct message is bound the same way to its sender and recipient
 (`DirectSeal.contextOf`), so it cannot be turned round or re-addressed, and only
-the sender's phone key can produce one that opens.
+the sender's phone key can produce one that opens. Version 2 direct seals also
+put the room hour tag in the nonce and mix the phone ECDH output with
+`HMAC(E(h), "firepit-direct-room-v1" ‖ room ‖ generation ‖ hour ‖ 1)` for a
+room both phones share. A sender chooses such a room only after it has opened a
+seal from that person under the room's current generation; roster membership is
+not enough. The receiver tries the room generations it still holds for that
+hour; a second copy is refused by `SeenSeals`.
 
 > Verify: `RoomCipherTest`, `SealedTextTest`, `RoomRatchetTest`, `SeenSealsTest`, `SealedRoomTextTest`,
 > `SealedReceiptTest`, `KeyEnvelopeTest`, `DirectSealTest`, `TrustRulesTest`, and on a device
@@ -192,7 +198,9 @@ firepit key (32 bytes, random, one per generation)
 
 phone key (P-256, one per phone)     →  private half never leaves the phone
   ├─ receives a room's firepit key in a grant or a rotation
-  └─ agrees a key with another phone for direct messages and their receipts
+  └─ agrees a key with another phone for direct messages and their receipts;
+     when the phones share a room, the agreed secret is mixed with that room's
+     hourly key before sealing
 ```
 
 The split is the point. The **room PSK** is what the firmware encrypts the
@@ -343,7 +351,7 @@ inside a sender:
 | Conversation | Carriage | Readable by |
 |---|---|---|
 | Firepit room | `SealedRoom` — AES-GCM inside the channel cipher, on `PRIVATE_APP` | Room members holding the firepit key |
-| One person who shares a room with us | `SealedDirect` — sealed to their phone key, inside firmware PKI to their radio | That person's phone |
+| One person who shares a room with us | `SealedDirect` — sealed to their phone key and a shared room's current hourly key, inside firmware PKI to their radio | That person's phone |
 | One person whose phone key we never learned | `ToOneNode` — firmware PKI to their radio key only, labelled as such in the composer | That person, and whoever holds either radio |
 | Meshtastic channel | `OpenChannel` — ordinary `TEXT_MESSAGE_APP` | Anyone with the channel key, by design |
 | Anything else | `Refused` | Not sent |
@@ -392,8 +400,15 @@ Everything that arrives is attacker-controlled, so what is kept is decided in
   room's slot, where anything real arrives sealed.
 - **Sealed direct messages** are only opened when they came privately to us,
   from somebody whose phone key we hold; opening proves their phone sealed it.
-  One that will not open is answered with a `SealedDirectRefused`, and the
-  sender marks it as not opened rather than leaving it reading as delivered.
+  A replayed copy, or one outside the hour window, is dropped without an answer.
+  A seal that fails inside the window is answered with a `SealedDirectRefused`;
+  if it was v2 and came from the intended peer, the sender clears the
+  room/member evidence and replaces the original row with a resend under the
+  next eligible v2 room. It never automatically downgrades that message to v1.
+  If no other v2 room qualifies, it is marked "They could not open it." Refusal
+  attempts expire after ten minutes, the app keeps at most 64, and a refusal
+  for a message already confirmed by a sealed receipt is ignored. A real refusal
+  also shares the sender's person card again.
 - **Pins** are only taken sealed under a room's current key, on its slot. A pin
   can only be locked to whoever sealed it, a locked pin changes only at its
   owner's hand, and a pin never moves to another room.

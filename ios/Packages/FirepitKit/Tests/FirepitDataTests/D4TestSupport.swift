@@ -91,7 +91,9 @@ struct D4SyncHarness: Sendable {
             peerKeyDao: peerKeyDao,
             memberDao: memberDao,
             phoneKeys: phoneKeys,
-            roomActivity: roomActivity
+            roomActivity: roomActivity,
+            handovers: PendingHandoverDao(db),
+            receiptDao: ReceiptDao(db)
         )
         admin = NodeAdminClient(link: link, repository: mesh)
         sharing = SharingStore(defaults: defaults)

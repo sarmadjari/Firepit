@@ -63,6 +63,16 @@ struct IOSVectorWriter {
             ownPrivate: alice, ownPublic: alicePublic, peerPublic: bobPublic,
             plaintext: words, context: directContext
         ).hex
+        let directRoom = DirectSeal.RoomSecret(
+            roomId: 0x0BAD_F00D, generation: generation, hour: sealHour, key: hourKey)
+        fields["directRoomId"] = String(directRoom.roomId)
+        fields["directRoomGeneration"] = String(directRoom.generation)
+        fields["directRoomHour"] = String(directRoom.hour)
+        fields["directRoomHourly"] = directRoom.key.hex
+        fields["directV2"] = try DirectSeal.seal(
+            ownPrivate: alice, ownPublic: alicePublic, peerPublic: bobPublic,
+            plaintext: words, context: directContext, room: directRoom
+        ).hex
 
         let psk = Data((0..<32).map { UInt8(truncatingIfNeeded: 200 &- $0) })
         let inviteKey = RoomCrypto.inviteKey(roomPsk: psk, roomId: 0x0BAD_F00D, generation: 3)

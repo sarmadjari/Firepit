@@ -83,7 +83,9 @@ struct Harness: Sendable {
             peerKeyDao: peerKeyDao,
             memberDao: memberDao,
             phoneKeys: phoneKeys,
-            roomActivity: roomActivity
+            roomActivity: roomActivity,
+            handovers: PendingHandoverDao(db),
+            receiptDao: ReceiptDao(db)
         )
     }
 }

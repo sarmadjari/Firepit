@@ -44,6 +44,9 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE id = :id")
     suspend fun findEntity(id: Int): MessageEntity?
 
+    @Query("DELETE FROM messages WHERE id = :id")
+    suspend fun delete(id: Int)
+
     /** Enforces the retention setting on this phone's copy. */
     @Query(
         "SELECT channel, MAX(sentAt) AS lastAt FROM messages " +
@@ -433,6 +436,15 @@ interface RoomMemberDao {
     @Query("SELECT nodeNum FROM room_members WHERE roomId = :roomId")
     suspend fun nodeNumsIn(roomId: Int): List<Int>
 
+    @Query("SELECT EXISTS(SELECT 1 FROM room_members WHERE roomId = :roomId AND nodeNum = :nodeNum AND lastOpenedGeneration = :generation)")
+    suspend fun openedGeneration(roomId: Int, nodeNum: Int, generation: Int): Boolean
+
+    @Query("UPDATE room_members SET lastOpenedGeneration = :generation WHERE roomId = :roomId AND nodeNum = :nodeNum")
+    suspend fun recordOpenedGeneration(roomId: Int, nodeNum: Int, generation: Int)
+
+    @Query("UPDATE room_members SET lastOpenedGeneration = NULL WHERE roomId = :roomId AND nodeNum = :nodeNum AND lastOpenedGeneration = :generation")
+    suspend fun clearOpenedGeneration(roomId: Int, nodeNum: Int, generation: Int)
+
     /** Everyone in any room this phone is in. Leaving a room deletes its rows, so this stays honest. */
     @Query("SELECT DISTINCT nodeNum FROM room_members")
     fun observeAllNodeNums(): Flow<List<Int>>
@@ -461,6 +473,7 @@ suspend fun RoomMemberDao.record(roomId: Int, nodeNum: Int, now: Long, invitedBy
             invitedBy = invitedBy ?: existing?.invitedBy,
             firstSeen = existing?.firstSeen ?: now,
             lastHeard = maxOf(now, existing?.lastHeard ?: now),
+            lastOpenedGeneration = existing?.lastOpenedGeneration,
         ),
     )
 }
@@ -479,6 +492,7 @@ suspend fun RoomMemberDao.recordReported(roomId: Int, nodeNum: Int, now: Long, i
             invitedBy = invitedBy ?: existing?.invitedBy,
             firstSeen = existing?.firstSeen ?: now,
             lastHeard = existing?.lastHeard,
+            lastOpenedGeneration = existing?.lastOpenedGeneration,
         ),
     )
 }
@@ -488,6 +502,9 @@ interface ReceiptDao {
 
     @Query("SELECT * FROM receipts WHERE messageId = :messageId ORDER BY at ASC")
     fun observeFor(messageId: Int): Flow<List<ReceiptEntity>>
+
+    @Query("SELECT EXISTS(SELECT 1 FROM receipts WHERE messageId = :messageId AND nodeNum = :nodeNum)")
+    suspend fun hasFrom(messageId: Int, nodeNum: Int): Boolean
 
     @Query("SELECT * FROM receipts WHERE messageId IN (:messageIds)")
     fun observeForAll(messageIds: List<Int>): Flow<List<ReceiptEntity>>

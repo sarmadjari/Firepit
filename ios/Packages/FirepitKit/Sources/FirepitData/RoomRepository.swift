@@ -55,6 +55,14 @@ public enum RoomError: Error, Sendable, Equatable, LocalizedError {
     }
 }
 
+private enum DirectOpening {
+    case read(DirectSeal.Opening)
+    case noPeerKey
+    case replayed
+    case outOfHours
+    case unreadable
+}
+
 /// Creating, inviting to, joining and leaving rooms.
 ///
 /// A room is a Meshtastic secondary channel: its 32-byte key *is* the access
@@ -1515,6 +1523,7 @@ public final class RoomRepository: Sendable {
         }
         if generation == roomKeys.generationOf(roomId: roomId) {
             try? await memberDao.record(roomId: roomId, nodeNum: from, now: clock())
+            try? await memberDao.recordOpenedGeneration(roomId: roomId, nodeNum: from, generation: generation)
         }
         await settleHandover(roomId: roomId, member: from, generation: generation)
         await handleControl(
@@ -1531,17 +1540,25 @@ public final class RoomRepository: Sendable {
             return
         }
         let peerKey = await mesh.phoneKeyOf(nodeNum: from)
-        let plain = peerKey.flatMap {
-            phoneKeys.openDirect(
-                peerPublic: $0, sealed: direct.ciphertext,
-                context: DirectSeal.contextOf(senderNodeNum: from, recipientNodeNum: myNodeNum))
-        }
-        guard let plain,
-            let inner = try? Meshchat_MeshChatControl(serializedBytes: plain)
-        else {
+        let opened = await openDirect(sender: from, myNodeNum: myNodeNum, peerKey: peerKey, sealed: direct.ciphertext)
+        let plain: Data
+        switch opened {
+        case .read(let opening):
+            plain = opening.plain
+        case .noPeerKey:
+            await refuseDirect(packet: packet)
+            return
+        case .replayed:
+            log.warning("sealed direct was opened before; ignored")
+            return
+        case .outOfHours:
+            log.warning("sealed direct was outside the open hour window; ignored")
+            return
+        case .unreadable:
             await refuseDirect(packet: packet)
             return
         }
+        guard let inner = try? Meshchat_MeshChatControl(serializedBytes: plain) else { return }
         switch inner.payload {
         case .roomText(let words):
             await mesh.saveSealedDirectText(
@@ -1555,6 +1572,31 @@ public final class RoomRepository: Sendable {
         default:
             break
         }
+    }
+
+    private func openDirect(sender: Int32, myNodeNum: Int32, peerKey: Data?, sealed: Data) async -> DirectOpening {
+        guard let peerKey else { return .noPeerKey }
+        let tag = DirectSeal.hourTagOf(sealed)
+        if let tag, !roomKeys.directTagInWindow(tag: tag) {
+            return .outOfHours
+        }
+        let rooms = tag.map { roomKeys.directSecretsForOpening(tag: $0) } ?? []
+        guard
+            let opening = phoneKeys.openDirect(
+                peerPublic: peerKey,
+                sealed: sealed,
+                context: DirectSeal.contextOf(senderNodeNum: sender, recipientNodeNum: myNodeNum),
+                rooms: rooms)
+        else {
+            return .unreadable
+        }
+        guard roomKeys.firstDirectSight(sender: sender, opening: opening) else {
+            return .replayed
+        }
+        if let room = opening.room {
+            try? await memberDao.recordOpenedGeneration(roomId: room.roomId, nodeNum: sender, generation: room.generation)
+        }
+        return .read(opening)
     }
 
     /// Tells the sender their sealed message did not open here, so they are not
@@ -1612,7 +1654,7 @@ public final class RoomRepository: Sendable {
         if !(packet.pkiEncrypted && Int32(bitPattern: packet.to) == myNodeNum) {
             return
         }
-        if !(await mesh.markNotOpened(messageId: Int32(bitPattern: refused.requestID), by: from)) {
+        if !(await mesh.handleDirectRefusal(messageId: Int32(bitPattern: refused.requestID), by: from)) {
             return
         }
         var shared: [RoomChannel] = []

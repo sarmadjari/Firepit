@@ -96,6 +96,21 @@ private func storedTexts(_ phone: SimulatedPhone, channel: Int) async throws -> 
     try await firstValue(phone.messageDao.observeChannel(channel: channel))
 }
 
+private func arrivesDirect(_ text: String, at phone: SimulatedPhone, from sender: SimulatedPhone) async -> Bool {
+    await waitUntil {
+        let messages = try? await firstValue(phone.messageDao.observeDirect(peer: sender.radio.nodeNum))
+        return messages?.contains { $0.text == text } == true
+    }
+}
+
+private func directKeysLearned(_ a: SimulatedPhone, _ b: SimulatedPhone) async -> Bool {
+    await waitUntil {
+        let aKnowsB = await a.meshRepository.phoneKeyOf(nodeNum: b.radio.nodeNum) != nil
+        let bKnowsA = await b.meshRepository.phoneKeyOf(nodeNum: a.radio.nodeNum) != nil
+        return aKnowsB && bKnowsA
+    }
+}
+
 @Suite("RoomRepository end-to-end simulated mesh", .serialized)
 struct RoomEndToEndTests {
     @Test func createdRoomAppearsOnTheRadioAndInRooms() async throws {
@@ -180,12 +195,242 @@ struct RoomEndToEndTests {
                 let messages = try? await firstValue(phones[1].messageDao.observeDirect(peer: phones[0].radio.nodeNum))
                 return messages?.contains { $0.text == "dm one" } == true
             })
+        let recording = try #require(directAir(from: phones[0].radio.nodeNum, to: phones[1].radio.nodeNum, in: mesh, after: 0))
+        let direct = try Meshchat_MeshChatControl(serializedBytes: recording.payload).sealedDirect
+        #expect(DirectSeal.hourTagOf(direct.ciphertext) != nil)
+        let beforeReplay = try await firstValue(phones[1].messageDao.observeDirect(peer: phones[0].radio.nodeNum)).count
+        let sentStatus = try await phones[0].messageDao.find(id: Int32(bitPattern: recording.id))?.status
+        let beforeRefusals = mesh.airPackets.count
+        playBack(recording, asPacket: recording.id, on: mesh, to: phones[1])
+        try await phones[0].meshRepository.sendText(channel: room.index, text: "barrier", to: phones[1].radio.nodeNum)
+        #expect(
+            await waitUntil {
+                let messages = try? await firstValue(phones[1].messageDao.observeDirect(peer: phones[0].radio.nodeNum))
+                return messages?.contains { $0.text == "barrier" } == true
+            })
+        let afterReplay = try await firstValue(phones[1].messageDao.observeDirect(peer: phones[0].radio.nodeNum)).count
+        #expect(afterReplay == beforeReplay + 1)
+        #expect(try await phones[0].messageDao.find(id: Int32(bitPattern: recording.id))?.status == sentStatus)
+        #expect(!directRefusal(from: phones[1].radio.nodeNum, to: phones[0].radio.nodeNum, requestId: recording.id, in: mesh, after: beforeRefusals))
         #expect(
             await waitUntil {
                 let messages = try? await firstValue(phones[0].messageDao.observeDirect(peer: phones[1].radio.nodeNum))
                 return messages?.contains { $0.text == "dm two" } == true
             })
         #expect(mesh.airPackets.contains { $0.pkiEncrypted && $0.portNum == .privateApp })
+    }
+
+    @Test func directMessagesSkipRoomsWithPendingHandovers() async throws {
+        let (mesh, phones) = try await makeMesh(3)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await join(phones[1], invite: invite, approver: phones[0])
+        try await join(
+            phones[2], invite: try await phones[0].roomRepository.buildInvite(roomId: room.id), approver: phones[0])
+        await phones[0].roomRepository.sharePersonCard(name: "A", tag: "AA", colourSlot: nil)
+        await phones[1].roomRepository.sharePersonCard(name: "B", tag: "BB", colourSlot: nil)
+        #expect(await directKeysLearned(phones[0], phones[1]))
+        let member = phones[1].radio.nodeNum
+
+        mesh.silence(member)
+        _ = try await phones[0].roomRepository.rotateRoom(roomId: room.id, remove: [phones[2].radio.nodeNum])
+        #expect(await waitUntil { phones[1].roomKeys.generationOf(roomId: room.id) == 2 })
+        #expect(!(try await phones[0].handovers.forNode(nodeNum: member)).isEmpty)
+
+        let beforeFirst = mesh.airPackets.count
+        try await phones[0].meshRepository.sendText(channel: room.index, text: "pending dm", to: member)
+        #expect(
+            await waitUntil {
+                let messages = try? await firstValue(phones[1].messageDao.observeDirect(peer: phones[0].radio.nodeNum))
+                return messages?.contains { $0.text == "pending dm" } == true
+            })
+        let firstDirect = try #require(directSeal(from: phones[0].radio.nodeNum, to: member, in: mesh, after: beforeFirst))
+        #expect(DirectSeal.hourTagOf(firstDirect.ciphertext) == nil)
+
+        mesh.silence(member, false)
+        try await phones[1].meshRepository.sendText(channel: room.index, text: "got the key")
+        #expect(await waitUntil { (try? await phones[0].handovers.forNode(nodeNum: member).isEmpty) == true })
+
+        let beforeSecond = mesh.airPackets.count
+        try await phones[0].meshRepository.sendText(channel: room.index, text: "current dm", to: member)
+        #expect(
+            await waitUntil {
+                let messages = try? await firstValue(phones[1].messageDao.observeDirect(peer: phones[0].radio.nodeNum))
+                return messages?.contains { $0.text == "current dm" } == true
+            })
+        let secondDirect = try #require(directSeal(from: phones[0].radio.nodeNum, to: member, in: mesh, after: beforeSecond))
+        #expect(DirectSeal.hourTagOf(secondDirect.ciphertext) != nil)
+    }
+
+    @Test func directMessageFallsBackWhenPeerLeftTheLowestSharedRoom() async throws {
+        let (mesh, phones) = try await makeMesh(2)
+        let (first, firstInvite) = try await createAndInvite(phones[0])
+        try await join(phones[1], invite: firstInvite, approver: phones[0])
+        let second = try await phones[0].roomRepository.createRoom(name: "Backup")
+        try await join(
+            phones[1], invite: try await phones[0].roomRepository.buildInvite(roomId: second.id), approver: phones[0])
+        await phones[0].roomRepository.sharePersonCard(name: "A", tag: "AA", colourSlot: nil)
+        await phones[1].roomRepository.sharePersonCard(name: "B", tag: "BB", colourSlot: nil)
+        #expect(await directKeysLearned(phones[0], phones[1]))
+        let low = first.id < second.id ? first : second
+        let high = first.id < second.id ? second : first
+        try await phones[1].roomRepository.leaveRoom(roomId: low.id, slot: low.index)
+        let channel = high.index
+        let before = mesh.airPackets.count
+
+        try await phones[0].meshRepository.sendText(channel: channel, text: "still arrives", to: phones[1].radio.nodeNum)
+        let originalSent = try #require(
+            try await firstValue(phones[0].messageDao.observeDirect(peer: phones[1].radio.nodeNum))
+                .first { $0.isOutgoing && $0.text == "still arrives" }
+        ).sentAt
+
+        #expect(
+            await waitUntil(5_000) {
+                let messages = try? await firstValue(phones[1].messageDao.observeDirect(peer: phones[0].radio.nodeNum))
+                return messages?.contains { $0.text == "still arrives" } == true
+            })
+        let directPackets = mesh.airPackets.dropFirst(before).filter {
+            $0.from == phones[0].radio.nodeNum && $0.to == phones[1].radio.nodeNum && $0.pkiEncrypted
+                && $0.portNum == .privateApp
+        }
+        #expect(directPackets.count >= 2)
+        let outgoing = try await firstValue(phones[0].messageDao.observeDirect(peer: phones[1].radio.nodeNum))
+            .filter { $0.isOutgoing && $0.text == "still arrives" }
+        #expect(outgoing.count == 1)
+        #expect(outgoing.first?.sentAt == originalSent)
+    }
+
+    @Test func directRefusalFromAThirdNodeChangesNothing() async throws {
+        let (mesh, phones) = try await makeMesh(3)
+        let (room, invite) = try await createAndInvite(phones[0])
+        for joiner in phones[1...] {
+            try await join(joiner, invite: joiner === phones[1] ? invite : try await phones[0].roomRepository.buildInvite(roomId: room.id), approver: phones[0])
+        }
+        await phones[0].roomRepository.sharePersonCard(name: "A", tag: "AA", colourSlot: nil)
+        await phones[1].roomRepository.sharePersonCard(name: "B", tag: "BB", colourSlot: nil)
+        #expect(await directKeysLearned(phones[0], phones[1]))
+        try await seedPublicKeys(phones)
+        let before = mesh.airPackets.count
+        try await phones[0].meshRepository.sendText(channel: room.index, text: "for b", to: phones[1].radio.nodeNum)
+        #expect(await arrivesDirect("for b", at: phones[1], from: phones[0]))
+        let sent = try #require(directAir(from: phones[0].radio.nodeNum, to: phones[1].radio.nodeNum, in: mesh, after: before))
+        let status = try await phones[0].messageDao.find(id: Int32(bitPattern: sent.id))?.status
+        let beforeFake = mesh.airPackets.count
+
+        injectRefusal(from: phones[2], to: phones[0], requestId: sent.id, on: mesh)
+        try await phones[0].meshRepository.sendText(channel: room.index, text: "barrier fake", to: phones[1].radio.nodeNum)
+        #expect(await arrivesDirect("barrier fake", at: phones[1], from: phones[0]))
+
+        #expect(try await phones[0].messageDao.find(id: Int32(bitPattern: sent.id))?.status == status)
+        #expect(!mesh.airPackets.dropFirst(beforeFake).contains {
+            $0.from == phones[0].radio.nodeNum && $0.to == phones[2].radio.nodeNum && $0.portNum == .textMessageApp
+        })
+    }
+
+    @Test func v2RefusalWithNoOtherRoomDoesNotDowngradeAutomatically() async throws {
+        let (mesh, phones) = try await makeMesh(2)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await join(phones[1], invite: invite, approver: phones[0])
+        await phones[0].roomRepository.sharePersonCard(name: "A", tag: "AA", colourSlot: nil)
+        await phones[1].roomRepository.sharePersonCard(name: "B", tag: "BB", colourSlot: nil)
+        #expect(await directKeysLearned(phones[0], phones[1]))
+        let before = mesh.airPackets.count
+        try await phones[0].meshRepository.sendText(channel: room.index, text: "no downgrade", to: phones[1].radio.nodeNum)
+        #expect(await arrivesDirect("no downgrade", at: phones[1], from: phones[0]))
+        let sent = try #require(directAir(from: phones[0].radio.nodeNum, to: phones[1].radio.nodeNum, in: mesh, after: before))
+        let beforeRefusal = mesh.airPackets.count
+
+        injectRefusal(from: phones[1], to: phones[0], requestId: sent.id, on: mesh)
+        #expect(await waitUntil(5_000) {
+            (try? await phones[0].messageDao.find(id: Int32(bitPattern: sent.id))?.status) == .failed
+        })
+
+        #expect(directSeal(from: phones[0].radio.nodeNum, to: phones[1].radio.nodeNum, in: mesh, after: beforeRefusal) == nil)
+        #expect(try await phones[0].messageDao.find(id: Int32(bitPattern: sent.id))?.failureReason == "They could not open it.")
+    }
+
+    @Test func directMessageFallsBackWhenAThirdMemberRotatedPastThePeer() async throws {
+        let (mesh, phones) = try await makeMesh(4)
+        let (room, invite) = try await createAndInvite(phones[0])
+        for joiner in phones[1...] {
+            try await join(joiner, invite: joiner === phones[1] ? invite : try await phones[0].roomRepository.buildInvite(roomId: room.id), approver: phones[0])
+        }
+        for (index, phone) in phones.enumerated() {
+            await phone.roomRepository.sharePersonCard(name: "P\(index)", tag: "P\(index)", colourSlot: nil)
+        }
+        let peer = phones[1]
+        let sender = phones[2]
+        try await seedPublicKeys(phones)
+        #expect(await directKeysLearned(sender, peer))
+        mesh.loseAtApp(peer.radio.nodeNum)
+        _ = try await phones[0].roomRepository.rotateRoom(roomId: room.id, remove: [phones[3].radio.nodeNum])
+        #expect(await waitUntil { sender.roomKeys.generationOf(roomId: room.id) == 2 })
+        #expect(peer.roomKeys.generationOf(roomId: room.id) == 1)
+        mesh.loseAtApp(peer.radio.nodeNum, false)
+        let before = mesh.airPackets.count
+
+        try await sender.meshRepository.sendText(channel: room.index, text: "still on old", to: peer.radio.nodeNum)
+
+        #expect(
+            await waitUntil {
+                let messages = try? await firstValue(peer.messageDao.observeDirect(peer: sender.radio.nodeNum))
+                return messages?.contains { $0.text == "still on old" } == true
+            })
+        let direct = try #require(directSeal(from: sender.radio.nodeNum, to: peer.radio.nodeNum, in: mesh, after: before))
+        #expect(DirectSeal.hourTagOf(direct.ciphertext) == nil)
+    }
+
+    @Test func directRecordingStaysClosedOnceItsHourHasGone() async throws {
+        let (mesh, phones) = try await makeMesh(2)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await join(phones[1], invite: invite, approver: phones[0])
+        await phones[0].roomRepository.sharePersonCard(name: "A", tag: "AA", colourSlot: nil)
+        await phones[1].roomRepository.sharePersonCard(name: "B", tag: "BB", colourSlot: nil)
+        let before = mesh.airPackets.count
+        try await phones[0].meshRepository.sendText(channel: room.index, text: "record me", to: phones[1].radio.nodeNum)
+        #expect(await arrivesDirect("record me", at: phones[1], from: phones[0]))
+        let recording = try #require(directAir(from: phones[0].radio.nodeNum, to: phones[1].radio.nodeNum, in: mesh, after: before))
+        mesh.advanceClock(byMillis: 3 * 60 * 60 * 1000)
+        phones[0].roomKeys.erase()
+        phones[1].roomKeys.erase()
+        let beforeReplay = try await firstValue(phones[1].messageDao.observeDirect(peer: phones[0].radio.nodeNum)).count
+        let beforeRefusals = mesh.airPackets.count
+
+        playBack(recording, asPacket: 777_110, on: mesh, to: phones[1])
+        try await phones[0].meshRepository.sendText(channel: room.index, text: "after old direct", to: phones[1].radio.nodeNum)
+        #expect(await arrivesDirect("after old direct", at: phones[1], from: phones[0]))
+
+        let afterReplay = try await firstValue(phones[1].messageDao.observeDirect(peer: phones[0].radio.nodeNum)).count
+        #expect(afterReplay == beforeReplay + 1)
+        #expect(!directRefusal(from: phones[1].radio.nodeNum, to: phones[0].radio.nodeNum, requestId: 777_110, in: mesh, after: beforeRefusals))
+    }
+
+    @Test func directSealTwoHoursOutsideTheWindowIsDroppedWithoutRefusal() async throws {
+        let (mesh, phones) = try await makeMesh(2)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await join(phones[1], invite: invite, approver: phones[0])
+        await phones[0].roomRepository.sharePersonCard(name: "A", tag: "AA", colourSlot: nil)
+        await phones[1].roomRepository.sharePersonCard(name: "B", tag: "BB", colourSlot: nil)
+        let before = mesh.airPackets.count
+        try await phones[0].meshRepository.sendText(channel: room.index, text: "window base", to: phones[1].radio.nodeNum)
+        #expect(await arrivesDirect("window base", at: phones[1], from: phones[0]))
+        var recording = try #require(directAir(from: phones[0].radio.nodeNum, to: phones[1].radio.nodeNum, in: mesh, after: before))
+        var control = try Meshchat_MeshChatControl(serializedBytes: recording.payload)
+        var direct = control.sealedDirect
+        let oldTag = RoomRatchet.tagOf(RoomRatchet.hourOf(unixMillis: phones[1].roomKeys.time.wallMillis()) - 2)
+        direct.ciphertext[1] = UInt8(truncatingIfNeeded: oldTag >> 8)
+        direct.ciphertext[2] = UInt8(truncatingIfNeeded: oldTag)
+        control.sealedDirect = direct
+        recording.payload = try control.serializedData()
+        let beforeReplay = try await firstValue(phones[1].messageDao.observeDirect(peer: phones[0].radio.nodeNum)).count
+        let beforeRefusals = mesh.airPackets.count
+
+        playBack(recording, asPacket: 777_120, on: mesh, to: phones[1])
+        try await phones[0].meshRepository.sendText(channel: room.index, text: "after bad window", to: phones[1].radio.nodeNum)
+        #expect(await arrivesDirect("after bad window", at: phones[1], from: phones[0]))
+
+        let afterReplay = try await firstValue(phones[1].messageDao.observeDirect(peer: phones[0].radio.nodeNum)).count
+        #expect(afterReplay == beforeReplay + 1)
+        #expect(!directRefusal(from: phones[1].radio.nodeNum, to: phones[0].radio.nodeNum, requestId: 777_120, in: mesh, after: beforeRefusals))
     }
 
     @Test func aDirectMessageThatCannotBeOpenedIsRefusedAndMarkedNotOpened() async throws {
@@ -215,7 +460,7 @@ struct RoomEndToEndTests {
                 .first { $0.isOutgoing }
         )
         // B's own refusal, sent by its RoomRepository, is what marks the message: nothing here fakes it.
-        #expect(await waitUntil { (try? await phones[0].messageDao.find(id: sent.id)?.status) == .failed })
+        #expect(await waitUntil(5_000) { (try? await phones[0].messageDao.find(id: sent.id)?.status) == .failed })
         #expect(
             mesh.airPackets.contains { air in
                 air.from == phones[1].radio.nodeNum && air.to == a && air.pkiEncrypted && air.portNum == .privateApp
@@ -572,7 +817,7 @@ struct RoomEndToEndTests {
         var outer = Meshchat_MeshChatControl()
         outer.sealedMessage = old
         let recording = AirPacket(
-            from: phones[1].radio.nodeNum, to: broadcastNodeNum, channel: room.index, portNum: .privateApp,
+            id: 777_019, from: phones[1].radio.nodeNum, to: broadcastNodeNum, channel: room.index, portNum: .privateApp,
             payload: try outer.serializedData(), pkiEncrypted: false)
 
         playBack(recording, asPacket: 777_020, on: mesh, to: phones[0])
@@ -600,8 +845,8 @@ struct RoomEndToEndTests {
         let stranger: Int32 = 0x0777_0777
         playBack(
             AirPacket(
-                from: stranger, to: broadcastNodeNum, channel: room.index, portNum: .privateApp, payload: payload,
-                pkiEncrypted: false),
+                id: 777_030, from: stranger, to: broadcastNodeNum, channel: room.index, portNum: .privateApp,
+                payload: payload, pkiEncrypted: false),
             asPacket: 777_030, on: mesh, to: phones[0])
         var direct = MeshPacket()
         direct.from = UInt32(bitPattern: stranger)
@@ -657,8 +902,55 @@ private func sealedText(_ text: String, by phone: SimulatedPhone, roomId: Int32,
     outer.sealedMessage = try #require(
         phone.roomKeys.seal(roomId: roomId, sender: phone.radio.nodeNum, plaintext: try inner.serializedData()))
     return AirPacket(
-        from: phone.radio.nodeNum, to: broadcastNodeNum, channel: slot, portNum: .privateApp,
+        id: 0, from: phone.radio.nodeNum, to: broadcastNodeNum, channel: slot, portNum: .privateApp,
         payload: try outer.serializedData(), pkiEncrypted: false)
+}
+
+private func directAir(from: Int32, to: Int32, in mesh: SimulatedMesh, after index: Int) -> AirPacket? {
+    mesh.airPackets.dropFirst(index).first { air in
+        guard air.from == from, air.to == to, air.pkiEncrypted, air.portNum == .privateApp,
+            let control = try? Meshchat_MeshChatControl(serializedBytes: air.payload),
+            case .sealedDirect = control.payload
+        else {
+            return false
+        }
+        return true
+    }
+}
+
+private func directSeal(from: Int32, to: Int32, in mesh: SimulatedMesh, after index: Int) -> Meshchat_SealedDirect? {
+    directAir(from: from, to: to, in: mesh, after: index)
+        .flatMap { try? Meshchat_MeshChatControl(serializedBytes: $0.payload).sealedDirect }
+}
+
+private func directRefusal(from: Int32, to: Int32, requestId: UInt32, in mesh: SimulatedMesh, after index: Int) -> Bool {
+    mesh.airPackets.dropFirst(index).contains { air in
+        guard air.from == from, air.to == to, air.pkiEncrypted, air.portNum == .privateApp,
+            let control = try? Meshchat_MeshChatControl(serializedBytes: air.payload),
+            case .sealedDirectRefused(let refused) = control.payload
+        else {
+            return false
+        }
+        return refused.requestID == requestId
+    }
+}
+
+private func injectRefusal(from sender: SimulatedPhone, to receiver: SimulatedPhone, requestId: UInt32, on mesh: SimulatedMesh) {
+    var refused = Meshchat_SealedDirectRefused()
+    refused.requestID = requestId
+    var control = Meshchat_MeshChatControl()
+    control.sealedDirectRefused = refused
+    var data = DataMessage()
+    data.portnum = .privateApp
+    data.payload = try! control.serializedData()
+    var packet = MeshPacket()
+    packet.from = UInt32(bitPattern: sender.radio.nodeNum)
+    packet.to = UInt32(bitPattern: receiver.radio.nodeNum)
+    packet.channel = 0
+    packet.id = 880_000 &+ requestId
+    packet.pkiEncrypted = true
+    packet.decoded = data
+    mesh.inject(packet: packet, to: receiver.radio.nodeNum)
 }
 
 /// A recording of `air` played back as a new packet, the way somebody holding the room's channel key could.
@@ -671,6 +963,7 @@ private func playBack(_ air: AirPacket, asPacket id: UInt32, on mesh: SimulatedM
     packet.to = UInt32(bitPattern: air.to)
     packet.channel = UInt32(air.channel)
     packet.id = id
+    packet.pkiEncrypted = air.pkiEncrypted
     packet.decoded = data
     mesh.inject(packet: packet, to: phone.radio.nodeNum)
 }

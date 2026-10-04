@@ -137,6 +137,14 @@ sealed class RoomError(message: String) : Exception(message) {
  * A room is a Meshtastic secondary channel: its 32-byte key *is* the access
  * control, so there is nothing else to grant or revoke.
  */
+private sealed interface DirectOpening {
+    class Read(val opening: DirectSeal.Opening) : DirectOpening
+    data object NoPeerKey : DirectOpening
+    data object Replayed : DirectOpening
+    data object OutOfHours : DirectOpening
+    data object Unreadable : DirectOpening
+}
+
 @Singleton
 class RoomRepository @Inject constructor(
     private val link: RadioLink,
@@ -1529,6 +1537,7 @@ class RoomRepository @Inject constructor(
         // reads history but vouches for nobody.
         if (generation == roomKeys.generationOf(sealed.room_id)) {
             memberDao.record(sealed.room_id, packet.from, System.currentTimeMillis())
+            memberDao.recordOpenedGeneration(sealed.room_id, packet.from, generation)
         }
         settleHandover(sealed.room_id, packet.from, generation)
         handleControl(
@@ -1554,13 +1563,28 @@ class RoomRepository @Inject constructor(
             return
         }
         val peerKey = mesh.phoneKeyOf(packet.from)
-        val plain = peerKey?.let {
-            phoneKeys.openDirect(it, direct.ciphertext.toByteArray(), DirectSeal.contextOf(packet.from, myNodeNum))
-        }
-        if (plain == null) {
-            Log.w(TAG, "sealed direct message from ${packet.from} would not open (key known: ${peerKey != null})")
-            refuseDirect(packet)
-            return
+        val sealed = direct.ciphertext.toByteArray()
+        val opened = openDirect(packet.from, myNodeNum, peerKey, sealed)
+        val plain = when (opened) {
+            is DirectOpening.Read -> opened.opening.plain
+            DirectOpening.NoPeerKey -> {
+                Log.w(TAG, "sealed direct message from ${packet.from} arrived before their phone key was known")
+                refuseDirect(packet)
+                return
+            }
+            DirectOpening.Replayed -> {
+                Log.w(TAG, "sealed direct message from ${packet.from} was opened before; ignored")
+                return
+            }
+            DirectOpening.OutOfHours -> {
+                Log.w(TAG, "sealed direct message from ${packet.from} was outside the open hour window; ignored")
+                return
+            }
+            DirectOpening.Unreadable -> {
+                Log.w(TAG, "sealed direct message from ${packet.from} would not open (key known: ${peerKey != null})")
+                refuseDirect(packet)
+                return
+            }
         }
         val inner = runCatching { MeshChatControl.ADAPTER.decode(plain) }.getOrNull() ?: return
         inner.room_text?.let { words ->
@@ -1568,6 +1592,21 @@ class RoomRepository @Inject constructor(
             receipts.received(packet.channel, packet.id, peer = packet.from)
         }
         inner.receipt?.let { receipt -> receipts.handle(packet.from, receipt) }
+    }
+
+    private suspend fun openDirect(sender: Int, myNodeNum: Int, peerKey: ByteArray?, sealed: ByteArray): DirectOpening {
+        if (peerKey == null) return DirectOpening.NoPeerKey
+        val tag = DirectSeal.hourTagOf(sealed)
+        if (tag != null && !roomKeys.directTagInWindow(tag)) return DirectOpening.OutOfHours
+        val rooms = tag?.let(roomKeys::directSecretsForOpening).orEmpty()
+        val opening = try {
+            phoneKeys.openDirect(peerKey, sealed, DirectSeal.contextOf(sender, myNodeNum), rooms)
+        } finally {
+            rooms.forEach { it.key.fill(0) }
+        } ?: return DirectOpening.Unreadable
+        if (!roomKeys.firstDirectSight(sender, opening)) return DirectOpening.Replayed
+        opening.room?.let { memberDao.recordOpenedGeneration(it.roomId, sender, it.generation) }
+        return DirectOpening.Read(opening)
     }
 
     /**
@@ -1610,7 +1649,7 @@ class RoomRepository @Inject constructor(
      */
     private suspend fun handleDirectRefused(packet: MeshPacket, refused: SealedDirectRefused, myNodeNum: Int) {
         if (!(packet.pki_encrypted && packet.to == myNodeNum)) return
-        if (!mesh.markNotOpened(refused.request_id, by = packet.from)) return
+        if (!mesh.handleDirectRefusal(refused.request_id, by = packet.from)) return
         val shared = ChannelSlotManager.rooms(mesh.channels.value)
             .filter { roomKeys.canSeal(it.id) && memberDao.findEntity(it.id, packet.from) != null }
         if (shared.isNotEmpty()) shareCard(latestCard ?: NO_NAME, shared)

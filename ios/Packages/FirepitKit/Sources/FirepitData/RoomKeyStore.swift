@@ -169,6 +169,74 @@ public final class RoomKeyStore: Sendable {
         return HourKey(hour: hour, key: key)
     }
 
+    public func directSecretForSealing(roomId: Int32) -> DirectSeal.RoomSecret? {
+        gate.lock()
+        defer { gate.unlock() }
+        guard !isSuperseded(roomId: roomId) else {
+            return nil
+        }
+        let generation = generationOf(roomId: roomId)
+        let now = RoomRatchet.hourOf(unixMillis: time.wallMillis())
+        guard let held = advanced(roomId, generation, now: erasableHour()) else {
+            return nil
+        }
+        let hour = RoomRatchet.currentHour(heldHour: held.hour, nowHour: now)
+        guard
+            let key = RoomRatchet.forward(
+                key: held.key, roomId: roomId, generation: generation, from: held.hour, to: hour)
+        else {
+            return nil
+        }
+        return DirectSeal.RoomSecret(roomId: roomId, generation: generation, hour: hour, key: key)
+    }
+
+    public func directSecretsForOpening(tag: Int) -> [DirectSeal.RoomSecret] {
+        gate.lock()
+        defer { gate.unlock() }
+        let now = RoomRatchet.hourOf(unixMillis: time.wallMillis())
+        let erasable = erasableHour()
+        let slots: [RoomGeneration]
+        do {
+            slots = try store.accounts().compactMap(Self.parseSlot)
+        } catch {
+            roomKeyLog.error("could not list room keys for direct opening")
+            return []
+        }
+        return Array(Set(slots))
+            .sorted { $0.roomId == $1.roomId ? $0.generation < $1.generation : $0.roomId < $1.roomId }
+            .compactMap { generation in
+                guard let held = advanced(generation.roomId, generation.generation, now: erasable) else {
+                    return nil
+                }
+                let hour = RoomRatchet.hourNear(
+                    tag: tag, near: RoomRatchet.currentHour(heldHour: held.hour, nowHour: now))
+                guard RoomRatchet.opens(heldHour: held.hour, nowHour: now, hour: hour),
+                    let key = RoomRatchet.forward(
+                        key: held.key, roomId: generation.roomId, generation: generation.generation,
+                        from: held.hour, to: hour)
+                else {
+                    return nil
+                }
+                return DirectSeal.RoomSecret(
+                    roomId: generation.roomId, generation: generation.generation, hour: hour, key: key)
+            }
+    }
+
+    public func directTagInWindow(tag: Int) -> Bool {
+        let now = RoomRatchet.hourOf(unixMillis: time.wallMillis())
+        let hour = RoomRatchet.hourNear(tag: tag, near: now)
+        return (now - 1)...(now + 1) ~= hour
+    }
+
+    public func firstDirectSight(sender: Int32, opening: DirectSeal.Opening) -> Bool {
+        guard let room = opening.room, let hour = opening.hour, let nonce = opening.nonce else {
+            return true
+        }
+        return seen.firstSight(
+            roomId: room.roomId, generation: room.generation, sender: sender, hour: hour, nonce: nonce,
+            nowHour: erasableHour())
+    }
+
     public func remember(roomId: Int32, key: HourKey, generation: Int = first) throws {
         guard key.key.count == RoomCipher.keySize else {
             throw RoomKeyStoreError.wrongKeySize(key.key.count)

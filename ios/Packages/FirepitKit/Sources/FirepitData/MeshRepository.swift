@@ -64,6 +64,24 @@ public struct RoutingEvent: Sendable, Equatable {
     }
 }
 
+struct DirectAttempt: Sendable, Equatable {
+    var peer: Int32
+    var roomId: Int32?
+    var generation: Int?
+    var channel: Int
+    var text: String?
+    var replyId: Int32?
+    var emoji: Int?
+    var sentAt: Int64
+    var createdAt: Int64
+}
+
+func directRoomChoices(rooms: [RoomChannel], pendingRoomIds: Set<Int32>) -> [RoomChannel] {
+    rooms
+        .filter { $0.id != 0 && !pendingRoomIds.contains($0.id) }
+        .sorted { $0.id < $1.id }
+}
+
 /// Single source of truth for chat and node state.
 ///
 /// Owns the one-way flow from the radio into storage, and the outbound path from
@@ -78,8 +96,11 @@ public final class MeshRepository: Sendable {
     public let memberDao: RoomMemberDao
     public let phoneKeys: PhoneKeyStore
     public let roomActivity: RoomActivityDao
+    public let handovers: PendingHandoverDao
+    public let receiptDao: ReceiptDao
 
     private let pacer = OutboundPacer(nowMillis: currentEpochMillis)
+    private let directAttempts = Mutex<[Int32: DirectAttempt]>([:])
     private let tasks = Mutex<[Task<Void, Never>]>([])
     private let routing = Broadcast<RoutingEvent>()
     private let log = Logger(subsystem: "com.getfirepit.app", category: "FirepitMesh")
@@ -120,7 +141,9 @@ public final class MeshRepository: Sendable {
         peerKeyDao: PeerKeyDao,
         memberDao: RoomMemberDao,
         phoneKeys: PhoneKeyStore,
-        roomActivity: RoomActivityDao
+        roomActivity: RoomActivityDao,
+        handovers: PendingHandoverDao,
+        receiptDao: ReceiptDao
     ) {
         self.link = link
         self.messageDao = messageDao
@@ -131,6 +154,8 @@ public final class MeshRepository: Sendable {
         self.memberDao = memberDao
         self.phoneKeys = phoneKeys
         self.roomActivity = roomActivity
+        self.handovers = handovers
+        self.receiptDao = receiptDao
         self.myNodeNum = CurrentValue(sessionStore.myNodeNum)
     }
 
@@ -229,6 +254,193 @@ public final class MeshRepository: Sendable {
     /// Whether words to peer can be sealed to their phone, as that changes.
     public func observeDirectSealed(peer: Int32) -> AsyncStream<Bool> {
         peerKeyDao.observeKnown(nodeNum: peer)
+    }
+
+    internal func directRoomSecretFor(nodeNum: Int32) async -> DirectSeal.RoomSecret? {
+        let pending = Set(((try? await handovers.forNode(nodeNum: nodeNum)) ?? []).map(\.roomId))
+        for room in directRoomChoices(
+            rooms: ChannelSlotManager.rooms(channels: channels.value), pendingRoomIds: pending)
+        {
+            let generation = roomKeys.generationOf(roomId: room.id)
+            if roomKeys.canSeal(roomId: room.id),
+                ((try? await memberDao.openedGeneration(roomId: room.id, nodeNum: nodeNum, generation: generation))
+                    == true)
+            {
+                return roomKeys.directSecretForSealing(roomId: room.id)
+            }
+        }
+        return nil
+    }
+
+    internal func recordDirectAttempt(
+        packetId: Int32,
+        peer: Int32,
+        room: DirectSeal.RoomSecret?,
+        channel: Int,
+        text: String?,
+        replyId: Int32?,
+        emoji: Int? = nil,
+        sentAt: Int64 = currentEpochMillis()
+    ) {
+        pruneDirectAttempts(now: currentEpochMillis())
+        directAttempts.withLock { state in
+            state[packetId] = DirectAttempt(
+                peer: peer,
+                roomId: room?.roomId,
+                generation: room?.generation,
+                channel: channel,
+                text: text,
+                replyId: replyId,
+                emoji: emoji,
+                sentAt: sentAt,
+                createdAt: currentEpochMillis()
+            )
+        }
+    }
+
+    internal func confirmDirectAttempt(messageId: Int32, by: Int32) {
+        directAttempts.withLock { state in
+            if state[messageId]?.peer == by {
+                state.removeValue(forKey: messageId)
+            }
+        }
+    }
+
+    internal func handleDirectRefusal(messageId: Int32, by: Int32) async -> Bool {
+        pruneDirectAttempts(now: currentEpochMillis())
+        guard let attempt = directAttempts.withLock({ $0[messageId] }),
+            attempt.peer == by,
+            let message = try? await messageDao.find(id: messageId),
+            message.isOutgoing,
+            message.toNodeNum == by
+        else {
+            log.warning("direct refusal did not match an active send")
+            return false
+        }
+        if ((try? await receiptDao.hasFrom(messageId: messageId, nodeNum: by)) ?? false) {
+            return false
+        }
+        if let roomId = attempt.roomId, let generation = attempt.generation {
+            try? await memberDao.clearOpenedGeneration(roomId: roomId, nodeNum: by, generation: generation)
+            let related = directAttempts.withLock { state in
+                state.filter { _, other in
+                    other.peer == by && other.roomId == roomId && other.generation == generation
+                }
+            }
+            var shouldShareCard = false
+            for (id, other) in related {
+                if ((try? await receiptDao.hasFrom(messageId: id, nodeNum: by)) ?? false) {
+                    continue
+                }
+                if (try? await messageDao.find(id: id)?.toNodeNum) != by {
+                    continue
+                }
+                if !(await resendV2Replacement(oldId: id, attempt: other)) {
+                    _ = await markNotOpened(messageId: id, by: by, reason: "They could not open it.")
+                    _ = directAttempts.withLock { $0.removeValue(forKey: id) }
+                }
+                shouldShareCard = true
+            }
+            return shouldShareCard
+        }
+        _ = directAttempts.withLock { $0.removeValue(forKey: messageId) }
+        return await markNotOpened(messageId: messageId, by: by)
+    }
+
+    private func pruneDirectAttempts(now: Int64) {
+        directAttempts.withLock { state in
+            state = state.filter { now - $0.value.createdAt <= Self.directAttemptTtlMillis }
+            if state.count > Self.maxDirectAttempts {
+                for (id, _) in state.sorted(by: { $0.value.createdAt < $1.value.createdAt }).prefix(state.count - Self.maxDirectAttempts) {
+                    state.removeValue(forKey: id)
+                }
+            }
+        }
+    }
+
+    private func resendV2Replacement(oldId: Int32, attempt: DirectAttempt) async -> Bool {
+        guard let text = attempt.text,
+            let myNodeNum = myNodeNum.value,
+            let peerKey = await publicKeyOf(nodeNum: attempt.peer),
+            let peerPhoneKey = await phoneKeyOf(nodeNum: attempt.peer),
+            let room = await directRoomSecretFor(nodeNum: attempt.peer)
+        else {
+            return false
+        }
+        do {
+            var inner = Meshchat_MeshChatControl()
+            inner.version = UInt32(InviteCodec.version)
+            var roomText = Meshchat_RoomText()
+            roomText.text = text
+            roomText.replyID = UInt32(bitPattern: attempt.replyId ?? 0)
+            inner.roomText = roomText
+            let sealed = try phoneKeys.sealDirect(
+                peerPublic: peerPhoneKey,
+                plaintext: try inner.serializedData(),
+                context: DirectSeal.contextOf(senderNodeNum: myNodeNum, recipientNodeNum: attempt.peer),
+                room: room
+            )
+            var direct = Meshchat_SealedDirect()
+            direct.ciphertext = sealed
+            var outer = Meshchat_MeshChatControl()
+            outer.version = UInt32(InviteCodec.version)
+            outer.sealedDirect = direct
+            let packet = try MeshPacketBuilder.meshPacket(
+                to: attempt.peer,
+                channel: attempt.channel,
+                portNum: .privateApp,
+                payload: try outer.serializedData(),
+                hopLimit: hopLimitForSending(),
+                wantAck: true,
+                pkiEncrypted: true,
+                publicKey: peerKey
+            )
+            try await messageDao.save(
+                message: ChatMessage(
+                    id: Int32(bitPattern: packet.id),
+                    channel: attempt.channel,
+                    fromNodeNum: myNodeNum,
+                    toNodeNum: attempt.peer,
+                    text: text,
+                    sentAt: attempt.sentAt,
+                    status: .queued,
+                    isOutgoing: true,
+                    replyId: attempt.replyId,
+                    emoji: attempt.emoji
+                ),
+                myNodeNum: myNodeNum
+            )
+            try await messageDao.delete(id: oldId)
+            _ = directAttempts.withLock { $0.removeValue(forKey: oldId) }
+            recordDirectAttempt(
+                packetId: Int32(bitPattern: packet.id),
+                peer: attempt.peer,
+                room: room,
+                channel: attempt.channel,
+                text: text,
+                replyId: attempt.replyId,
+                emoji: attempt.emoji,
+                sentAt: attempt.sentAt
+            )
+            // Words, paced and timed as sendText paces and times them.
+            await pacer.awaitSlot(portNum: .textMessageApp)
+            var toRadio = ToRadio()
+            toRadio.packet = packet
+            let id = Int32(bitPattern: packet.id)
+            do {
+                try await link.send(toRadio)
+            } catch {
+                log.warning("could not send v2 replacement direct message")
+                await setStatus(packetId: id, next: .failed, reason: "Send failed")
+                scheduleAckTimeout(packetId: id)
+                return false
+            }
+            scheduleAckTimeout(packetId: id)
+            return true
+        } catch {
+            log.warning("could not send v2 replacement direct message")
+            return false
+        }
     }
 
     /// Our own User, needed to introduce ourselves when joining a room.
@@ -504,6 +716,9 @@ public final class MeshRepository: Sendable {
         } else if payload.count > limit {
             throw SendError.tooLong(bytes: payload.count, limit: limit)
         }
+        let sentAt = currentEpochMillis()
+        let directRoom: DirectSeal.RoomSecret? =
+            if case .sealedDirect = carriage { await directRoomSecretFor(nodeNum: to) } else { nil }
         let packet = try buildTextPacket(
             carriage: carriage,
             to: to,
@@ -513,8 +728,20 @@ public final class MeshRepository: Sendable {
             peerKey: peerKey,
             peerPhoneKey: peerPhoneKey,
             myNodeNum: myNodeNum,
-            replyId: replyId
+            replyId: replyId,
+            directRoom: directRoom
         )
+        if case .sealedDirect(let nodeNum) = carriage {
+            recordDirectAttempt(
+                packetId: Int32(bitPattern: packet.id),
+                peer: nodeNum,
+                room: directRoom,
+                channel: channel,
+                text: text,
+                replyId: replyId,
+                sentAt: sentAt
+            )
+        }
         try await messageDao.save(
             message: ChatMessage(
                 id: Int32(bitPattern: packet.id),
@@ -522,7 +749,7 @@ public final class MeshRepository: Sendable {
                 fromNodeNum: myNodeNum,
                 toNodeNum: to,
                 text: text,
-                sentAt: currentEpochMillis(),
+                sentAt: sentAt,
                 status: .queued,
                 isOutgoing: true,
                 replyId: replyId,
@@ -553,7 +780,8 @@ public final class MeshRepository: Sendable {
         peerKey: Data?,
         peerPhoneKey: Data?,
         myNodeNum: Int32,
-        replyId: Int32?
+        replyId: Int32?,
+        directRoom: DirectSeal.RoomSecret?
     ) throws -> MeshPacket {
         switch carriage {
         case .refused(let reason):
@@ -568,7 +796,8 @@ public final class MeshRepository: Sendable {
             let sealed = try phoneKeys.sealDirect(
                 peerPublic: peerPhoneKey!,
                 plaintext: try inner.serializedData(),
-                context: DirectSeal.contextOf(senderNodeNum: myNodeNum, recipientNodeNum: nodeNum)
+                context: DirectSeal.contextOf(senderNodeNum: myNodeNum, recipientNodeNum: nodeNum),
+                room: directRoom
             )
             var direct = Meshchat_SealedDirect()
             direct.ciphertext = sealed
@@ -901,7 +1130,11 @@ public final class MeshRepository: Sendable {
      * already have marked it delivered, which it was — to a radio, not a
      * reader. False when messageId is not ours to by.
      */
-    internal func markNotOpened(messageId: Int32, by: Int32) async -> Bool {
+    internal func markNotOpened(
+        messageId: Int32,
+        by: Int32,
+        reason: String = "Their phone could not open it: it has not learned your key yet."
+    ) async -> Bool {
         guard let message = try? await messageDao.find(id: messageId),
             message.isOutgoing,
             message.toNodeNum == by
@@ -911,7 +1144,7 @@ public final class MeshRepository: Sendable {
         try? await messageDao.updateStatus(
             id: message.id,
             status: .failed,
-            reason: "Their phone could not open it: it has not learned your key yet."
+            reason: reason
         )
         return true
     }
@@ -1043,4 +1276,6 @@ public final class MeshRepository: Sendable {
     }
 
     private static let publicKeySize = 32
+    private static let directAttemptTtlMillis: Int64 = 10 * 60 * 1000
+    private static let maxDirectAttempts = 64
 }

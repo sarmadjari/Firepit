@@ -24,7 +24,7 @@ private struct Field: Decodable {
 }
 
 private func fixtureSchema() throws -> RoomSchema {
-    let url = Bundle.module.url(forResource: "room-schema-12", withExtension: "json", subdirectory: "Fixtures")!
+    let url = Bundle.module.url(forResource: "room-schema-13", withExtension: "json", subdirectory: "Fixtures")!
     return try JSONDecoder().decode(RoomSchema.self, from: Data(contentsOf: url))
 }
 
@@ -59,4 +59,49 @@ private func fixtureSchema() throws -> RoomSchema {
             )
         }
     }
+}
+
+@Test func v12DatabaseMigratesMemberEvidenceAndKeepsRosterRows() throws {
+    var configuration = Configuration()
+    configuration.prepareDatabase { db in try db.execute(sql: "PRAGMA foreign_keys = ON") }
+    let queue = try DatabaseQueue(configuration: configuration)
+    try queue.write { db in
+        for sql in FirepitDatabase.createStatements { try db.execute(sql: sql) }
+        try db.execute(sql: "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)")
+        try db.execute(
+            sql: "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, ?)",
+            arguments: [FirepitDatabase.v12IdentityHash])
+        try db.execute(
+            sql: """
+                 INSERT INTO room_members (roomId, nodeNum, invitedBy, firstSeen, lastHeard)
+                 VALUES (42, 7, NULL, 100, 200)
+                 """)
+    }
+
+    try FirepitDatabase.migrator.migrate(queue)
+
+    let columns = try queue.read { db in
+        try Row.fetchAll(db, sql: "PRAGMA table_info(room_members)").map { $0["name"] as String }
+    }
+    #expect(columns.contains("lastOpenedGeneration"))
+    let member = try queue.read { db in
+        try RoomMemberEntity.fetchOne(db, sql: "SELECT * FROM room_members WHERE roomId = 42 AND nodeNum = 7")
+    }
+    #expect(member?.lastHeard == 200)
+    try queue.write { db in
+        try RoomMemberEntity(
+            roomId: 42,
+            nodeNum: 7,
+            invitedBy: nil,
+            firstSeen: 100,
+            lastHeard: 300,
+            lastOpenedGeneration: 3
+        ).save(db)
+    }
+    let generation = try queue.read { db in
+        try Int.fetchOne(
+            db,
+            sql: "SELECT lastOpenedGeneration FROM room_members WHERE roomId = 42 AND nodeNum = 7")
+    }
+    #expect(generation == 3)
 }

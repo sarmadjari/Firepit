@@ -13,10 +13,12 @@ import GRDB
 /// after first unlock, has no equivalent here yet. The directory is excluded from iCloud and device backups, matching
 /// Android's `allowBackup=false`.
 ///
-/// iOS starts at Android schema v12. Historical Android migrations are deliberately not ported; the single migration
-/// below creates the exported v12 schema exactly enough for Room-compatible SQL and DAO semantics.
+/// iOS starts at Android schema v12. Historical Android migrations before it are deliberately not ported: the first
+/// migration below creates the exported v12 schema exactly enough for Room-compatible SQL and DAO semantics, and each
+/// later one is Android's own (v13 adds what each member last sealed under).
 public enum FirepitDatabase {
-    public static let identityHash = "ffeccfa0136713b833875de07074781d"
+    public static let identityHash = "affe4bac2480fa9d507233b5d82c4aee"
+    public static let v12IdentityHash = "ffeccfa0136713b833875de07074781d"
     public static let fileName = "firepit.db"
 
     public static func open(at directory: URL) throws -> DatabasePool {
@@ -50,6 +52,12 @@ public enum FirepitDatabase {
             for sql in createStatements { try db.execute(sql: sql) }
             try db.execute(
                 sql: "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)")
+            try db.execute(
+                sql: "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, ?)",
+                arguments: [v12IdentityHash])
+        }
+        migrator.registerMigration("v13_member_evidence") { db in
+            try db.execute(sql: "ALTER TABLE room_members ADD COLUMN lastOpenedGeneration INTEGER")
             try db.execute(
                 sql: "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, ?)",
                 arguments: [identityHash])

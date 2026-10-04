@@ -43,15 +43,30 @@ class PhoneKeyStore @Inject constructor(
     }
 
     /** Seals [plaintext] from this phone to the phone holding [peerPublic]. See [DirectSeal]. */
-    fun sealDirect(peerPublic: ByteArray, plaintext: ByteArray, context: ByteArray): ByteArray {
+    fun sealDirect(
+        peerPublic: ByteArray,
+        plaintext: ByteArray,
+        context: ByteArray,
+        room: DirectSeal.RoomSecret? = null,
+    ): ByteArray {
         val pair = pair()
-        return DirectSeal.seal(pair.private, pair.public, peerPublic, plaintext, context)
+        return DirectSeal.seal(pair.private, pair.public, peerPublic, plaintext, context, room)
     }
 
     /** Null when this was not sealed between that phone and this one, or was tampered with. */
     fun openDirect(peerPublic: ByteArray, sealed: ByteArray, context: ByteArray): ByteArray? {
+        return openDirect(peerPublic, sealed, context, emptyList())?.plain
+    }
+
+    /** Null when this was not sealed between that phone and this one, or was tampered with. */
+    fun openDirect(
+        peerPublic: ByteArray,
+        sealed: ByteArray,
+        context: ByteArray,
+        rooms: Iterable<DirectSeal.RoomSecret>,
+    ): DirectSeal.Opening? {
         val pair = pair()
-        return DirectSeal.open(pair.private, pair.public, peerPublic, sealed, context)
+        return DirectSeal.open(pair.private, pair.public, peerPublic, sealed, context, rooms)
     }
 
     private fun pair(): Pair = loaded ?: synchronized(this) { loaded ?: (restore() ?: create()).also { loaded = it } }

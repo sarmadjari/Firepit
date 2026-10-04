@@ -24,7 +24,7 @@ RTL-ready from Stage 3) · invite-link domain deferred until Stage 8.
 | 8 | v1.0 features | ✅ Built, except emoji reactions |
 | 9 | Release prep: accessibility and RTL pass, R8, store listing | Not started |
 | 10 | The iPhone app | ✅ Built. An iPhone and an Android phone in one room over real radios is still to be tested |
-| 11 | Security within Meshtastic's limits: Signal-grade protections where the radio allows, with no message growing by a byte | In progress: Phase 1 done on both apps, Phase 2 next |
+| 11 | Security within Meshtastic's limits: Signal-grade protections where the radio allows, with no message growing by a byte | In progress: Phases 1 and 2 done on both apps |
 | 12 | Large screens: the conversation and the map side by side on foldables, tablets and wide windows; the phone app in narrow ones | Built on both apps, 2026-10-04 (decisions U-8 to U-14, UX §11.4). Open: the chat-to-map actions, which need features not built yet; the iOS 27.1 fold APIs; motion when the arrangement changes; Figma frames; device runs on an iPhone Duo, a Flip and a TriFold |
 
 ---
@@ -947,6 +947,37 @@ Closed before Phase 2, after an independent review of the first pass:
 
 What remains is a rule for rollout, not a defect: every phone in a room needs this build. And before
 release, an independent review by a person, which no automated review replaces.
+
+### Phase 2 record
+
+Done on both apps, byte for byte, with no change to any direct-message or receipt size
+(`ProtocolContractTest`, `ProtocolContractTests`):
+
+- `DirectSeal` version `02`: the nonce starts with `RoomRatchet.tagOf(hour)`, then the same ten random
+  bytes used by room seals. Version `01` direct seals still open, for peers with no shared room key.
+- When sealing to somebody who shares a Firepit room, the phone mixes that room's current hourly key
+  into the static phone-to-phone ECDH secret:
+  `roomPart = HMAC(E(h), "firepit-direct-room-v1" ‖ room_id ‖ generation ‖ h ‖ 1)`,
+  `PRK = HMAC(ordered(phone publics), ECDH ‖ roomPart)`,
+  `key = HMAC(PRK, "firepit-direct-v2" ‖ sender ‖ recipient ‖ 1)`.
+- Receivers resolve the hour from the nonce tag with the same room-message window, then try the room
+  generations they still hold. A replayed v2 direct seal is refused through `SeenSeals`.
+- A room is used for v2 only on positive evidence: this phone has opened a current-generation seal
+  from that member in that room. Roster entries and pending handovers are not enough, so a member who
+  left, missed a third member's rotation or is in the middle of a handover gets the next eligible room,
+  or v1.
+- If a v2 direct seal is refused, the sender clears that room/member evidence and resends the same text
+  using the next eligible v2 room only; the replacement takes the original row's place and keeps its
+  timestamp. There is no automatic downgrade to v1. If no other v2 room is eligible, the original is
+  marked "They could not open it." A refusal is honoured only from the peer the packet was sent to,
+  attempts expire after ten minutes and are capped at 64, a refusal for a message already confirmed by a
+  sealed receipt is ignored, and replayed or out-of-window v2 copies are dropped without a refusal. The
+  sender's card is shared again after a real refusal.
+- If no shared room key is eligible, direct messages and receipts fall back to v1 exactly as before.
+- Tests: plain-HMAC known answers for `roomPart` and the v2 key (`DirectSealTest`/`PhoneSealTests`),
+  v2 round trips, wrong-room-key and tamper failures, v1 compatibility, direct-message replay and stale
+  generation fallbacks in the simulated mesh, Android `RoomKeyStoreTest` coverage for direct replay/window
+  handling, and `scripts/check-android-interop.sh` for Android→iOS and iOS→Android v2 direct seals.
 
 ### Rules for every phase
 
