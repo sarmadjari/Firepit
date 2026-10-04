@@ -99,15 +99,25 @@ object DirectSeal {
         }
         if (sealed[0] != VERSION) return null
         val nonce = nonceOf(sealed) ?: return null
+        val peer = KeyEnvelope.decode(peerPublic) ?: return null
+        val shared = try {
+            KeyEnvelope.agree(ownPrivate, peer)
+        } catch (_: GeneralSecurityException) {
+            return null
+        }
         for (room in rooms) {
-            val key = keyFor(ownPrivate, ownPublic, peerPublic, context, room) ?: continue
+            val key = keyFor(shared.copyOf(), ownPublic, peerPublic, context, room)
             val plain = try {
                 RoomCipher.open(key, sealed.copyOfRange(HEADER, sealed.size), context)
             } finally {
                 key.fill(0)
             }
-            if (plain != null) return Opening(plain, room, room.hour, nonce)
+            if (plain != null) {
+                shared.fill(0)
+                return Opening(plain, room, room.hour, nonce)
+            }
         }
+        shared.fill(0)
         return null
     }
 
@@ -148,6 +158,16 @@ object DirectSeal {
         } catch (_: GeneralSecurityException) {
             return null
         }
+        return keyFor(shared, ownPublic, peerPublic, context, room)
+    }
+
+    private fun keyFor(
+        shared: ByteArray,
+        ownPublic: ByteArray,
+        peerPublic: ByteArray,
+        context: ByteArray,
+        room: RoomSecret?,
+    ): ByteArray {
         val salt = ordered(ownPublic, peerPublic)
         val material = room?.let {
             val part = roomPart(it)

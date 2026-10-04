@@ -185,10 +185,14 @@ public enum DirectSeal {
             return Opening(plain: plain, room: nil, hour: nil, nonce: nil)
         }
         guard sealed[sealed.startIndex] == version, let nonce = nonceOf(sealed) else { return nil }
+        guard let peer = KeyEnvelope.decode(peerPublic),
+            let shared = try? ownPrivate.sharedSecretFromKeyAgreement(with: peer)
+        else { return nil }
+        let sharedBytes = rawBytes(shared)
         for room in rooms {
             guard
                 let key = keyFor(
-                    ownPrivate: ownPrivate, ownPublic: ownPublic, peerPublic: peerPublic, context: context, room: room),
+                    shared: sharedBytes, ownPublic: ownPublic, peerPublic: peerPublic, context: context, room: room),
                 let plain = RoomCipher.open(key: key, sealed: Data(sealed.dropFirst(header)), context: context)
             else { continue }
             return Opening(plain: plain, room: room, hour: room.hour, nonce: nonce)
@@ -226,7 +230,11 @@ public enum DirectSeal {
         guard let peer = KeyEnvelope.decode(peerPublic),
             let shared = try? ownPrivate.sharedSecretFromKeyAgreement(with: peer)
         else { return nil }
-        let material = room.map { rawBytes(shared) + roomPart($0) } ?? rawBytes(shared)
+        return keyFor(shared: rawBytes(shared), ownPublic: ownPublic, peerPublic: peerPublic, context: context, room: room)
+    }
+
+    private static func keyFor(shared: Data, ownPublic: Data, peerPublic: Data, context: Data, room: RoomSecret?) -> Data? {
+        let material = room.map { shared + roomPart($0) } ?? shared
         let prk = RoomCrypto.hmac(key: ordered(ownPublic, peerPublic), message: material)
         return RoomCrypto.hmac(key: prk, message: (room == nil ? firstInfo : info) + context + Data([1]))
     }

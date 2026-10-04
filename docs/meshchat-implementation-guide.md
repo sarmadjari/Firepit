@@ -700,7 +700,7 @@ message MeshChatControl {
   uint32 version = 1;                                 // 1
   oneof payload {
     JoinHello join_hello = 2;                         // joiner → inviter, PKI DM
-    RosterEvent roster_event = 3;                     // inviter → room broadcast: JOINED / KEY_ROTATED
+    RosterEvent roster_event = 3;                     // room broadcast: JOINED / KEY_ROTATED / LEFT
     LiveLocationRequest live_location_request = 4;    // member → member, PKI DM
     RosterSync roster_sync = 5;                       // inviter → joiner, the room's members
     Receipt receipt = 6;                              // room broadcast (sealed) or PKI DM
@@ -720,8 +720,8 @@ message RoomText { string text = 1; fixed32 reply_id = 2; uint32 emoji = 3; }  /
 message PositionQuery {}
 message JoinHello { fixed32 invite_id = 1; bytes token = 2; uint32 generation = 3; uint32 app_version = 4; bytes joiner_key = 5; bytes phone_key = 6; }
 message RoomGrant { enum Answer { GRANTED = 0; DECLINED = 1; } reserved 6, 8; Answer answer = 1; fixed32 invite_id = 2; fixed32 room_id = 3; string room_name = 4; bytes room_psk = 5; uint32 generation = 7; bytes sealed_key = 9; uint32 key_hour = 10; }
-message RosterEvent { enum Kind { JOINED = 0; KEY_ROTATED = 1; } Kind kind = 1; uint32 node_num = 2; uint32 invited_by = 3; uint32 generation = 4; bytes phone_key = 5; }
-message KeyRotation { reserved 4; fixed32 room_id = 1; uint32 generation = 2; bytes room_psk = 3; string room_name = 5; repeated fixed32 removed = 6; bytes sealed_key = 7; uint32 key_hour = 8; }
+message RosterEvent { enum Kind { JOINED = 0; KEY_ROTATED = 1; LEFT = 2; } Kind kind = 1; uint32 node_num = 2; uint32 invited_by = 3; uint32 generation = 4; bytes phone_key = 5; bool quiet = 6; }
+message KeyRotation { reserved 4; fixed32 room_id = 1; uint32 generation = 2; bytes room_psk = 3; string room_name = 5; repeated fixed32 removed = 6; bytes sealed_key = 7; uint32 key_hour = 8; bool quiet = 9; }
 message PersonCard { string name = 1; string tag = 2; uint32 colour_slot_plus_one = 3; bytes phone_key = 4; }
 message LiveLocationRequest { fixed32 room_id = 1; uint32 suggested_secs = 2; }
 message Receipt { fixed32 room_id = 1; repeated fixed32 delivered = 2; repeated fixed32 read = 3; }
@@ -729,7 +729,7 @@ message SealedMessage { fixed32 room_id = 1; bytes ciphertext = 2; uint32 genera
 ```
 Rules: one packet per event, except the sealed position, which is sent at the beacon interval only while the user shares; unknown fields and kinds are ignored; a control packet is never rendered as chat. Every sealed room packet asks for an acknowledgement, so the header's `want_ack` bit does not tell words from receipts, cards or positions. Most payloads are ≤ ~40 bytes; a full receipt of 40 ids is ~206 bytes sealed and still inside the 233-byte budget, which `SealedReceiptTest` asserts rather than assumes.
 
-`SealedMessage` wraps an encoded `MeshChatControl`, so opening it yields another control message handled as if it had arrived in the clear — and opening it is itself proof the sender holds the room key. It is only believed on the slot of the room it names, or privately to us (`TrustRules.sealedPlacementOk`), and only a message sealed under the room's **current** generation counts as membership: an older key is what a removed member still holds. A `Receipt` is only believed sealed — under a room key, or phone to phone inside a `SealedDirect` — because whoever holds a radio can put bytes on a channel, or encrypt to us, under any name; one that is sealed is only recorded from the recipient of a direct message or a member of the message's room. `RosterEvent`, `PersonCard`, `RoomText`, positions and pins are only taken sealed under the room's current key; a `RosterSync` only sealed, privately, from the inviter who let us in. A `KEY_ROTATED` event is sent sealed under the key being replaced, before the sender's radio moves on, so a member who misses their own copy of the new key stops sending in the room. Relays set to `rebroadcast_mode = CORE_PORTNUMS_ONLY` drop private ports — irrelevant for group-owned infrastructure and for Group-only mode (D-1); in public-relay mode a strict public router may drop a hello on one path, flooding tries the others, and membership stays evidence-based (§5.3) so a lost hello only delays the "invited by" attribution.
+`SealedMessage` wraps an encoded `MeshChatControl`, so opening it yields another control message handled as if it had arrived in the clear — and opening it is itself proof the sender holds the room key. It is only believed on the slot of the room it names, or privately to us (`TrustRules.sealedPlacementOk`), and only a message sealed under the room's **current** generation counts as membership: an older key is what a removed member still holds. A `Receipt` is only believed sealed — under a room key, or phone to phone inside a `SealedDirect` — because whoever holds a radio can put bytes on a channel, or encrypt to us, under any name; one that is sealed is only recorded from the recipient of a direct message or a member of the message's room. `RosterEvent`, `PersonCard`, `RoomText`, positions and pins are only taken sealed under the room's current key; a `RosterSync` only sealed, privately, from the inviter who let us in. A `KEY_ROTATED` event is sent sealed under the key being replaced, before the sender's radio moves on, so a member who misses their own copy of the new key stops sending in the room; `quiet` suppresses the warning line for scheduled changes only. A `LEFT` event is believed only on the room's own slot, under the current generation, with `node_num == packet.from`; receivers remove that member and any pending handovers to them. Relays set to `rebroadcast_mode = CORE_PORTNUMS_ONLY` drop private ports — irrelevant for group-owned infrastructure and for Group-only mode (D-1); in public-relay mode a strict public router may drop a hello on one path, flooding tries the others, and membership stays evidence-based (§5.3) so a lost hello only delays the "invited by" attribution.
 
 #### 6.8.6 Removing a member / leaving (key rotation)
 
@@ -739,6 +739,25 @@ Rules: one packet per event, except the sealed position, which is sent at the be
 4. The member's radio acknowledging the handover only reports them as reached. The handover stays owed (`pending_handovers`) until their app seals something under the new key — it shares its person card as soon as it takes one — and is handed again when they are heard: up to three radio-acknowledged times, then only on proof they still seal under the old key (security.md §6).
 5. Phone keys come from the join hello, the sealed `JOINED` event that introduces a newcomer, and person cards, which every phone sends even with no name chosen. They are learned on first sight and kept; only an approved join — the approver's own, or the sealed `JOINED` announcing it — replaces one.
 6. The removed member keeps the old key, past messages, and hears the mesh at the radio layer; state this plainly (design §6).
+
+Scheduled key changes use the same `rotateRoom` handover, with no removal and
+with a quiet `KeyRotation`. Only the room maker — the phone whose own
+`room_members.invitedBy` is its node number — changes keys. The setting is
+Daily (default), Weekly or Never. This phone records when it made each room
+generation in per-room metadata outside the database schema (`RoomKeyMadeStore`);
+once due, a fresh current-generation sealed message from another member changes
+the key if the radio is connected and there is no pending handover, unresolved
+rotation notice, or recently seen higher generation. No timer, polling, or
+periodic packet exists. A scheduled change sends a short room notice and one
+private key handover to each member heard since the previous change; absent
+members are recorded as owed and use the existing retry-when-heard path.
+If a member misses more than eight generations, the owed record is dropped and
+they re-sync with a fresh invite.
+
+Leaving first broadcasts one sealed `RosterEvent{ LEFT, node_num: me }` on the
+room slot, then forgets the room. If the receiver is the maker and scheduled
+changes are not Never, the room is marked due now; the actual change waits for
+the next sign of life.
 
 #### 6.8.7 Trust display
 

@@ -48,6 +48,14 @@ Stated plainly, because a threat model that claims everything is worthless.
   person is sealed to the false key but still travels PKI to their own radio, so
   the liar cannot read it — but that person misses the new key and has to be
   invited again.
+- **Two members changing a room before they meet again.** Any member may remove
+  someone. If one member rotates a room while the maker is out of range, and the
+  maker's scheduled change happens before they hear the new generation, the room
+  can split into two valid keys. Firepit avoids scheduling while another change
+  is in flight or recently seen, but cannot merge two offline changes. The fix
+  is social and explicit: scan a current member's invite again; grants at the
+  same generation are accepted for an invite this phone is awaiting, so the
+  wrong side can re-sync.
 - **Phones whose clocks are far apart.** Room keys follow the clock (§3), so
   a phone whose clock is more than about an hour away from the others' cannot
   read their room messages, nor they its, until the clock is put right. That
@@ -118,7 +126,7 @@ must open what the other sealed.
 |---|---|---|
 | Database at rest | SQLCipher 4 (AES-256 per page, HMAC-SHA512) under a random 32-byte key wrapped by the Keystore | SQLCipher 4 under a random 32-byte key in the Keychain (`AfterFirstUnlockThisDeviceOnly`), over iOS Data Protection (§4) |
 | Room keys and other secrets | Wrapped by an Android Keystore AES-256-GCM key that never leaves secure hardware | Keychain, readable after first unlock, this device only, never synced to iCloud |
-| The phone key (P-256) | Wrapped by the Keystore, like the room keys | Created inside the Secure Enclave, which never releases the private half |
+| The phone key (P-256) | Android 12+: created inside Android Keystore for ECDH and never exportable; Android 10–11 and old installs: the existing wrapped software key, so known contacts keep working | Created inside the Secure Enclave, which never releases the private half |
 | Randomness | `java.security.SecureRandom` | `SecRandomCopyBytes` and CryptoKit's generator |
 
 Implemented in `core/crypto/RoomCipher.kt`, `core/crypto/SealedText.kt`,
@@ -561,6 +569,9 @@ The roster decides who is handed the next key, so what may add to it is narrow:
 - our own grant, or our own approval of a joiner;
 - a `RosterEvent { JOINED }` sealed under the room's current key, on the room's
   slot, from the member who vouched (`handleRosterEvent`);
+- a `RosterEvent { LEFT }` sealed under the room's current key, on the room's
+  slot, with `node_num == packet.from`; it removes that member and any pending
+  handovers to them, and posts "`<name> left the room`";
 - a `RosterSync` sent privately by the inviter who let us in, sealed under the
   room's current key, while they are still a member
   (`TrustRules.rosterSyncAcceptable`);
@@ -610,11 +621,29 @@ A **rotation** removes somebody by moving everyone else to new keys. In order
    confirmed the last, theirs is sealed under each generation they might hold,
    from the one they were last heard on to the newest; only the one they hold
    opens it. Every such generation is kept while a record names it, so it can
-   always be sealed under.
+   always be sealed under. If that range would grow past eight generations, the
+   owed record is dropped; the member then needs a fresh invite when they come
+   back.
 
 It is accepted only from a member, privately, sealed under the current
 generation, and moving forward (`TrustRules.rotationAcceptable`). The person
 removing sees who confirmed and who has not yet.
+
+Scheduled rotations use the same handover path, but only the room's maker runs
+them. The setting is daily by default, weekly, or never. A room becomes due when
+the current generation is old enough by this phone's per-room key-made metadata
+(kept outside the message database), but nothing runs on a timer and no packet
+is sent just because time passed. The next fresh sign of life — a
+current-generation sealed message from another member, received after the room
+became due — performs the change if the radio is connected and no change is
+already in flight, unresolved or recently seen at a higher generation. That
+makes scheduled changes fork-averse: one rotator per room on schedule, never
+while another change is in flight. A scheduled rotation sends a short notice to
+the room and one private message to each eligible member; success lines are
+suppressed, but a phone that hears the room moved and did not receive its key
+still gets the "ask a member to invite you again" explanation when it tries to
+send. When a member leaves, the maker marks the room due immediately, so the
+remaining members move on at the next sign of life.
 
 **Phone keys** arrive in the join hello, in the sealed `JOINED` event that
 introduces a newcomer, and in person cards, which every phone sends to its rooms

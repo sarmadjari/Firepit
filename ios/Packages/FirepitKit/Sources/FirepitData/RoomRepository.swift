@@ -67,7 +67,7 @@ private enum DirectOpening {
 ///
 /// A room is a Meshtastic secondary channel: its 32-byte key *is* the access
 /// control, so there is nothing else to grant or revoke.
-public final class RoomRepository: Sendable {
+public final class RoomRepository: @unchecked Sendable {
     public let link: any RadioLinking
     public let mesh: MeshRepository
     public let admin: NodeAdminClient
@@ -81,12 +81,14 @@ public final class RoomRepository: Sendable {
     public let peerKeyDao: PeerKeyDao
     public let pinDao: MapPinDao
     public let roomActivity: RoomActivityDao
+    public let roomKeyMade: RoomKeyMadeStore
     public let handovers: PendingHandoverDao
     public let history: RoomHistory
     public let sharingStore: SharingStore
     /// The time now, in epoch millis. Android reads the system clock directly; here it can be replaced so tests can
     /// let the handover retry interval pass.
     private let clock: @Sendable () -> Int64
+    private let keyChangeSetting: () -> RoomKeyChange
 
     /// Positions, pins and position questions, opened from a room's seal and
     /// handed to whoever owns them. Opening is done once, here, where the room
@@ -107,6 +109,7 @@ public final class RoomRepository: Sendable {
     /// proves nothing about their app keeping it, so the handover stays owed until the app's own word (see
     /// `settleHandover`); this only stops it being sent for ever to someone whose radio takes it every time.
     private let handoverAcks = Mutex<[MemberInRoom: Int]>([:])
+    private let sentHandoverGenerations = Mutex<[MemberInRoom: Set<Int>]>([:])
 
     /// When each sender was last told a sealed message of theirs would not open here. */
     private let refusedAt = Mutex<[Int32: Int64]>([:])
@@ -132,6 +135,9 @@ public final class RoomRepository: Sendable {
 
     private let tasks = Mutex<[Task<Void, Never>]>([])
     private let latestCard = Mutex<Card?>(nil)
+    private let scheduledRotations = Mutex<Set<Int32>>([])
+    private let rotationLocks = Mutex<Set<Int32>>([])
+    private let scheduledTasks = Mutex<[Int32: Task<Void, Never>]>([:])
     private let log = Logger(subsystem: "com.getfirepit.app", category: "FirepitRooms")
 
     /// Stops waiting, for when the answer never came or the reader walked away. */
@@ -173,9 +179,11 @@ public final class RoomRepository: Sendable {
         peerKeyDao: PeerKeyDao,
         pinDao: MapPinDao,
         roomActivity: RoomActivityDao,
+        roomKeyMade: RoomKeyMadeStore = RoomKeyMadeStore(),
         handovers: PendingHandoverDao,
         history: RoomHistory,
         sharingStore: SharingStore,
+        keyChangeSetting: @escaping () -> RoomKeyChange = { .daily },
         clock: @escaping @Sendable () -> Int64 = { currentEpochMillis() }
     ) {
         self.link = link
@@ -191,9 +199,11 @@ public final class RoomRepository: Sendable {
         self.peerKeyDao = peerKeyDao
         self.pinDao = pinDao
         self.roomActivity = roomActivity
+        self.roomKeyMade = roomKeyMade
         self.handovers = handovers
         self.history = history
         self.sharingStore = sharingStore
+        self.keyChangeSetting = keyChangeSetting
         self.clock = clock
     }
 
@@ -501,6 +511,8 @@ public final class RoomRepository: Sendable {
         let now = clock()
         try await memberDao.record(roomId: roomId, nodeNum: myNodeNum, now: now, invitedBy: myNodeNum)
         try await roomActivity.joined(roomId: roomId, now: now)
+        roomKeyMade.record(roomId: roomId, generation: RoomKeyStore.first, at: now)
+        roomKeyMade.markMadeByMe(roomId: roomId)
         return RoomChannel(
             index: slot,
             name: trimmed,
@@ -726,7 +738,13 @@ public final class RoomRepository: Sendable {
     ///
     /// Nothing can take a key back from someone who already has it, so removal
     /// is really everyone else moving on without them.
-    public func rotateRoom(roomId: Int32, remove: Set<Int32> = []) async throws -> RotationResult {
+    public func rotateRoom(roomId: Int32, remove: Set<Int32> = [], scheduled: Bool = false) async throws -> RotationResult {
+        await acquireRotationLock(roomId: roomId)
+        defer { releaseRotationLock(roomId: roomId) }
+        return try await rotateRoomLocked(roomId: roomId, remove: remove, scheduled: scheduled)
+    }
+
+    private func rotateRoomLocked(roomId: Int32, remove: Set<Int32>, scheduled: Bool) async throws -> RotationResult {
         guard let myNodeNum = mesh.myNodeNum.value else {
             throw RoomError.notConnected
         }
@@ -743,15 +761,21 @@ public final class RoomRepository: Sendable {
             generation: previous + 1,
             psk: RoomCrypto.generatePsk(),
             firepitKey: HourKey(
-                hour: RoomRatchet.hourOf(unixMillis: roomKeys.time.wallMillis()), key: RoomCipher.generateKey())
+                hour: RoomRatchet.hourOf(unixMillis: roomKeys.time.wallMillis()), key: RoomCipher.generateKey()),
+            quiet: scheduled
         )
         let stillOwed = (try? await handovers.forRoom(roomId: roomId)) ?? []
+        let previousMadeAt = roomKeyMade.record(roomId: roomId)?.madeAt ?? 0
         let owed: [PendingHandoverEntity] = try await history.whileRearranging {
             await announceRotation(
                 slot: room.index, roomId: roomId, myNodeNum: myNodeNum,
-                previous: previous, generation: keys.generation)
+                previous: previous, generation: keys.generation, quiet: scheduled)
             try await admin.setChannel(channelFor(index: room.index, name: room.name, psk: keys.psk, roomId: roomId))
             try roomKeys.remember(roomId: roomId, key: keys.firepitKey, generation: keys.generation)
+            let madeAt = clock()
+            try await roomActivity.joined(roomId: roomId, now: madeAt)
+            roomKeyMade.record(roomId: roomId, generation: keys.generation, at: madeAt)
+            roomKeyMade.clearDue(roomId: roomId)
             for member in remove {
                 try await memberDao.remove(roomId: roomId, nodeNum: member)
             }
@@ -777,29 +801,42 @@ public final class RoomRepository: Sendable {
             for record in records {
                 try await handovers.upsert(handover: record)
             }
+            sentHandoverGenerations.withLock { sent in
+                for record in records {
+                    let key = MemberInRoom(roomId: record.roomId, nodeNum: record.nodeNum)
+                    if sent[key] == nil { sent[key] = [] }
+                }
+            }
             let owedNodes = Set(records.map(\.nodeNum))
             for stale in try await handovers.forRoom(roomId: roomId) where !owedNodes.contains(stale.nodeNum) {
                 try await handovers.delete(roomId: roomId, nodeNum: stale.nodeNum)
+                sentHandoverGenerations.withLock { _ = $0.removeValue(forKey: MemberInRoom(roomId: roomId, nodeNum: stale.nodeNum)) }
             }
-            await noticeInRoom(slot: room.index, text: rotationNotice(removed: remove), roomId: roomId)
+            if !scheduled {
+                await noticeInRoom(slot: room.index, text: rotationNotice(removed: remove), roomId: roomId)
+            }
             return records
         }
-        // Just tried, so their radio's own acknowledgement of it does not set off a retry; and counted afresh for the
-        // key being handed now.
-        let handedAt = clock()
-        handoverTried.withLock { tried in
+        var immediate = owed
+        if scheduled {
+            immediate = []
             for record in owed {
-                tried[record.nodeNum] = handedAt
+                let member = try? await memberDao.findEntity(roomId: roomId, nodeNum: record.nodeNum)
+                if (member?.lastHeard ?? 0) >= previousMadeAt {
+                    immediate.append(record)
+                }
             }
         }
-        handoverAcks.withLock { acks in
-            for record in owed {
-                acks.removeValue(forKey: MemberInRoom(roomId: roomId, nodeNum: record.nodeNum))
+        // Just tried, so their radio's own acknowledgement of it does not set off a retry.
+        let handedAt = clock()
+        handoverTried.withLock { tried in
+            for record in immediate {
+                tried[record.nodeNum] = handedAt
             }
         }
         // Sent a moment apart and awaited together: one member out of range must not hold up everyone else's key for
         // the length of a timeout.
-        let inFlight = owed.map { MemberInRoom(roomId: roomId, nodeNum: $0.nodeNum) }
+        let inFlight = immediate.map { MemberInRoom(roomId: roomId, nodeNum: $0.nodeNum) }
         handingOver.withLock { counts in
             for member in inFlight {
                 counts[member, default: 0] += 1
@@ -811,7 +848,7 @@ public final class RoomRepository: Sendable {
             }
         }
         let reached = await withTaskGroup(of: Int32?.self) { group in
-            for (order, record) in owed.enumerated() {
+            for (order, record) in immediate.enumerated() {
                 group.addTask {
                     try? await Task.sleep(for: .seconds(Self.handoverSpacingSeconds * order))
                     return await self.handOver(record: record, keys: keys) ? record.nodeNum : nil
@@ -843,6 +880,7 @@ public final class RoomRepository: Sendable {
         var psk: Data
         /// One hour's key: whoever is handed it reads from that hour on, and nothing before.
         var firepitKey: HourKey
+        var quiet: Bool
     }
 
     private func removedNodes(_ record: PendingHandoverEntity) -> [Int32] {
@@ -891,13 +929,16 @@ public final class RoomRepository: Sendable {
         }
         rotation.sealedKey = sealedKey
         rotation.keyHour = UInt32(keys.firepitKey.hour)
+        rotation.quiet = keys.quiet
         var inner = Meshchat_MeshChatControl()
         inner.version = InviteCodec.version
         inner.keyRotation = rotation
         // Sealed under each generation they might hold, newest first: they only accept it under the one they hold
         // now, and when a rotation came while an earlier key was on its way, that is not known here.
         var confirmed = false
-        for held in mayHold(record).reversed() {
+        let sealGenerations = await handoverSealGenerations(record)
+        if sealGenerations.isEmpty { return false }
+        for held in sealGenerations {
             guard
                 let sealed = sealFor(roomId: keys.roomId, myNodeNum: myNodeNum, control: inner, generation: held)
             else {
@@ -926,7 +967,26 @@ public final class RoomRepository: Sendable {
                 confirmed = true
             }
         }
+        _ = sentHandoverGenerations.withLock {
+            $0[MemberInRoom(roomId: record.roomId, nodeNum: record.nodeNum), default: []].insert(record.generation)
+        }
         return confirmed
+    }
+
+    private func handoverSealGenerations(_ record: PendingHandoverEntity) async -> [Int] {
+        let range = mayHold(record)
+        if range.count > Self.maxHandoverGenerationRange {
+            try? await handovers.delete(roomId: record.roomId, nodeNum: record.nodeNum)
+            sentHandoverGenerations.withLock {
+                _ = $0.removeValue(forKey: MemberInRoom(roomId: record.roomId, nodeNum: record.nodeNum))
+            }
+            return []
+        }
+        let member = MemberInRoom(roomId: record.roomId, nodeNum: record.nodeNum)
+        guard let sent = sentHandoverGenerations.withLock({ $0[member] }) else {
+            return Array(range.reversed())
+        }
+        return Array(Set([record.heldGeneration] + sent.filter { range.contains($0) })).sorted()
     }
 
     /// Every generation a member owed `record` might be holding: the one they were last seen sealing under, up to the
@@ -934,6 +994,19 @@ public final class RoomRepository: Sendable {
     /// its way to them.
     private func mayHold(_ record: PendingHandoverEntity) -> Range<Int> {
         record.heldGeneration..<max(record.heldGeneration, record.generation)
+    }
+
+    private func acquireRotationLock(roomId: Int32) async {
+        while true {
+            if rotationLocks.withLock({ $0.insert(roomId).inserted }) {
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+    }
+
+    private func releaseRotationLock(roomId: Int32) {
+        _ = rotationLocks.withLock { $0.remove(roomId) }
     }
 
     /// Tries again to hand `nodeNum` a key a rotation could not deliver.
@@ -1012,7 +1085,8 @@ public final class RoomRepository: Sendable {
         let stillOwed = owed.generation == roomKeys.generationOf(roomId: owed.roomId) && memberStillPresent
         if !stillOwed {
             // This record only: a later rotation's, written meanwhile, stays.
-            try? await handovers.deleteUpTo(roomId: owed.roomId, nodeNum: owed.nodeNum, generation: owed.generation)
+            _ = try? await handovers.deleteUpTo(roomId: owed.roomId, nodeNum: owed.nodeNum, generation: owed.generation)
+            sentHandoverGenerations.withLock { _ = $0.removeValue(forKey: MemberInRoom(roomId: owed.roomId, nodeNum: owed.nodeNum)) }
             return
         }
         guard let room = ChannelSlotManager.findByRoomId(channels: mesh.channels.value, roomId: owed.roomId),
@@ -1026,7 +1100,7 @@ public final class RoomRepository: Sendable {
         }
         let keys = NewKeys(
             roomId: owed.roomId, roomName: room.name, generation: owed.generation,
-            psk: psk, firepitKey: key)
+            psk: psk, firepitKey: key, quiet: removedNodes(owed).isEmpty)
         let handed = await handOver(record: owed, keys: keys)
         // Only while still owed as tried: their app may have settled it while this was in flight, and a settled
         // handover must stay settled.
@@ -1050,6 +1124,7 @@ public final class RoomRepository: Sendable {
                 (try? await handovers.deleteUpTo(roomId: roomId, nodeNum: member, generation: generation)) ?? 0
             if cleared > 0 {
                 _ = handoverAcks.withLock { $0.removeValue(forKey: MemberInRoom(roomId: roomId, nodeNum: member)) }
+                _ = sentHandoverGenerations.withLock { $0.removeValue(forKey: MemberInRoom(roomId: roomId, nodeNum: member)) }
                 log.info("a member confirmed the key for a room")
             }
         } else {
@@ -1064,12 +1139,14 @@ public final class RoomRepository: Sendable {
         roomId: Int32,
         myNodeNum: Int32,
         previous: Int,
-        generation: Int
+        generation: Int,
+        quiet: Bool = false
     ) async {
         var event = Meshchat_RosterEvent()
         event.kind = .keyRotated
         event.nodeNum = UInt32(bitPattern: myNodeNum)
         event.generation = UInt32(generation)
+        event.quiet = quiet
         var control = Meshchat_MeshChatControl()
         control.version = InviteCodec.version
         control.rosterEvent = event
@@ -1098,6 +1175,20 @@ public final class RoomRepository: Sendable {
 
     /// Applies a rotation somebody else performed. See `TrustRules.rotationAcceptable`. */
     private func handleKeyRotation(
+        packet: MeshPacket,
+        rotation: Meshchat_KeyRotation,
+        sealedRoomId: Int32?,
+        sealedGeneration: Int?,
+        myNodeNum: Int32
+    ) async {
+        await acquireRotationLock(roomId: Int32(bitPattern: rotation.roomID))
+        defer { releaseRotationLock(roomId: Int32(bitPattern: rotation.roomID)) }
+        await handleKeyRotationLocked(
+            packet: packet, rotation: rotation, sealedRoomId: sealedRoomId,
+            sealedGeneration: sealedGeneration, myNodeNum: myNodeNum)
+    }
+
+    private func handleKeyRotationLocked(
         packet: MeshPacket,
         rotation: Meshchat_KeyRotation,
         sealedRoomId: Int32?,
@@ -1141,12 +1232,15 @@ public final class RoomRepository: Sendable {
         try? roomKeys.remember(
             roomId: roomId, key: HourKey(hour: Int(Int32(bitPattern: rotation.keyHour)), key: firepitKey),
             generation: Int(rotation.generation))
+        roomKeyMade.record(roomId: roomId, generation: Int(rotation.generation), at: clock())
         for removed in rotation.removed {
             try? await memberDao.remove(roomId: roomId, nodeNum: Int32(bitPattern: removed))
         }
         mesh.refreshRoomKinds()
         let removed = Set(rotation.removed.map { Int32(bitPattern: $0) })
-        await noticeInRoom(slot: slot, text: rotationNotice(removed: removed), roomId: roomId)
+        if !rotation.quiet || !rotation.removed.isEmpty {
+            await noticeInRoom(slot: slot, text: rotationNotice(removed: removed), roomId: roomId)
+        }
         // Something sealed under the new key, so whoever handed it over knows our app has it, not only our radio.
         await shareCardWith(roomId: roomId)
     }
@@ -1211,7 +1305,7 @@ public final class RoomRepository: Sendable {
     /// `slot` names the channel exactly: a Meshtastic channel has no id of its
     /// own, so two of them both answer to `roomId` 0, and only the slot says
     /// which is meant.
-    public func leaveRoom(roomId: Int32, slot: Int? = nil) async throws {
+    public func leaveRoom(roomId: Int32, slot: Int? = nil, announce: Bool = true) async throws {
         try await history.whileRearranging {
             let channels = ChannelSlotManager.rooms(channels: mesh.channels.value)
             let leaving: RoomChannel?
@@ -1224,6 +1318,15 @@ public final class RoomRepository: Sendable {
                 throw RoomError.inviteInvalid
             }
             let plan = try await planTakingOff(slot: leaving.index)
+            if announce, roomId != 0, let myNodeNum = mesh.myNodeNum.value, roomKeys.canSeal(roomId: roomId) {
+                var event = Meshchat_RosterEvent()
+                event.kind = .left
+                event.nodeNum = UInt32(bitPattern: myNodeNum)
+                var control = Meshchat_MeshChatControl()
+                control.version = InviteCodec.version
+                control.rosterEvent = event
+                _ = await sendSealed(roomId: roomId, control: control, priority: .reliable)
+            }
             try await messageDao.deleteUnfiled(slot: leaving.index)
             try await pinDao.deleteUnfiled(slot: leaving.index)
             if roomId != 0 {
@@ -1239,6 +1342,7 @@ public final class RoomRepository: Sendable {
             }
             try await memberDao.deleteRoom(roomId: roomId)
             try roomKeys.forget(roomId: roomId)
+            roomKeyMade.forget(roomId: roomId)
             try await roomActivity.forget(roomId: roomId)
             try await handovers.deleteRoom(roomId: roomId)
             issuedInvites.withLock { ledger in
@@ -1270,6 +1374,65 @@ public final class RoomRepository: Sendable {
             }
         }
         try await range.keepPublic()
+    }
+
+    private func launchScheduledChangeIfDue(roomId: Int32, generation: Int, receivedAt: Int64) {
+        let inserted = scheduledRotations.withLock { $0.insert(roomId).inserted }
+        guard inserted else { return }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.acquireRotationLock(roomId: roomId)
+            defer {
+                self.releaseRotationLock(roomId: roomId)
+                _ = self.scheduledRotations.withLock { $0.remove(roomId) }
+                _ = self.scheduledTasks.withLock { $0.removeValue(forKey: roomId) }
+            }
+            do {
+                guard await self.scheduledChangeDue(
+                    roomId: roomId, evidenceGeneration: generation, evidenceReceivedAt: receivedAt, alreadyRotating: false)
+                else { return }
+                _ = try await self.rotateRoomLocked(roomId: roomId, remove: [], scheduled: true)
+            } catch {
+                self.log.warning("scheduled room-key change for \(roomId) failed")
+            }
+        }
+        scheduledTasks.withLock { $0[roomId] = task }
+    }
+
+    private func scheduledChangeDue(
+        roomId: Int32,
+        evidenceGeneration: Int,
+        evidenceReceivedAt: Int64,
+        alreadyRotating: Bool
+    ) async -> Bool {
+        guard mesh.myNodeNum.value != nil else { return false }
+        let current = roomKeys.generationOf(roomId: roomId)
+        guard evidenceGeneration == current else { return false }
+        guard let record = roomKeyMade.record(roomId: roomId), record.generation == current else {
+            roomKeyMade.record(roomId: roomId, generation: current, at: clock())
+            return false
+        }
+        guard let interval = ScheduledKeyChange.intervalMillis(setting: keyChangeSetting()) else { return false }
+        guard roomKeyMade.isDueNow(roomId: roomId) || evidenceReceivedAt >= record.madeAt + interval else { return false }
+        let pending = (try? await handovers.forRoom(roomId: roomId)) ?? []
+        var blocksForPending = false
+        for pendingRecord in pending {
+            if ((try? await memberDao.findEntity(roomId: roomId, nodeNum: pendingRecord.nodeNum))?.lastHeard ?? 0) >= record.madeAt {
+                blocksForPending = true
+                break
+            }
+        }
+        if roomKeys.isSuperseded(roomId: roomId) || blocksForPending {
+            return false
+        }
+        return ScheduledKeyChange.shouldChange(
+            isMaker: roomKeyMade.isMadeByMe(roomId: roomId),
+            setting: keyChangeSetting(),
+            keyAgeMillis: roomKeyMade.isDueNow(roomId: roomId) ? interval : clock() - record.madeAt,
+            hasCurrentGenerationEvidence: true,
+            connected: mesh.isConnected.value,
+            alreadyRotating: alreadyRotating
+        )
     }
 
     /// Moves every room `nodeNum` is in to new keys without it, for a radio
@@ -1527,14 +1690,20 @@ public final class RoomRepository: Sendable {
             log.warning("sealed payload for a room would not open")
             return
         }
-        if generation == roomKeys.generationOf(roomId: roomId) {
-            try? await memberDao.record(roomId: roomId, nodeNum: from, now: clock())
+        let sealedUnderCurrent = generation == roomKeys.generationOf(roomId: roomId)
+        let receivedAt = clock()
+        if sealedUnderCurrent {
+            try? await memberDao.record(roomId: roomId, nodeNum: from, now: receivedAt)
             try? await memberDao.recordOpenedGeneration(roomId: roomId, nodeNum: from, generation: generation)
         }
         await settleHandover(roomId: roomId, member: from, generation: generation)
         await handleControl(
             packet: packet, payload: plain, myNodeNum: myNodeNum,
             authenticated: true, sealedRoomId: roomId, sealedGeneration: generation)
+        let stillMember = (try? await memberDao.findEntity(roomId: roomId, nodeNum: from)) != nil
+        if sealedUnderCurrent && stillMember {
+            launchScheduledChangeIfDue(roomId: roomId, generation: generation, receivedAt: receivedAt)
+        }
     }
 
     /// One person's words or receipts, sealed from their phone to ours.
@@ -1902,6 +2071,8 @@ public final class RoomRepository: Sendable {
             awaiting.set(awaited)
             return
         }
+        await acquireRotationLock(roomId: Int32(bitPattern: grant.roomID))
+        defer { releaseRotationLock(roomId: Int32(bitPattern: grant.roomID)) }
         let generation = grant.generation == 0 ? RoomKeyStore.first : Int(grant.generation)
         let grantRoomId = Int32(bitPattern: grant.roomID)
         let held = ChannelSlotManager.findByRoomId(channels: mesh.channels.value, roomId: grantRoomId)
@@ -1912,7 +2083,8 @@ public final class RoomRepository: Sendable {
                 nodeNum: Int32(bitPattern: packet.from)
             )) != nil,
             grantGeneration: Int32(generation),
-            currentGeneration: Int32(roomKeys.generationOf(roomId: Int32(bitPattern: grant.roomID)))
+            currentGeneration: Int32(roomKeys.generationOf(roomId: Int32(bitPattern: grant.roomID))),
+            awaitingScannedInvite: true
         )
         if !acceptable {
             awaiting.set(nil)
@@ -1944,13 +2116,17 @@ public final class RoomRepository: Sendable {
             channelFor(index: slot, name: grant.roomName, psk: grant.roomPsk, roomId: Int32(bitPattern: grant.roomID))
         )
         let now = clock()
+        let inviter = Int32(bitPattern: packet.from)
+        let ownInviter = roomKeyMade.isMadeByMe(roomId: Int32(bitPattern: grant.roomID)) ? nil : inviter
         try? await memberDao.record(
             roomId: Int32(bitPattern: grant.roomID), nodeNum: myNodeNum,
-            now: now, invitedBy: Int32(bitPattern: packet.from))
+            now: now, invitedBy: ownInviter)
         try? await memberDao.record(
-            roomId: Int32(bitPattern: grant.roomID), nodeNum: Int32(bitPattern: packet.from),
-            now: now, invitedBy: Int32(bitPattern: packet.from))
+            roomId: Int32(bitPattern: grant.roomID), nodeNum: inviter,
+            now: now, invitedBy: inviter)
         try? await roomActivity.recordActivity(roomId: Int32(bitPattern: grant.roomID), now: now)
+        roomKeyMade.record(roomId: Int32(bitPattern: grant.roomID), generation: generation, at: now)
+        roomKeyMade.clearDue(roomId: Int32(bitPattern: grant.roomID))
         mesh.refreshRoomKinds()
         awaiting.set(nil)
         await shareCardWith(roomId: Int32(bitPattern: grant.roomID))
@@ -2057,7 +2233,8 @@ public final class RoomRepository: Sendable {
             return
         }
         let now = clock()
-        for entry in sync.entries where entry.nodeNum != 0 {
+        let me = mesh.myNodeNum.value
+        for entry in sync.entries where entry.nodeNum != 0 && Int32(bitPattern: entry.nodeNum) != me {
             try? await memberDao.recordReported(
                 roomId: roomId,
                 nodeNum: Int32(bitPattern: entry.nodeNum),
@@ -2078,6 +2255,10 @@ public final class RoomRepository: Sendable {
             await handleRotationNotice(packet: packet, event: event, roomId: roomId)
             return
         }
+        if event.kind == .left {
+            await handleLeftNotice(packet: packet, event: event, roomId: roomId)
+            return
+        }
         if event.kind != .joined {
             return
         }
@@ -2086,7 +2267,7 @@ public final class RoomRepository: Sendable {
             return
         }
         let joiner = Int32(bitPattern: event.nodeNum)
-        if joiner == 0 {
+        if joiner == 0 || joiner == mesh.myNodeNum.value {
             return
         }
         let isNews = (try? await memberDao.findEntity(roomId: roomId, nodeNum: joiner)) == nil
@@ -2096,6 +2277,31 @@ public final class RoomRepository: Sendable {
         if isNews && joiner != mesh.myNodeNum.value {
             greet(roomId: roomId)
         }
+    }
+
+    private func handleLeftNotice(packet: MeshPacket, event: Meshchat_RosterEvent, roomId: Int32) async {
+        let from = Int32(bitPattern: packet.from)
+        guard Int32(bitPattern: event.nodeNum) == from, from != 0 else { return }
+        guard (try? await memberDao.findEntity(roomId: roomId, nodeNum: from)) != nil else { return }
+        try? await memberDao.remove(roomId: roomId, nodeNum: from)
+        try? await handovers.delete(roomId: roomId, nodeNum: from)
+        sentHandoverGenerations.withLock { _ = $0.removeValue(forKey: MemberInRoom(roomId: roomId, nodeNum: from)) }
+        if let slot = ChannelSlotManager.slotOf(channels: mesh.channels.value, roomId: roomId) {
+            await noticeInRoom(slot: slot, text: "\(await leftName(nodeNum: from)) left the room", roomId: roomId)
+        }
+        if mesh.myNodeNum.value != nil,
+            keyChangeSetting() != .never,
+            roomKeyMade.isMadeByMe(roomId: roomId)
+        {
+            roomKeyMade.markDue(roomId: roomId, generation: roomKeys.generationOf(roomId: roomId))
+        }
+    }
+
+    private func leftName(nodeNum: Int32) async -> String {
+        if let card = try? await personCardDao.find(nodeNum: nodeNum), !card.name.isEmpty {
+            return card.name
+        }
+        return MeshConstants.formatNodeId(nodeNum)
     }
 
     /// A member says the room has moved to a new key.
@@ -2118,7 +2324,7 @@ public final class RoomRepository: Sendable {
         }
         try? roomKeys.markSuperseded(roomId: roomId, generation: Int(event.generation))
         mesh.refreshRoomKinds()
-        if let slot = ChannelSlotManager.slotOf(channels: mesh.channels.value, roomId: roomId) {
+        if !event.quiet, let slot = ChannelSlotManager.slotOf(channels: mesh.channels.value, roomId: roomId) {
             await noticeInRoom(
                 slot: slot,
                 text: "This room moved to a new key. Nothing more will be sent here until yours arrives. "
@@ -2154,6 +2360,8 @@ public final class RoomRepository: Sendable {
     private static let noticeNode: Int32 = 0
     private static let publicKeySize = 32
     private static let pkiPayloadBudget = MeshConstants.dataPayloadLen - MeshConstants.pkcOverhead
+    private static let higherGenerationBlockMillis: Int64 = 24 * 60 * 60 * 1_000
+    private static let maxHandoverGenerationRange = 8
     private static let maxAttempts = 5
     private static let attemptWindowMillis: Int64 = 60_000
     private static let greetingSpread: Int64 = 30_000

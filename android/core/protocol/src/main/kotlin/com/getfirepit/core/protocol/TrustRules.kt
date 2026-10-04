@@ -71,7 +71,9 @@ object TrustRules {
         senderIsMember: Boolean,
         grantGeneration: Int,
         currentGeneration: Int,
-    ): Boolean = !alreadyHeld || (senderIsMember && grantGeneration > currentGeneration)
+        awaitingScannedInvite: Boolean = false,
+    ): Boolean = !alreadyHeld || (senderIsMember && grantGeneration > currentGeneration) ||
+        (awaitingScannedInvite && senderIsMember && grantGeneration == currentGeneration)
 
     /**
      * New keys for a room are believed only when they arrive privately, to us,

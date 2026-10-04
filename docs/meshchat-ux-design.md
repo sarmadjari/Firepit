@@ -427,6 +427,14 @@ Marker language: personal = the person's tag (`short_name`) in identity colour w
 
 As built (2026-10-03), Settings is one page on both apps, with the same sections in the same order — You, Radio, Notifications, Messages, Privacy, Map, Appearance, About — and the same wording. Each question is answered where it is asked: Android with fields, switches and chip rows; iOS with fields, switches and menus showing the current answer. Only Devices, Nodes, Offline areas and Dropped pins open screens of their own. The wireframe below is the original plan.
 
+In **Messages**, the row **Change room keys** offers **Daily** (default),
+**Weekly** and **Never**. The footnote is:
+"Rooms you made get new keys once a day, so anyone who copied keys off a phone
+stops being able to read them. The room gets a short notice and each member
+gets one private message." Weekly says "once a week"; Never says "Room keys
+change only when someone is removed." A scheduled change posts no conversation line. A member leaving posts
+"`<name> left the room`".
+
 ```
 ┌──────────────────────────────────────────┐
 │ Settings                                 │

@@ -45,6 +45,8 @@ import com.getfirepit.core.protocol.MeshtasticChannel
 import com.getfirepit.core.protocol.PacketOrigin
 import com.getfirepit.core.protocol.PositionPrecision
 import com.getfirepit.core.protocol.RangeMode
+import com.getfirepit.core.protocol.RoomKeyChange
+import com.getfirepit.core.protocol.ScheduledKeyChange
 import com.getfirepit.core.protocol.TrustRules
 import com.getfirepit.protocol.meshchat.Invite
 import com.getfirepit.protocol.meshchat.Inviter
@@ -62,6 +64,7 @@ import com.getfirepit.protocol.meshchat.SealedDirect
 import com.getfirepit.protocol.meshchat.SealedDirectRefused
 import com.getfirepit.core.transport.RadioLink
 import java.util.concurrent.ConcurrentHashMap
+import java.util.Collections
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.abs
@@ -88,6 +91,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okio.ByteString
 import okio.ByteString.Companion.decodeBase64
 import okio.ByteString.Companion.toByteString
@@ -160,6 +165,8 @@ class RoomRepository @Inject constructor(
     private val peerKeyDao: PeerKeyDao,
     private val pinDao: MapPinDao,
     private val roomActivity: RoomActivityDao,
+    private val keyChangePreferences: RoomKeyChangePreferences,
+    private val roomKeyMade: RoomKeyMadeStore,
     private val handovers: PendingHandoverDao,
     private val history: RoomHistory,
     private val sharingStore: SharingStore,
@@ -167,6 +174,8 @@ class RoomRepository @Inject constructor(
 ) {
 
     private val _opened = MutableSharedFlow<OpenedInRoom>(extraBufferCapacity = 32)
+    private val scheduledRotations = ConcurrentHashMap<Int, Unit>()
+    private val rotationLocks = ConcurrentHashMap<Int, Mutex>()
 
     /**
      * Positions, pins and position questions, opened from a room's seal and
@@ -186,6 +195,7 @@ class RoomRepository @Inject constructor(
      * whose radio takes it every time.
      */
     private val handoverAcks = ConcurrentHashMap<Pair<Int, Int>, Int>()
+    private val sentHandoverGenerations = ConcurrentHashMap<Pair<Int, Int>, MutableSet<Int>>()
 
     /** When each member heard still sealing under an old key was last handed the new one, apart from [handoverTried]. */
     private val oldKeyRetried = ConcurrentHashMap<Int, Long>()
@@ -503,6 +513,8 @@ class RoomRepository @Inject constructor(
         val now = System.currentTimeMillis()
         memberDao.record(roomId, myNodeNum, now, invitedBy = myNodeNum)
         roomActivity.joined(roomId, now)
+        roomKeyMade.record(roomId, RoomKeyStore.FIRST, now)
+        roomKeyMade.markMadeByMe(roomId)
 
         return RoomChannel(
             index = slot,
@@ -763,7 +775,10 @@ class RoomRepository @Inject constructor(
      *
      * Anyone not reached is remembered and handed the key when next heard.
      */
-    suspend fun rotateRoom(roomId: Int, remove: Set<Int> = emptySet()): RotationResult {
+    suspend fun rotateRoom(roomId: Int, remove: Set<Int> = emptySet(), scheduled: Boolean = false): RotationResult =
+        rotationLock(roomId).withLock { rotateRoomLocked(roomId, remove, scheduled) }
+
+    private suspend fun rotateRoomLocked(roomId: Int, remove: Set<Int>, scheduled: Boolean): RotationResult {
         val myNodeNum = mesh.myNodeNum.value ?: throw RoomError.NotConnected
         val room = ChannelSlotManager.findByRoomId(mesh.channels.value, roomId)
             ?: throw RoomError.InviteInvalid
@@ -779,9 +794,11 @@ class RoomRepository @Inject constructor(
             generation = previous + 1,
             psk = RoomCrypto.generatePsk(),
             firepitKey = HourKey(RoomRatchet.hourOf(roomKeys.time.wallMillis()), RoomCipher.generateKey()),
+            quiet = scheduled,
         )
         // The store keeps its own copy of the new key; this one goes when the rotation is done.
         try {
+            val previousMadeAt = roomKeyMade.record(roomId)?.madeAt ?: 0L
             // Anyone still owed a key from an earlier rotation holds an older one
             // than [previous], and missed its removals too: their handover has to
             // be sealed under what they actually hold and carry both.
@@ -792,12 +809,15 @@ class RoomRepository @Inject constructor(
             // leave members told the room moved and nobody remembering to hand
             // them the key it moved to.
             val owed = withContext(NonCancellable) {
-                announceRotation(room.index, roomId, myNodeNum, previous, keys.generation)
+                val now = System.currentTimeMillis()
+                announceRotation(room.index, roomId, myNodeNum, previous, keys.generation, quiet = scheduled)
                 admin.setChannel(channelFor(room.index, room.name, keys.psk, roomId))
                 roomKeys.remember(roomId, keys.firepitKey, keys.generation)
+                roomActivity.joined(roomId, now)
+                roomKeyMade.record(roomId, keys.generation, now)
+                roomKeyMade.clearDue(roomId)
                 remove.forEach { memberDao.remove(roomId, it) }
 
-                val now = System.currentTimeMillis()
                 val owed = memberDao.nodeNumsIn(roomId).filter { it != myNodeNum }.map { member ->
                     val earlier = stillOwed[member]
                     PendingHandoverEntity(
@@ -814,28 +834,39 @@ class RoomRepository @Inject constructor(
                 // round: the hourly erase keeps whichever generation a record says
                 // a member still holds, and must never catch a moment with none.
                 owed.forEach { handovers.upsert(it) }
+                owed.forEach {
+                    sentHandoverGenerations.putIfAbsent(it.roomId to it.nodeNum, Collections.synchronizedSet(mutableSetOf()))
+                }
                 val owedNodes = owed.map { it.nodeNum }.toSet()
                 handovers.forRoom(roomId)
                     .filter { it.nodeNum !in owedNodes }
-                    .forEach { handovers.delete(roomId, it.nodeNum) }
-                noticeInRoom(room.index, rotationNotice(remove), roomId)
+                    .forEach {
+                        handovers.delete(roomId, it.nodeNum)
+                        sentHandoverGenerations.remove(roomId to it.nodeNum)
+                    }
+                if (!scheduled) noticeInRoom(room.index, rotationNotice(remove), roomId)
                 owed
-            }
-
-            // Just tried, so their radio's own acknowledgement of it does not set
-            // off a retry; and counted afresh for the key being handed now.
-            val handedAt = System.currentTimeMillis()
-            owed.forEach { record ->
-                handoverTried[record.nodeNum] = handedAt
-                handoverAcks.remove(roomId to record.nodeNum)
             }
 
             // Sent a moment apart and awaited together: one member out of range
             // must not hold up everyone else's key for the length of a timeout.
-            owed.forEach { record -> handingOver.merge(roomId to record.nodeNum, 1, Int::plus) }
+            val immediate = if (scheduled) {
+                owed.filter { record ->
+                    memberDao.findEntity(roomId, record.nodeNum)?.lastHeard?.let { it >= previousMadeAt } == true
+                }
+            } else {
+                owed
+            }
+            // Just tried, so their radio's own acknowledgement of it does not set
+            // off a retry.
+            val handedAt = System.currentTimeMillis()
+            immediate.forEach { record ->
+                handoverTried[record.nodeNum] = handedAt
+            }
+            immediate.forEach { record -> handingOver.merge(roomId to record.nodeNum, 1, Int::plus) }
             val reached = try {
                 coroutineScope {
-                    owed.mapIndexed { order, record ->
+                    immediate.mapIndexed { order, record ->
                         async {
                             delay(HANDOVER_SPACING * order)
                             record.nodeNum.takeIf { handOver(record, keys) }
@@ -843,7 +874,7 @@ class RoomRepository @Inject constructor(
                     }.awaitAll().filterNotNull().toSet()
                 }
             } finally {
-                owed.forEach { record -> doneHandingOver(roomId to record.nodeNum) }
+                immediate.forEach { record -> doneHandingOver(roomId to record.nodeNum) }
             }
             // Still owed until their app seals something under the new key.
             reached.forEach { member -> handoverAcks.merge(roomId to member, 1, Int::plus) }
@@ -864,9 +895,12 @@ class RoomRepository @Inject constructor(
         val psk: ByteArray,
         /** One hour's key: whoever is handed it reads from that hour on, and nothing before. */
         val firepitKey: HourKey,
+        val quiet: Boolean,
     )
 
     private fun PendingHandoverEntity.removedNodes(): List<Int> = removed.split(",").mapNotNull(String::toIntOrNull)
+
+    private fun rotationLock(roomId: Int): Mutex = rotationLocks.getOrPut(roomId) { Mutex() }
 
     /**
      * Hands one member the new keys, and says whether their radio confirmed it.
@@ -908,6 +942,7 @@ class RoomRepository @Inject constructor(
             room_psk = keys.psk.toByteString(),
             room_name = keys.roomName,
             removed = record.removedNodes(),
+            quiet = keys.quiet,
             sealed_key = KeyEnvelope.seal(
                 phoneKey,
                 keys.firepitKey.key,
@@ -919,7 +954,9 @@ class RoomRepository @Inject constructor(
         // only accept it under the one they hold now, and when a rotation came
         // while an earlier key was on its way, that is not known here.
         var confirmed = false
-        for (held in mayHold(record).reversed()) {
+        val sealGenerations = handoverSealGenerations(record)
+        if (sealGenerations.isEmpty()) return false
+        for (held in sealGenerations) {
             val sealed = sealFor(
                 keys.roomId,
                 myNodeNum,
@@ -943,8 +980,25 @@ class RoomRepository @Inject constructor(
             )
             if (mesh.sendAwaitingAck(packet, member, HANDOVER_ACK_TIMEOUT)) confirmed = true
         }
+        sentHandoverGenerations
+            .getOrPut(record.roomId to record.nodeNum) { Collections.synchronizedSet(mutableSetOf()) }
+            .add(record.generation)
         if (!confirmed) Log.w(TAG, "$member did not confirm the new key for room ${keys.roomId}")
         return confirmed
+    }
+
+    private suspend fun handoverSealGenerations(record: PendingHandoverEntity): List<Int> {
+        val range = mayHold(record)
+        if (range.count() > MAX_HANDOVER_GENERATION_RANGE) {
+            handovers.delete(record.roomId, record.nodeNum)
+            sentHandoverGenerations.remove(record.roomId to record.nodeNum)
+            return emptyList()
+        }
+        val sent = sentHandoverGenerations[record.roomId to record.nodeNum]
+            ?: return range.reversed().toList()
+        return (listOf(record.heldGeneration) + sent.filter { it in range })
+            .distinct()
+            .sorted()
     }
 
     /**
@@ -988,6 +1042,7 @@ class RoomRepository @Inject constructor(
         if (generation >= owed.generation) {
             if (handovers.deleteUpTo(roomId, member, generation) > 0) {
                 handoverAcks.remove(roomId to member)
+                sentHandoverGenerations.remove(roomId to member)
                 Log.i(TAG, "$member confirmed the key for room $roomId")
             }
         } else {
@@ -1028,6 +1083,7 @@ class RoomRepository @Inject constructor(
             generation = owed.generation,
             psk = psk.toByteArray(),
             firepitKey = key,
+            quiet = owed.removedNodes().isEmpty(),
         )
         val handed = try {
             handOver(owed, keys)
@@ -1048,7 +1104,14 @@ class RoomRepository @Inject constructor(
      * channel key — so this goes out on it — sealed under the old room key, so
      * members who hold it can open it and nobody holding only a radio can.
      */
-    private suspend fun announceRotation(slot: Int, roomId: Int, myNodeNum: Int, previous: Int, generation: Int) {
+    private suspend fun announceRotation(
+        slot: Int,
+        roomId: Int,
+        myNodeNum: Int,
+        previous: Int,
+        generation: Int,
+        quiet: Boolean = false,
+    ) {
         val sealed = sealFor(
             roomId,
             myNodeNum,
@@ -1058,6 +1121,7 @@ class RoomRepository @Inject constructor(
                     kind = RosterEvent.Kind.KEY_ROTATED,
                     node_num = myNodeNum,
                     generation = generation,
+                    quiet = quiet,
                 ),
             ),
             generation = previous,
@@ -1081,6 +1145,18 @@ class RoomRepository @Inject constructor(
 
     /** Applies a rotation somebody else performed. See [TrustRules.rotationAcceptable]. */
     private suspend fun handleKeyRotation(
+        packet: MeshPacket,
+        rotation: KeyRotation,
+        sealedRoomId: Int?,
+        sealedGeneration: Int?,
+        myNodeNum: Int,
+    ) {
+        rotationLock(rotation.room_id).withLock {
+            handleKeyRotationLocked(packet, rotation, sealedRoomId, sealedGeneration, myNodeNum)
+        }
+    }
+
+    private suspend fun handleKeyRotationLocked(
         packet: MeshPacket,
         rotation: KeyRotation,
         sealedRoomId: Int?,
@@ -1116,6 +1192,7 @@ class RoomRepository @Inject constructor(
         admin.setChannel(channelFor(slot, rotation.room_name, psk, roomId))
         try {
             roomKeys.remember(roomId, HourKey(rotation.key_hour, firepitKey), rotation.generation)
+            roomKeyMade.record(roomId, rotation.generation, System.currentTimeMillis())
         } finally {
             firepitKey.fill(0)
         }
@@ -1123,7 +1200,7 @@ class RoomRepository @Inject constructor(
         // Holding the new key ends being left behind, if a notice got here first.
         mesh.refreshRoomKinds()
 
-        noticeInRoom(slot, rotationNotice(rotation.removed.toSet()), roomId)
+        if (!rotation.quiet || rotation.removed.isNotEmpty()) noticeInRoom(slot, rotationNotice(rotation.removed.toSet()), roomId)
         Log.i(TAG, "took the new key for room $roomId, generation ${rotation.generation}")
         // Something sealed under the new key, so whoever handed it over knows
         // our app has it, not only our radio.
@@ -1186,13 +1263,24 @@ class RoomRepository @Inject constructor(
      * read back, and the slots are rewritten with history placement held off,
      * so no in-between layout can file one room's history under another.
      */
-    suspend fun leaveRoom(roomId: Int, slot: Int? = null) = history.whileRearranging {
+    suspend fun leaveRoom(roomId: Int, slot: Int? = null, announce: Boolean = true) = history.whileRearranging {
         val channels = ChannelSlotManager.rooms(mesh.channels.value)
         val leaving = (
             slot?.let { index -> channels.firstOrNull { it.index == index && it.id == roomId } }
                 ?: channels.firstOrNull { it.id == roomId && roomId != 0 }
             ) ?: throw RoomError.InviteInvalid
         val plan = planTakingOff(leaving.index)
+        val myNodeNum = mesh.myNodeNum.value
+        if (announce && roomId != 0 && myNodeNum != null && roomKeys.canSeal(roomId)) {
+            sendSealed(
+                roomId,
+                MeshChatControl(
+                    version = InviteCodec.VERSION,
+                    roster_event = RosterEvent(kind = RosterEvent.Kind.LEFT, node_num = myNodeNum),
+                ),
+                priority = MeshPacket.Priority.RELIABLE,
+            )
+        }
 
         // What sits in the slot unfiled is this channel's, or this room's from
         // before rooms were recorded. A room's own history goes by its id,
@@ -1210,6 +1298,7 @@ class RoomRepository @Inject constructor(
         if (roomId == 0) return@whileRearranging
         memberDao.deleteRoom(roomId)
         roomKeys.forget(roomId)
+        roomKeyMade.forget(roomId)
         roomActivity.forget(roomId)
         handovers.deleteRoom(roomId)
         issuedInvites.entries.removeAll { it.value.roomId == roomId }
@@ -1240,6 +1329,54 @@ class RoomRepository @Inject constructor(
         }
         range.keepPublic()
         Log.i(TAG, "took every Firepit room off this radio")
+    }
+
+    private fun launchScheduledChangeIfDue(roomId: Int, generation: Int, receivedAt: Long) {
+        if (scheduledRotations.putIfAbsent(roomId, Unit) != null) return
+        scope.launch {
+            try {
+                rotationLock(roomId).withLock {
+                    if (!scheduledChangeDue(roomId, generation, receivedAt, alreadyRotating = false)) return@withLock
+                    rotateRoomLocked(roomId, remove = emptySet(), scheduled = true)
+                }
+            } catch (cause: RoomError.NotConnected) {
+                Log.w(TAG, "scheduled room-key change for $roomId skipped: not connected")
+            } catch (cause: Exception) {
+                Log.w(TAG, "scheduled room-key change for $roomId failed", cause)
+            } finally {
+                scheduledRotations.remove(roomId)
+            }
+        }
+    }
+
+    private suspend fun scheduledChangeDue(roomId: Int, evidenceGeneration: Int, evidenceReceivedAt: Long, alreadyRotating: Boolean): Boolean {
+        val myNodeNum = mesh.myNodeNum.value ?: return false
+        val current = roomKeys.generationOf(roomId)
+        if (evidenceGeneration != current) return false
+        val existing = roomKeyMade.record(roomId)
+        if (existing == null || existing.generation != current) {
+            roomKeyMade.record(roomId, current, System.currentTimeMillis())
+            return false
+        }
+        val freshAfter = existing.madeAt + (ScheduledKeyChange.intervalMillis(keyChangePreferences.choice.value) ?: return false)
+        if (!roomKeyMade.isDueNow(roomId) && evidenceReceivedAt < freshAfter) return false
+        val pending = handovers.forRoom(roomId)
+        if (roomKeys.isSuperseded(roomId)) return false
+        if (pending.any { memberDao.findEntity(roomId, it.nodeNum)?.lastHeard?.let { heard -> heard >= existing.madeAt } == true }) {
+            return false
+        }
+        return ScheduledKeyChange.shouldChange(
+            isMaker = roomKeyMade.isMadeByMe(roomId),
+            setting = keyChangePreferences.choice.value,
+            keyAgeMillis = if (roomKeyMade.isDueNow(roomId)) {
+                ScheduledKeyChange.intervalMillis(keyChangePreferences.choice.value)
+            } else {
+                System.currentTimeMillis() - existing.madeAt
+            },
+            hasCurrentGenerationEvidence = true,
+            connected = mesh.isConnected.value,
+            alreadyRotating = alreadyRotating,
+        )
     }
 
     /**
@@ -1495,6 +1632,7 @@ class RoomRepository @Inject constructor(
      */
     private suspend fun handleSealed(packet: MeshPacket, sealed: SealedMessage, myNodeNum: Int) {
         val privatelyToUs = packet.pki_encrypted && packet.to == myNodeNum
+        val currentForRoom = roomKeys.generationOf(sealed.room_id)
         if (!TrustRules.sealedPlacementOk(firepitRoomFor(packet.channel), sealed.room_id, privatelyToUs)) {
             Log.w(TAG, "sealed payload for room ${sealed.room_id} arrived on channel ${packet.channel}; ignored")
             return
@@ -1536,8 +1674,10 @@ class RoomRepository @Inject constructor(
         // Holding the current key is what makes somebody a member. An older
         // generation's key is exactly what a removed member still has, so it
         // reads history but vouches for nobody.
-        if (generation == roomKeys.generationOf(sealed.room_id)) {
-            memberDao.record(sealed.room_id, packet.from, System.currentTimeMillis())
+        val sealedUnderCurrent = generation == roomKeys.generationOf(sealed.room_id)
+        val receivedAt = System.currentTimeMillis()
+        if (sealedUnderCurrent) {
+            memberDao.record(sealed.room_id, packet.from, receivedAt)
             memberDao.recordOpenedGeneration(sealed.room_id, packet.from, generation)
         }
         settleHandover(sealed.room_id, packet.from, generation)
@@ -1549,6 +1689,8 @@ class RoomRepository @Inject constructor(
             sealedRoomId = sealed.room_id,
             sealedGeneration = generation,
         )
+        val stillMember = memberDao.findEntity(sealed.room_id, packet.from) != null
+        if (sealedUnderCurrent && stillMember) launchScheduledChangeIfDue(sealed.room_id, generation, receivedAt)
     }
 
     /**
@@ -1914,6 +2056,7 @@ class RoomRepository @Inject constructor(
             return
         }
 
+        rotationLock(grant.room_id).withLock {
         val generation = grant.generation.takeIf { it > 0 } ?: RoomKeyStore.FIRST
         val held = ChannelSlotManager.findByRoomId(mesh.channels.value, grant.room_id)
         val acceptable = TrustRules.mayTakeGrant(
@@ -1921,6 +2064,7 @@ class RoomRepository @Inject constructor(
             senderIsMember = memberDao.findEntity(grant.room_id, packet.from) != null,
             grantGeneration = generation,
             currentGeneration = roomKeys.generationOf(grant.room_id),
+            awaitingScannedInvite = true,
         )
         if (!acceptable) {
             _awaiting.value = null
@@ -1964,15 +2108,21 @@ class RoomRepository @Inject constructor(
         )
 
         val now = System.currentTimeMillis()
-        mesh.myNodeNum.value?.let { me -> memberDao.record(grant.room_id, me, now, invitedBy = packet.from) }
+        mesh.myNodeNum.value?.let { me ->
+            val invitedBy = packet.from.takeUnless { roomKeyMade.isMadeByMe(grant.room_id) }
+            memberDao.record(grant.room_id, me, now, invitedBy = invitedBy)
+        }
         memberDao.record(grant.room_id, packet.from, now, invitedBy = packet.from)
         roomActivity.recordActivity(grant.room_id, now)
+        roomKeyMade.record(grant.room_id, generation, now)
+        roomKeyMade.clearDue(grant.room_id)
         // Holding the key the room moved to ends being left behind in it.
         mesh.refreshRoomKinds()
 
         _awaiting.value = null
         Log.i(TAG, "let into room ${grant.room_id} in slot $slot")
         shareCardWith(grant.room_id)
+        }
     }
 
     /**
@@ -2074,8 +2224,9 @@ class RoomRepository @Inject constructor(
         }
 
         val now = System.currentTimeMillis()
+        val me = mesh.myNodeNum.value
         sync.entries
-            .filter { it.node_num != 0 }
+            .filter { it.node_num != 0 && it.node_num != me }
             .forEach { entry ->
                 memberDao.recordReported(roomId, entry.node_num, now, entry.invited_by.takeIf { it != 0 })
             }
@@ -2094,12 +2245,16 @@ class RoomRepository @Inject constructor(
             handleRotationNotice(packet, event, roomId)
             return
         }
+        if (event.kind == RosterEvent.Kind.LEFT) {
+            handleLeftNotice(packet, event, roomId)
+            return
+        }
         if (event.kind != RosterEvent.Kind.JOINED) return
         if (event.invited_by != packet.from) {
             Log.w(TAG, "roster event from ${packet.from} claims inviter ${event.invited_by}; ignored")
             return
         }
-        val joiner = event.node_num.takeIf { it != 0 } ?: return
+        val joiner = event.node_num.takeIf { it != 0 && it != mesh.myNodeNum.value } ?: return
         val isNews = memberDao.findEntity(roomId, joiner) == null
         memberDao.record(roomId, joiner, System.currentTimeMillis(), invitedBy = event.invited_by)
         // Vouched: whoever sent this compared fingerprints with the newcomer in
@@ -2113,6 +2268,31 @@ class RoomRepository @Inject constructor(
         // newcomer sees radio names for everyone else already in the room.
         if (isNews && joiner != mesh.myNodeNum.value) greet(roomId)
     }
+
+    private suspend fun handleLeftNotice(packet: MeshPacket, event: RosterEvent, roomId: Int) {
+        if (event.node_num != packet.from) {
+            Log.w(TAG, "left event from ${packet.from} names ${event.node_num}; ignored")
+            return
+        }
+        val leaver = event.node_num.takeIf { it != 0 } ?: return
+        if (memberDao.findEntity(roomId, leaver) == null) return
+        memberDao.remove(roomId, leaver)
+        handovers.delete(roomId, leaver)
+        sentHandoverGenerations.remove(roomId to leaver)
+        val slot = ChannelSlotManager.slotOf(mesh.channels.value, roomId) ?: return
+        noticeInRoom(slot, "${leftName(leaver)} left the room", roomId)
+        val myNodeNum = mesh.myNodeNum.value
+        if (
+            myNodeNum != null &&
+            keyChangePreferences.choice.value != RoomKeyChange.NEVER &&
+            roomKeyMade.isMadeByMe(roomId)
+        ) {
+            roomKeyMade.markDue(roomId, roomKeys.generationOf(roomId))
+        }
+    }
+
+    private suspend fun leftName(nodeNum: Int): String =
+        personCardDao.find(nodeNum)?.name?.takeIf { it.isNotBlank() } ?: MeshConstants.formatNodeId(nodeNum)
 
     /**
      * A member says the room has moved to a new key.
@@ -2139,12 +2319,14 @@ class RoomRepository @Inject constructor(
         roomKeys.markSuperseded(roomId, event.generation)
         mesh.refreshRoomKinds()
         val slot = ChannelSlotManager.slotOf(mesh.channels.value, roomId) ?: return
-        noticeInRoom(
-            slot,
-            "This room moved to a new key. Nothing more will be sent here until yours arrives; " +
-                "if it doesn't, ask a member to invite you again.",
-            roomId,
-        )
+        if (!event.quiet) {
+            noticeInRoom(
+                slot,
+                "This room moved to a new key. Nothing more will be sent here until yours arrives; " +
+                    "if it doesn't, ask a member to invite you again.",
+                roomId,
+            )
+        }
         Log.i(TAG, "room $roomId moved on to generation ${event.generation}; waiting for our key")
     }
 
@@ -2179,6 +2361,7 @@ class RoomRepository @Inject constructor(
 
         /** What a PKI direct message leaves for the payload once the firmware adds its tag and nonce. */
         const val PKI_PAYLOAD_BUDGET = MeshConstants.DATA_PAYLOAD_LEN - MeshConstants.PKC_OVERHEAD
+        const val MAX_HANDOVER_GENERATION_RANGE = 8
 
         /** Enough for a fumbled scan, not enough to grind the token check. */
         const val MAX_ATTEMPTS = 5

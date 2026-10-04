@@ -65,9 +65,11 @@ public enum TrustRules {
         alreadyHeld: Bool,
         senderIsMember: Bool,
         grantGeneration: Int32,
-        currentGeneration: Int32
+        currentGeneration: Int32,
+        awaitingScannedInvite: Bool = false
     ) -> Bool {
         !alreadyHeld || (senderIsMember && grantGeneration > currentGeneration)
+            || (awaitingScannedInvite && senderIsMember && grantGeneration == currentGeneration)
     }
 
     /// New keys for a room are believed only when they arrive privately, to us,

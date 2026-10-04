@@ -85,6 +85,13 @@ secret is mixed with that room's current hourly key, while the message stays the
 nonce bytes already present. Other room members still cannot read it: they have the room key, but not either phone's
 private key. If the phones share no room, the app keeps the older phone-to-phone seal and labels the privacy accordingly.
 
+Rooms also change to a new generation on a schedule: daily by default, weekly,
+or never. Only the room's maker does this, and never from a timer. Once the key
+is due, the next text the maker sends or current-generation sealed message it
+opens from a member performs the normal handover, one short packet per member.
+A member leaving sends a sealed `LEFT` event first; the maker then marks the
+room due so the remaining members move on at the next sign of life.
+
 ---
 
 ## 4. What travels on the air
@@ -103,6 +110,7 @@ choose to share it.
 | Your position while sharing | Sealed to the room you share with | That room's members |
 | A dropped pin | Sealed to the room | That room's members |
 | "Read by" receipts | Sealed, like messages | The sender |
+| Roster events (`JOINED`, `KEY_ROTATED`, `LEFT`) | Sealed on the room's own slot | Room members' phones |
 
 Everything that arrives is treated as untrusted input. Sealed content is only believed on the room it names, and
 from the person who sealed it. The full rules are in [security.md §5](security.md#5-what-may-go-on-the-air).

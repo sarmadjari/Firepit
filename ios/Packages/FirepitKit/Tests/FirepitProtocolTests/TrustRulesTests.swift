@@ -69,6 +69,10 @@ import Testing
             !TrustRules.mayTakeGrant(alreadyHeld: true, senderIsMember: true, grantGeneration: 2, currentGeneration: 2))
         #expect(
             !TrustRules.mayTakeGrant(alreadyHeld: true, senderIsMember: true, grantGeneration: 1, currentGeneration: 2))
+        #expect(
+            TrustRules.mayTakeGrant(
+                alreadyHeld: true, senderIsMember: true, grantGeneration: 2, currentGeneration: 2,
+                awaitingScannedInvite: true))
     }
 
     private func rotation(
