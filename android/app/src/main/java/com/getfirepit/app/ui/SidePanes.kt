@@ -1,5 +1,8 @@
 package com.getfirepit.app.ui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -23,7 +26,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -69,9 +74,12 @@ enum class Side { CHAT, MAP }
  * sides, only changes that padding: nothing is moved to a new parent, so a
  * focused composer keeps its focus and its keyboard.
  *
- * Dragging the divider shows where it will go without resizing either side;
- * both take their new width once, on release. A map resized on every frame
- * redraws on every frame, and MapLibre's surface stalls the UI thread each time.
+ * Dragging the divider shows where it will go without resizing either side.
+ * On release, and whenever a side opens or closes, the chat side moves to its
+ * new width over 250 ms (UX §6.11.11). The map takes its new size once: at
+ * the start when it grows, under the chat side that still covers it, or at the
+ * end when it shrinks. A map resized on every frame redraws on every frame,
+ * and MapLibre's surface stalls the UI thread each time.
  */
 @Composable
 fun SidePanes(
@@ -87,23 +95,49 @@ fun SidePanes(
     onSwapSides: () -> Unit,
     onTouched: (Side) -> Unit,
     modifier: Modifier = Modifier,
+    /** Where the chat side's width starts when the split opens: the whole window from Chat only, nothing from Map only. */
+    enterFrom: Float? = null,
+    /** A side being closed: the chat side moves over it, then [onClosed] lets the shell show one pane. */
+    closing: Side? = null,
+    onClosed: () -> Unit = {},
 ) {
     val chatFirst = layout.mapSide == MapSide.END
-    val startWidth = if (chatFirst) layout.chatWidth else layout.mapWidth
-    val endStart = startWidth + layout.gap
+    val goal = when (closing) {
+        Side.MAP -> window.width
+        Side.CHAT -> 0f
+        null -> layout.chatWidth
+    }
+    val chatWidth = remember { Animatable(enterFrom ?: layout.chatWidth) }
+    var mapWidth by remember {
+        mutableFloatStateOf((window.width - (enterFrom ?: layout.chatWidth) - layout.gap).coerceAtLeast(0f))
+    }
+    val closed by rememberUpdatedState(onClosed)
+    val closingNow by rememberUpdatedState(closing)
+    LaunchedEffect(goal, window.width, layout.gap) {
+        val finalMap = (window.width - goal - layout.gap).coerceAtLeast(0f)
+        if (goal < chatWidth.value) mapWidth = finalMap
+        chatWidth.animateTo(goal, tween(PANE_MOTION_MS, easing = EmphasizedDecelerate))
+        mapWidth = finalMap
+        if (closingNow != null) closed()
+    }
+
+    // Each side is anchored to its own outer edge, so a map wider than what
+    // shows slides under the chat side rather than past the window.
+    val shownChat = chatWidth.value
+    val startWidth = if (chatFirst) shownChat else window.width - shownChat
     val whole = PaneBounds(start = 0.dp, width = window.width.dp, windowWidth = window.width.dp)
     val chatBounds = if (chatWholeWindow) {
         whole
     } else {
         PaneBounds(
-            start = (if (chatFirst) 0f else endStart).dp,
-            width = layout.chatWidth.dp,
+            start = (if (chatFirst) 0f else window.width - shownChat).dp,
+            width = shownChat.dp,
             windowWidth = window.width.dp,
         )
     }
     val mapBounds = PaneBounds(
-        start = (if (chatFirst) endStart else 0f).dp,
-        width = layout.mapWidth.dp,
+        start = (if (chatFirst) window.width - mapWidth else 0f).dp,
+        width = mapWidth.dp,
         windowWidth = window.width.dp,
     )
 
@@ -355,3 +389,7 @@ fun Modifier.outOfReach(covered: Boolean): Modifier = if (covered) {
 
 /** Wide enough to hit without aiming, overlapping both sides. */
 private const val HANDLE_TOUCH = 48f
+
+/** Panes moving when the arrangement changes (UX §6.11.11). Removing animations in Android's settings removes this too. */
+private const val PANE_MOTION_MS = 250
+private val EmphasizedDecelerate = CubicBezierEasing(0.05f, 0.7f, 0.1f, 1f)

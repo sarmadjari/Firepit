@@ -17,6 +17,10 @@ struct AppShell: View {
     @State private var settingsOpen = false
     @State private var lastUsed = Side.chat
     @State private var wasSplit = false
+    /// A side being closed: the panes move first, then one pane shows (UX §6.11.11).
+    @State private var closing: Side?
+    /// Where the chat side starts when two panes open again from one.
+    @State private var enterFrom: Double?
     private var preferences = LayoutPreferences()
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.layoutDirection) private var direction
@@ -81,7 +85,14 @@ struct AppShell: View {
                 layout: sides,
                 window: window,
                 chatMin: chatMin,
-                onSettle: { settle($0, window: window) },
+                enterFrom: enterFrom,
+                closing: closing,
+                onClosed: {
+                    let closed = closing
+                    closing = nil
+                    arrange(closed == .map ? .chatOnly : .mapOnly)
+                },
+                onSettle: { settle($0, layout: layout, window: window) },
                 onReset: { preferences.resetDivider() },
                 onSwapSides: { preferences.swapSides() },
                 chat: { chatSide.environment(\.listBesideConversation, sides.listBesideConversation) },
@@ -100,7 +111,7 @@ struct AppShell: View {
         return WideScreenControls(
             canSplit: Self.canSplit(window, choice, chatMin: chatMin),
             arrangement: choice.arrangement,
-            onArrange: { arrange($0) },
+            onArrange: { request($0, layout: layout, window: window) },
             onSwapSides: swap,
             onOpenSettings: settings
         )
@@ -176,17 +187,35 @@ struct AppShell: View {
         }
     }
 
-    private func settle(_ settle: DividerSettle, window: WindowShape) {
+    /// What the layout menu and a divider dragged closed ask for. Side by side, closing a side moves the panes first;
+    /// opening again from one side starts the split where that side is.
+    private func request(_ next: PaneArrangement, layout: PaneLayout, window: WindowShape) {
+        let current = preferences.choice.arrangement
+        if layout.isSideBySide && next != .chatAndMap {
+            closing = next == .chatOnly ? .map : .chat
+        } else if next == .chatAndMap && current != .chatAndMap {
+            enterFrom = current == .chatOnly ? window.width : 0
+            arrange(next)
+        } else {
+            arrange(next)
+        }
+    }
+
+    private func settle(_ settle: DividerSettle, layout: PaneLayout, window: WindowShape) {
         switch settle {
         case .share(let share): preferences.setShare(upright: window.isUpright, share)
-        case .closeChat: arrange(.mapOnly)
-        case .closeMap: arrange(.chatOnly)
+        case .closeChat: request(.mapOnly, layout: layout, window: window)
+        case .closeMap: request(.chatOnly, layout: layout, window: window)
         }
     }
 
     /// Unfolding keeps Settings open over the two sides; folding shows one pane, chosen in this order: Settings if it
     /// was open, the arrangement the user picked, then the side used last (UX §6.11.5).
     private func foldOrUnfold(_ isSplit: Bool) {
+        // The split that opened has taken its starting width; a later one starts settled. A close the window outran
+        // (a fold mid-animation) must not carry over to the next split.
+        Task { @MainActor in enterFrom = nil }
+        if !isSplit { closing = nil }
         if isSplit {
             wasSplit = true
             if app.router.selectedTab == .settings { settingsOpen = true }

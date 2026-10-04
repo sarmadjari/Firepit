@@ -96,6 +96,10 @@ fun FirepitApp(
     var chatsWholeWindow by remember { mutableStateOf(false) }
     // The side touched last, so folding back to one pane shows that one.
     var lastTouched by rememberSaveable { mutableStateOf(Side.CHAT) }
+    // A side being closed: the panes move first, then one pane shows (UX §6.11.11).
+    var closing by remember { mutableStateOf<Side?>(null) }
+    // Where the chat side starts when two panes open again from one.
+    var enterFrom by remember { mutableStateOf<Float?>(null) }
     var wasSplit by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(openRequest) {
@@ -140,6 +144,10 @@ fun FirepitApp(
 
     // Back to one pane: the side used last is the one that stays.
     LaunchedEffect(split) {
+        // The split that opened has taken its starting width; a later one starts settled.
+        enterFrom = null
+        // A close the window outran (a fold mid-animation) must not carry over to the next split.
+        if (!split) closing = null
         if (split) {
             wasSplit = true
             if (selected == TopLevelDestination.SETTINGS) settingsOverPanes = true
@@ -194,15 +202,31 @@ fun FirepitApp(
         }
     }
 
+    // Settles an arrangement for real, once any panes have finished moving.
+    val arrangeNow: (PaneArrangement) -> Unit = { arrangement ->
+        shell.arrange(arrangement)
+        when (arrangement) {
+            PaneArrangement.CHAT_ONLY -> selected = TopLevelDestination.CHATS
+            PaneArrangement.MAP_ONLY -> selected = TopLevelDestination.MAP
+            PaneArrangement.CHAT_AND_MAP -> Unit
+        }
+    }
     val controls = WideScreenControls(
         canSplit = canSplit,
         arrangement = choice.arrangement,
         onArrange = { arrangement ->
-            shell.arrange(arrangement)
-            when (arrangement) {
-                PaneArrangement.CHAT_ONLY -> selected = TopLevelDestination.CHATS
-                PaneArrangement.MAP_ONLY -> selected = TopLevelDestination.MAP
-                PaneArrangement.CHAT_AND_MAP -> Unit
+            when {
+                // Side by side, closing a side moves the panes first.
+                layout is PaneLayout.SideBySide && arrangement != PaneArrangement.CHAT_AND_MAP ->
+                    closing = if (arrangement == PaneArrangement.CHAT_ONLY) Side.MAP else Side.CHAT
+
+                // Opening again from one side starts the split where that side is.
+                arrangement == PaneArrangement.CHAT_AND_MAP && choice.arrangement != PaneArrangement.CHAT_AND_MAP -> {
+                    enterFrom = if (choice.arrangement == PaneArrangement.CHAT_ONLY) window.width else 0f
+                    arrangeNow(arrangement)
+                }
+
+                else -> arrangeNow(arrangement)
             }
         },
         onSwapSides = if (layout is PaneLayout.Stacked) null else shell::swapSides,
@@ -265,6 +289,13 @@ fun FirepitApp(
                         onSwapSides = shell::swapSides,
                         onTouched = { lastTouched = it },
                         modifier = panes,
+                        enterFrom = enterFrom,
+                        closing = closing,
+                        onClosed = {
+                            val closed = closing
+                            closing = null
+                            arrangeNow(if (closed == Side.MAP) PaneArrangement.CHAT_ONLY else PaneArrangement.MAP_ONLY)
+                        },
                     )
 
                     is PaneLayout.Stacked -> StackedPanes(

@@ -712,7 +712,7 @@ When only the arrangement changes, the map is moved, not rebuilt, so no tiles re
   - Map side: filter chip · ◎ · ⬇ along the top, with ◫ in the top corner under the map's ⋮. Stacking the two keeps the top row free for notices and Show everyone on a map side only 280 wide.
 - **The layout glyph** is a split-view symbol from each platform's chrome icons (§9.6): two panes outlined in Firepit's 24 dp outlined set on Android, SF Symbols' `rectangle.split.2x1` on iOS.
 - **Motion:** changing arrangement moves the panes over 250 ms (emphasised deceleration). The map pane takes its new size once, at the end. While the divider is dragged, it follows the finger 1:1.
-  - As built: dragging shows a line where the divider will land, and both panes take their new width on release. Changing the arrangement is not animated yet, so it is also still under Reduce Motion.
+  - As built: dragging shows a line where the divider will land. On release, and when a side opens or closes, the chat side moves over 250 ms while the map takes its new size once: at the start when it grows, under the chat side, or at the end when it shrinks. Closing a side moves the panes first, then one pane shows. Reduce Motion (iOS) and removed animations (Android) make it instant.
 - **No new colours.** The divider is `outline` and the handle `text-2`.
 
 #### 6.11.12 Not in this stage
