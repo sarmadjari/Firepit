@@ -68,7 +68,7 @@ internal fun ChatMessage.toEntity(myNodeNum: Int) = MessageEntity(
     channel = channel,
     fromNodeNum = fromNodeNum,
     toNodeNum = toNodeNum,
-    peerNodeNum = if (isOutgoing) toNodeNum else fromNodeNum.takeIf { it != myNodeNum } ?: toNodeNum,
+    peerNodeNum = peerNode(myNodeNum),
     text = text,
     sentAt = sentAt,
     rxTime = rxTime,

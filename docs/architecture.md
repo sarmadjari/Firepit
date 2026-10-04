@@ -70,6 +70,11 @@ Three kinds of key, kept apart on purpose (full detail: [security.md §3](securi
 When someone joins a room, the room's firepit key is **sealed to their phone key** before it is sent, so even the
 radios that carry it cannot open it.
 
+Phone keys are kept with provenance. A key this phone checked in person during join approval wins over later roster
+or card announcements. A vouched roster `JOINED` can replace only a key that was not learned in person, and a person
+card never replaces. If a different key is accepted, the direct chat with that person gets a quiet notice telling them
+to check in person if the change was not expected.
+
 **The firepit key moves on every hour, one way.** Every phone derives the next hour's key from this hour's, and keeps
 only the hour just gone, for late packets. Older keys are erased every ten minutes, so a phone taken today opens
 nothing recorded before the hour that preceded it. Each member also seals under a key of their own for the hour, and

@@ -615,6 +615,11 @@ public struct PersonCardDao: Sendable {
     public func observeAllEntities() -> AsyncStream<[PersonCardEntity]> {
         stream(writer) { db in try PersonCardEntity.fetchAll(db, sql: "SELECT * FROM person_cards") }
     }
+    public func findEntity(nodeNum: Int32) async throws -> PersonCardEntity? {
+        try await writer.read { db in
+            try PersonCardEntity.fetchOne(db, sql: "SELECT * FROM person_cards WHERE nodeNum = ?", arguments: [nodeNum])
+        }
+    }
     public func upsert(card: PersonCardEntity) async throws { try await writer.write { db in try card.save(db) } }
     public func forget(nodeNum: Int32) async throws {
         try await writer.write { db in

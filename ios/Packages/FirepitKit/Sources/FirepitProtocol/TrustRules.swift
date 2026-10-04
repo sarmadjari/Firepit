@@ -164,22 +164,50 @@ public enum TrustRules {
         sealedUnderCurrent && addressedToUs && sharingWithRoom != nil && sharingWithRoom == queryRoom
     }
 
-    /// Whether to store a phone key for a node.
+    public enum PhoneKeySource: CaseIterable, Equatable, Sendable {
+        /// This phone approved the join after an in-person fingerprint check.
+        case inPerson
+        /// A sealed JOINED roster event from the member who let the newcomer in.
+        case vouched
+        /// A person card, or any other announcement that carries a phone key.
+        case announced
+    }
+
+    public struct PhoneKeyDecision: Equatable, Sendable {
+        public var store: Bool
+        public var inPerson: Bool
+        public var replaced: Bool
+    }
+
+    /// Whether to store a phone key for a node, and whether it has in-person
+    /// provenance.
     ///
-    /// Learned on first sight and then kept, so a card cannot quietly replace
-    /// somebody's key. Only `vouched` — a join a person approved, in front of
-    /// them — may replace one; that is how somebody who returns with a new phone
-    /// stays reachable. A false key gains nobody anything to read, since a
-    /// rotation still travels PKI to the member's own radio; at worst that
-    /// member misses one key.
-    public static func shouldStorePhoneKey(known: Data?, incoming: Data, vouched: Bool) -> Bool {
+    /// First sight is kept. The same key is kept as-is, except that seeing it in
+    /// person marks it as in-person. A different in-person key replaces any old
+    /// one; a vouched key replaces only one that was not learned in person; a
+    /// plain announcement never replaces.
+    public static func shouldStorePhoneKey(
+        known: Data?,
+        knownInPerson: Bool,
+        incoming: Data,
+        source: PhoneKeySource
+    ) -> PhoneKeyDecision {
         if known == nil {
-            return true
+            return PhoneKeyDecision(store: true, inPerson: source == .inPerson, replaced: false)
+        }
+        if known == incoming && source == .inPerson && !knownInPerson {
+            return PhoneKeyDecision(store: true, inPerson: true, replaced: false)
         }
         if known == incoming {
-            return false
+            return PhoneKeyDecision(store: false, inPerson: knownInPerson, replaced: false)
         }
-        return vouched
+        if source == .inPerson {
+            return PhoneKeyDecision(store: true, inPerson: true, replaced: true)
+        }
+        if source == .vouched && !knownInPerson {
+            return PhoneKeyDecision(store: true, inPerson: false, replaced: true)
+        }
+        return PhoneKeyDecision(store: false, inPerson: knownInPerson, replaced: false)
     }
 
     /// Whether a pin may be created or changed.

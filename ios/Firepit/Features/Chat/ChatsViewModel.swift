@@ -137,7 +137,7 @@ enum ChannelFilter: CaseIterable, Hashable {
 extension ChatMessage {
     /// Whoever is not us. Outgoing names the recipient, incoming names the sender.
     func peerOf(myNodeNum: Int32?) -> Int32 {
-        isOutgoing || fromNodeNum == myNodeNum ? toNodeNum : fromNodeNum
+        peerNode(myNodeNum: myNodeNum)
     }
 }
 
@@ -642,7 +642,7 @@ final class ChatsViewModel {
     private func reportRead(channel: Int?, peer: Int32?) async {
         guard presence.foreground.value, channel != nil || peer != nil else { return }
         // `state.messages` holds no reactions: they show no ticks, so they are not reported.
-        let incoming = Set(state.messages.filter { !$0.isOutgoing }.map(\.id))
+        let incoming = Set(state.messages.filter { !$0.isOutgoing && !$0.isNotice }.map(\.id))
         await receipts.read(channel: channel ?? 0, messageIds: incoming, peer: peer)
     }
 }

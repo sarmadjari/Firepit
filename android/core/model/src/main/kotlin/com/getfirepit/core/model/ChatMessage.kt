@@ -36,4 +36,16 @@ data class ChatMessage(
     val roomId: Int = 0,
 ) {
     val isDirect: Boolean get() = toNodeNum != BROADCAST_NODE_NUM
+    val isNotice: Boolean get() = fromNodeNum == NOTICE_NODE_NUM
+
+    /** The other person in a direct conversation, matching the database's peerNodeNum. */
+    fun peerNode(myNodeNum: Int?): Int =
+        if (isOutgoing) {
+            toNodeNum
+        } else {
+            fromNodeNum.takeIf { it != myNodeNum && it != NOTICE_NODE_NUM } ?: toNodeNum
+        }
 }
+
+/** No real node has zero, so it marks a local notice line. */
+const val NOTICE_NODE_NUM: Int = 0

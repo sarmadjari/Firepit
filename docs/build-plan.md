@@ -24,7 +24,7 @@ RTL-ready from Stage 3) · invite-link domain deferred until Stage 8.
 | 8 | v1.0 features | ✅ Built, emoji reactions last (2026-10-04) |
 | 9 | Release prep: accessibility and RTL pass, R8, store listing | ✅ Done 2026-10-04: accessibility, right to left, R8, 16 KB pages, store listing, no analytics. Left for release day: the release key and store submission |
 | 10 | The iPhone app | ✅ Built. An iPhone and an Android phone in one room over real radios is still to be tested |
-| 11 | Security within Meshtastic's limits: Signal-grade protections where the radio allows, with no message growing by a byte | In progress: Phases 1, 2, 3 and 5 done on both apps; Phase 6's signed-message mark built |
+| 11 | Security within Meshtastic's limits: Signal-grade protections where the radio allows, with no message growing by a byte | In progress: Phases 1, 2, 3, 5 and 6 done on both apps; Phase 4 next |
 | 12 | Large screens: the conversation and the map side by side on foldables, tablets and wide windows; the phone app in narrow ones | Built on both apps, 2026-10-04 (decisions U-8 to U-14, UX §11.4). Open: the chat-to-map actions, which need features not built yet; the iOS 27.1 fold APIs; Figma frames; device runs on an iPhone Duo, a Flip and a TriFold |
 
 ---
@@ -1045,6 +1045,23 @@ Done on both apps, with no change to any radio packet size (`ProtocolContractTes
   recorded grant will not open with only the joiner's phone key, and a stripped
   invite cannot be used. `scripts/check-android-interop.sh` writes and opens
   hedged envelopes in both directions.
+
+### Phase 6 record
+
+Done on both apps, with no change to any on-air message:
+
+- Meshtastic 2.8 signed room messages carry a visible per-message mark and say "Signature: Verified" in
+  message info. The mark is purely a display of the radio header bit; it adds no bytes.
+- `peer_keys` is schema v14 and records whether a phone key was checked in person on this phone.
+  Android migration 13→14 and iOS `v14_key_provenance` add `inPerson` with default false.
+- `TrustRules.shouldStorePhoneKey` now takes `IN_PERSON`, `VOUCHED` and `ANNOUNCED` sources. First sight is
+  kept; the same key seen in person is marked in-person; a different in-person key replaces any old key; a
+  vouched `JOINED` replaces only a key that was not learned in person; a card never replaces.
+- Replacing a different stored phone key writes a direct-chat notice: "Sam's phone key changed. If they did
+  not get a new phone, check with them in person." It is a history row, not a notification.
+- Tests cover the rule table on both apps, Room/GRDB migrations to v14, and direct notice filing/peer
+  mapping. The sealed-`JOINED` existing-member attack is covered by the iOS simulated mesh; Android's
+  JVM coverage stops at the shared rule table and UI/database peer mapping.
 
 ### Rules for every phase
 

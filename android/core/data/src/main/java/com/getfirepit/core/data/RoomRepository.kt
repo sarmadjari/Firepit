@@ -46,6 +46,7 @@ import com.getfirepit.core.protocol.PacketOrigin
 import com.getfirepit.core.protocol.PositionPrecision
 import com.getfirepit.core.protocol.RangeMode
 import com.getfirepit.core.protocol.TrustRules
+import com.getfirepit.core.protocol.TrustRules.PhoneKeySource
 import com.getfirepit.protocol.meshchat.Invite
 import com.getfirepit.protocol.meshchat.Inviter
 import com.getfirepit.protocol.meshchat.JoinHello
@@ -86,6 +87,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
@@ -215,6 +218,9 @@ class RoomRepository @Inject constructor(
 
     /** Recent attempts per node, so one stranger cannot grind the token check. */
     private val joinAttempts = ConcurrentHashMap<Int, List<Long>>()
+    private val phoneKeyMutex = Mutex()
+    private val approvingMutex = Mutex()
+    private val approvingJoins = mutableSetOf<Int>()
 
     private val _pendingJoins = MutableStateFlow<List<PendingJoin>>(emptyList())
 
@@ -415,19 +421,50 @@ class RoomRepository @Inject constructor(
     }
 
     /**
-     * Keeps a phone key per [TrustRules.shouldStorePhoneKey]: learned on first
-     * sight, replaced only by a join a person approved.
+     * Keeps a phone key per [TrustRules.shouldStorePhoneKey], tracking which
+     * keys this phone saw checked in person.
      */
-    private suspend fun learnPhoneKey(nodeNum: Int, key: ByteString, vouched: Boolean) {
-        if (!KeyEnvelope.isValidPublicKey(key.toByteArray())) return
-        val known = peerKeyDao.find(nodeNum)?.phoneKey?.decodeBase64()
-        if (!TrustRules.shouldStorePhoneKey(known, key, vouched)) {
-            if (known != null && known != key) {
-                Log.w(TAG, "a different phone key was offered for $nodeNum; kept the one first seen")
+    private data class PhoneKeyLearned(val stored: Boolean, val replaced: Boolean)
+
+    private suspend fun learnPhoneKey(nodeNum: Int, key: ByteString, source: PhoneKeySource): PhoneKeyLearned {
+        if (!KeyEnvelope.isValidPublicKey(key.toByteArray())) return PhoneKeyLearned(stored = false, replaced = false)
+        val learned = phoneKeyMutex.withLock {
+            val row = peerKeyDao.find(nodeNum)
+            val known = row?.phoneKey?.decodeBase64()
+            val decision = TrustRules.shouldStorePhoneKey(known, row?.inPerson == true, key, source)
+            if (!decision.store) {
+                if (known != null && known != key) {
+                    Log.w(TAG, "a different phone key was offered for $nodeNum; kept the one first seen")
+                }
+                PhoneKeyLearned(stored = false, replaced = false)
+            } else {
+                peerKeyDao.upsert(PeerKeyEntity(nodeNum, key.base64(), System.currentTimeMillis(), decision.inPerson))
+                PhoneKeyLearned(stored = true, replaced = decision.replaced)
             }
-            return
         }
-        peerKeyDao.upsert(PeerKeyEntity(nodeNum, key.base64(), System.currentTimeMillis()))
+        if (learned.replaced) noticeKeyChanged(nodeNum)
+        return learned
+    }
+
+    private suspend fun noticeKeyChanged(nodeNum: Int) {
+        val myNodeNum = mesh.myNodeNum.value ?: return
+        val name = personCardDao.findEntity(nodeNum)
+            ?.name
+            ?.takeIf { it.isNotBlank() }
+            ?: MeshConstants.formatNodeId(nodeNum)
+        messageDao.save(
+            ChatMessage(
+                id = MeshPacketBuilder.randomPacketId(),
+                channel = 0,
+                fromNodeNum = NOTICE_NODE,
+                toNodeNum = nodeNum,
+                text = "$name's phone key changed. If they did not get a new phone, check with them in person.",
+                sentAt = System.currentTimeMillis(),
+                status = MessageStatus.RECEIVED,
+                isOutgoing = false,
+            ),
+            myNodeNum,
+        )
     }
 
     /** Starts listening for join and roster traffic. Safe to call once per process. */
@@ -1486,7 +1523,7 @@ class RoomRepository @Inject constructor(
                 Log.w(TAG, "person card from ${packet.from} not sealed under a current room key; ignored")
                 return@let
             }
-            learnPhoneKey(packet.from, card.phone_key, vouched = false)
+            learnPhoneKey(packet.from, card.phone_key, PhoneKeySource.ANNOUNCED)
             val name = sanitizeMeshText(card.name)
             val tag = sanitizeMeshText(card.tag)
             // A card with no name is somebody who never chose one, or who took
@@ -1769,6 +1806,16 @@ class RoomRepository @Inject constructor(
      * which its own NodeDB therefore already holds: nothing needs adding.
      */
     suspend fun approveJoin(nodeNum: Int) {
+        val entered = approvingMutex.withLock { approvingJoins.add(nodeNum) }
+        if (!entered) return
+        try {
+            approveJoinOnce(nodeNum)
+        } finally {
+            approvingMutex.withLock { approvingJoins.remove(nodeNum) }
+        }
+    }
+
+    private suspend fun approveJoinOnce(nodeNum: Int) {
         val myNodeNum = mesh.myNodeNum.value ?: throw RoomError.NotConnected
         val request = _pendingJoins.value.firstOrNull { it.nodeNum == nodeNum } ?: return
         val issued = issuedInvites[request.inviteId] ?: run {
@@ -1828,9 +1875,9 @@ class RoomRepository @Inject constructor(
         clearPending(nodeNum)
 
         memberDao.record(request.roomId, nodeNum, System.currentTimeMillis(), invitedBy = myNodeNum)
-        // A person just checked this one in front of them, so it may replace
-        // whatever we held for that node before.
-        learnPhoneKey(nodeNum, request.phoneKey, vouched = true)
+        // This phone just checked this one in front of them, so it may replace
+        // whatever we held for that node before and is marked in-person.
+        learnPhoneKey(nodeNum, request.phoneKey, PhoneKeySource.IN_PERSON)
         noteActivity(request.roomId)
         Log.i(TAG, "let $nodeNum into room ${request.roomId}")
 
@@ -2148,14 +2195,20 @@ class RoomRepository @Inject constructor(
             return
         }
         val joiner = event.node_num.takeIf { it != 0 } ?: return
-        val isNews = memberDao.findEntity(roomId, joiner) == null
-        memberDao.record(roomId, joiner, System.currentTimeMillis(), invitedBy = event.invited_by)
-        // Vouched: whoever sent this compared fingerprints with the newcomer in
-        // person. It may replace a key we held, which is how somebody who comes
-        // back with a new phone stays reachable by the next rotation. Anyone
-        // abusing it gains nothing to read — a rotation still travels PKI to
-        // the member's own radio — and can only make one member miss a key.
-        learnPhoneKey(joiner, event.phone_key, vouched = true)
+        val existing = memberDao.findEntity(roomId, joiner)
+        val isNews = existing == null
+        val learned = if (joiner == mesh.myNodeNum.value) {
+            PhoneKeyLearned(stored = false, replaced = false)
+        } else {
+            // Vouched by the sender. It may replace only a key not checked in person.
+            learnPhoneKey(joiner, event.phone_key, PhoneKeySource.VOUCHED)
+        }
+        memberDao.record(
+            roomId,
+            joiner,
+            System.currentTimeMillis(),
+            invitedBy = event.invited_by.takeIf { isNews || learned.replaced },
+        )
         noteActivity(roomId)
         // Only the inviter has introduced themselves so far. Without this the
         // newcomer sees radio names for everyone else already in the room.

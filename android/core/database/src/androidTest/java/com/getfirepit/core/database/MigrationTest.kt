@@ -36,7 +36,7 @@ class MigrationTest {
             db.execSQL("INSERT INTO channel_state (channel, lastReadAt, muted) VALUES (2, 50, 1)")
         }
 
-        helper.runMigrationsAndValidate(DB, 13, true, *FirepitDatabase.MIGRATIONS).use { db ->
+        helper.runMigrationsAndValidate(DB, 14, true, *FirepitDatabase.MIGRATIONS).use { db ->
             db.query("SELECT text, roomId FROM messages WHERE id = 1").use { cursor ->
                 cursor.moveToFirst()
                 assertEquals("kept", cursor.getString(0))
@@ -74,13 +74,28 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun thirteenToFourteenAddsPhoneKeyProvenanceAndKeepsKeys() {
+        helper.createDatabase("$DB-13-14", 13).use { db ->
+            db.execSQL("INSERT INTO peer_keys (nodeNum, phoneKey, learnedAt) VALUES (7, 'abc', 100)")
+        }
+
+        helper.runMigrationsAndValidate("$DB-13-14", 14, true, *FirepitDatabase.MIGRATIONS).use { db ->
+            db.query("SELECT phoneKey, inPerson FROM peer_keys WHERE nodeNum = 7").use { cursor ->
+                cursor.moveToFirst()
+                assertEquals("abc", cursor.getString(0))
+                assertEquals(0, cursor.getInt(1))
+            }
+        }
+    }
+
     /** Every version still in the wild reaches the current one through the chain. */
     @Test
     fun everyExportedVersionUpgradesToTheCurrentOne() {
-        (1..12).forEach { version ->
+        (1..13).forEach { version ->
             val name = "$DB-from-$version"
             helper.createDatabase(name, version).close()
-            helper.runMigrationsAndValidate(name, 13, true, *FirepitDatabase.MIGRATIONS).close()
+            helper.runMigrationsAndValidate(name, 14, true, *FirepitDatabase.MIGRATIONS).close()
         }
     }
 

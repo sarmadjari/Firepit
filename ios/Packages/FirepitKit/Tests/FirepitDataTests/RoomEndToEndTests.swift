@@ -618,7 +618,116 @@ struct RoomEndToEndTests {
         #expect(stored.contains { $0.text == "sealed" } == false)
     }
 
-    @Test func aSecondPhoneKeyForAKnownNodeIsNotAccepted() async throws {
+    @Test func aSealedJoinedCannotReplaceAnInPersonKeyButCanReplaceACardKeyWithAnAlert() async throws {
+        let (mesh, phones) = try await makeMesh(3)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await join(phones[1], invite: invite, approver: phones[0])
+        let invite2 = try await phones[0].roomRepository.buildInvite(roomId: room.id)
+        try await join(phones[2], invite: invite2, approver: phones[0])
+        await settle(mesh)
+        try await phones[0].personCardDao.upsert(
+            card: PersonCardEntity(
+                nodeNum: phones[1].radio.nodeNum,
+                name: "B",
+                tag: "BB",
+                colourSlot: nil,
+                updatedAt: currentEpochMillis()))
+        let original = try #require(await phones[0].meshRepository.phoneKeyOf(nodeNum: phones[1].radio.nodeNum))
+
+        let falseInPersonAttack = KeyEnvelope.publicBytes(P256.KeyAgreement.PrivateKey().publicKey)
+        let beforeFirstJoined = try await phones[0].memberDao
+            .findEntity(roomId: room.id, nodeNum: phones[1].radio.nodeNum)?.lastHeard ?? 0
+        try injectJoined(
+            joiner: phones[1].radio.nodeNum,
+            phoneKey: falseInPersonAttack,
+            inviter: phones[2],
+            receiver: phones[0],
+            room: room,
+            packetId: 910_001,
+            on: mesh)
+        #expect(
+            await waitUntil {
+                (try? await phones[0].memberDao.findEntity(roomId: room.id, nodeNum: phones[1].radio.nodeNum)?
+                    .lastHeard ?? 0) ?? 0 > beforeFirstJoined
+            })
+        #expect(await phones[0].meshRepository.phoneKeyOf(nodeNum: phones[1].radio.nodeNum) == original)
+        let keptMember = try #require(
+            try await phones[0].memberDao.findEntity(roomId: room.id, nodeNum: phones[1].radio.nodeNum))
+        #expect(keptMember.invitedBy == phones[0].radio.nodeNum)
+
+        try await phones[0].db.write { db in
+            try db.execute(
+                sql: "UPDATE peer_keys SET inPerson = 0 WHERE nodeNum = ?",
+                arguments: [phones[1].radio.nodeNum])
+        }
+        let falseCardReplacement = KeyEnvelope.publicBytes(P256.KeyAgreement.PrivateKey().publicKey)
+        try injectJoined(
+            joiner: phones[1].radio.nodeNum,
+            phoneKey: falseCardReplacement,
+            inviter: phones[2],
+            receiver: phones[0],
+            room: room,
+            packetId: 910_002,
+            on: mesh)
+        #expect(
+            await waitUntil {
+                await phones[0].meshRepository.phoneKeyOf(nodeNum: phones[1].radio.nodeNum) == falseCardReplacement
+            })
+        let replacedMember = try #require(
+            try await phones[0].memberDao.findEntity(roomId: room.id, nodeNum: phones[1].radio.nodeNum))
+        #expect(replacedMember.invitedBy == phones[2].radio.nodeNum)
+        let direct = try await firstValue(phones[0].messageDao.observeDirect(peer: phones[1].radio.nodeNum))
+        #expect(
+            direct.contains {
+                $0.fromNodeNum == 0
+                    && $0.text == "B's phone key changed. If they did not get a new phone, check with them in person."
+            })
+    }
+
+    @Test func aReapprovedInPersonJoinReplacesThePhoneKeyWithAnAlert() async throws {
+        let (_, phones) = try await makeMesh(2)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await join(phones[1], invite: invite, approver: phones[0])
+        let original = try #require(await phones[0].meshRepository.phoneKeyOf(nodeNum: phones[1].radio.nodeNum))
+        let replacement = KeyEnvelope.publicBytes(P256.KeyAgreement.PrivateKey().publicKey)
+        #expect(replacement != original)
+        try await phones[0].personCardDao.upsert(
+            card: PersonCardEntity(
+                nodeNum: phones[1].radio.nodeNum,
+                name: "B",
+                tag: "BB",
+                colourSlot: nil,
+                updatedAt: currentEpochMillis()))
+        // A live invite, as a second meeting in person would show: the first was spent letting them in.
+        let again = try await phones[0].roomRepository.buildInvite(roomId: room.id)
+        phones[0].roomRepository.pendingJoins.set([
+            PendingJoin(
+                nodeNum: phones[1].radio.nodeNum,
+                roomId: room.id,
+                inviteId: Int32(bitPattern: again.inviteID),
+                generation: phones[0].roomKeys.generationOf(roomId: room.id),
+                joinerKey: phones[1].radio.radioKey,
+                phoneKey: replacement,
+                askedAt: currentEpochMillis())
+        ])
+
+        try await phones[0].roomRepository.approveJoin(nodeNum: phones[1].radio.nodeNum)
+
+        #expect(
+            await waitUntil {
+                await phones[0].meshRepository.phoneKeyOf(nodeNum: phones[1].radio.nodeNum) == replacement
+            })
+        let stored = try #require(try await phones[0].peerKeyDao.find(nodeNum: phones[1].radio.nodeNum))
+        #expect(stored.inPerson)
+        let direct = try await firstValue(phones[0].messageDao.observeDirect(peer: phones[1].radio.nodeNum))
+        #expect(
+            direct.contains {
+                $0.fromNodeNum == 0
+                    && $0.text == "B's phone key changed. If they did not get a new phone, check with them in person."
+            })
+    }
+
+    @Test func aPersonCardNeverReplacesAKnownPhoneKey() async throws {
         let (mesh, phones) = try await makeMesh(2)
         let (room, invite) = try await createAndInvite(phones[0])
         try await join(phones[1], invite: invite, approver: phones[0])
@@ -651,8 +760,13 @@ struct RoomEndToEndTests {
         packet.channel = UInt32(room.index)
         packet.id = 999
         packet.decoded = data
+        let beforeCard = currentEpochMillis()
         mesh.inject(packet: packet, to: phones[0].radio.nodeNum)
-        try? await Task.sleep(for: .milliseconds(200))
+        #expect(
+            await waitUntil {
+                (try? await phones[0].personCardDao.findEntity(nodeNum: phones[1].radio.nodeNum)?.updatedAt ?? 0) ?? 0
+                    >= beforeCard
+            })
         #expect(await phones[0].meshRepository.phoneKeyOf(nodeNum: phones[1].radio.nodeNum) == pinned)
     }
 
@@ -1054,6 +1168,38 @@ private func sealedText(_ text: String, by phone: SimulatedPhone, roomId: Int32,
     return AirPacket(
         id: 0, from: phone.radio.nodeNum, to: broadcastNodeNum, channel: slot, portNum: .privateApp,
         payload: try outer.serializedData(), pkiEncrypted: false)
+}
+
+private func injectJoined(
+    joiner: Int32,
+    phoneKey: Data,
+    inviter: SimulatedPhone,
+    receiver: SimulatedPhone,
+    room: RoomChannel,
+    packetId: UInt32,
+    on mesh: SimulatedMesh
+) throws {
+    var event = Meshchat_RosterEvent()
+    event.kind = .joined
+    event.nodeNum = UInt32(bitPattern: joiner)
+    event.invitedBy = UInt32(bitPattern: inviter.radio.nodeNum)
+    event.generation = UInt32(inviter.roomKeys.generationOf(roomId: room.id))
+    event.phoneKey = phoneKey
+    var inner = Meshchat_MeshChatControl()
+    inner.rosterEvent = event
+    var outer = Meshchat_MeshChatControl()
+    outer.sealedMessage = try #require(
+        inviter.roomKeys.seal(roomId: room.id, sender: inviter.radio.nodeNum, plaintext: try inner.serializedData()))
+    var data = DataMessage()
+    data.portnum = .privateApp
+    data.payload = try outer.serializedData()
+    var packet = MeshPacket()
+    packet.from = UInt32(bitPattern: inviter.radio.nodeNum)
+    packet.to = UInt32(bitPattern: broadcastNodeNum)
+    packet.channel = UInt32(room.index)
+    packet.id = packetId
+    packet.decoded = data
+    mesh.inject(packet: packet, to: receiver.radio.nodeNum)
 }
 
 private func directAir(from: Int32, to: Int32, in mesh: SimulatedMesh, after index: Int) -> AirPacket? {

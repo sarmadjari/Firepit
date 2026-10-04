@@ -47,6 +47,23 @@ class ChatItemsTest {
     }
 
     @Test
+    fun `direct notices belong to the person named by toNodeNum`() {
+        val first = ChatMessage(
+            id = 901,
+            channel = 0,
+            fromNodeNum = 0,
+            toNodeNum = 7,
+            text = "key changed",
+            sentAt = at(9),
+        )
+        val second = first.copy(id = 902, toNodeNum = 8)
+
+        assertEquals(7, first.directListPeer(myNodeNum = 99))
+        assertEquals(8, second.directListPeer(myNodeNum = 99))
+        assertEquals(listOf("direct-7", "direct-8"), listOf(first, second).map { directListKey(it, 99) })
+    }
+
+    @Test
     fun `each day gets one marker`() {
         val items = buildChatItems(
             listOf(

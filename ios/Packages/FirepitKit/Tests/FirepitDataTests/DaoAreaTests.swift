@@ -20,6 +20,14 @@ import Testing
     #expect(rows.map(\.id) == [12])
 }
 
+@Test func messageObserveDirectFilesNoticeRowsUnderThePersonTheyName() async throws {
+    let queue = try makeDatabase()
+    let dao = MessageDao(queue)
+    try await dao.save(message: sampleMessage(id: 120, channel: 0, from: 0, to: 7), myNodeNum: 99)
+    let rows = try await firstValue(dao.observeDirect(peer: 7))
+    #expect(rows.map(\.id) == [120])
+}
+
 @Test func messageDirectLatestPicksNewestPerPeer() async throws {
     let queue = try makeDatabase()
     let dao = MessageDao(queue)

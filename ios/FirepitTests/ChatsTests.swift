@@ -113,6 +113,30 @@ struct ChatsTests {
         #expect(s.kind == nil)
     }
 
+    @Test func directNoticesBelongToThePersonNamedByToNodeNum() {
+        let first = ChatMessage(
+            id: 901,
+            channel: 0,
+            fromNodeNum: noticeNodeNum,
+            toNodeNum: 7,
+            text: "key changed",
+            sentAt: 1,
+            status: .received
+        )
+        let second = ChatMessage(
+            id: 902,
+            channel: 0,
+            fromNodeNum: noticeNodeNum,
+            toNodeNum: 8,
+            text: "key changed",
+            sentAt: 2,
+            status: .received
+        )
+        #expect(first.peerOf(myNodeNum: me) == 7)
+        #expect(second.peerOf(myNodeNum: me) == 8)
+        #expect(Set([first.peerOf(myNodeNum: me), second.peerOf(myNodeNum: me)]) == [7, 8])
+    }
+
     @Test func directOnlyByRadioTracksSealAvailability() {
         var s = state()
         s.directPeer = maya

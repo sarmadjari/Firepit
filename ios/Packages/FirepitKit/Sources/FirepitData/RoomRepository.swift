@@ -124,6 +124,8 @@ public final class RoomRepository: Sendable {
 
     /// Recent attempts per node, so one stranger cannot grind the token check. */
     private let joinAttempts = Mutex<[Int32: [Int64]]>([:])
+    private let phoneKeyMutex = AsyncMutex()
+    private let approvingJoins = Mutex<Set<Int32>>([])
 
     /// People asking to be let in, waiting on an answer from whoever is holding this phone. */
     public let pendingJoins = CurrentValue<[PendingJoin]>([])
@@ -412,22 +414,72 @@ public final class RoomRepository: Sendable {
         try? await roomActivity.recordActivity(roomId: roomId, now: clock())
     }
 
-    /// Keeps a phone key per `TrustRules.shouldStorePhoneKey`: learned on first
-    /// sight, replaced only by a join a person approved.
-    private func learnPhoneKey(nodeNum: Int32, key: Data, vouched: Bool) async {
+    /// Keeps a phone key per `TrustRules.shouldStorePhoneKey`, tracking which
+    /// keys this phone saw checked in person.
+    private struct PhoneKeyLearned: Sendable {
+        var stored: Bool
+        var replaced: Bool
+    }
+
+    @discardableResult
+    private func learnPhoneKey(nodeNum: Int32, key: Data, source: TrustRules.PhoneKeySource) async -> PhoneKeyLearned {
         if !KeyEnvelope.isValidPublicKey(key) {
+            return PhoneKeyLearned(stored: false, replaced: false)
+        }
+        let learned =
+            (try? await phoneKeyMutex.withLock {
+                let row = try? await peerKeyDao.find(nodeNum: nodeNum)
+                let known = row.flatMap { Data(base64Encoded: $0.phoneKey) }
+                let decision = TrustRules.shouldStorePhoneKey(
+                    known: known,
+                    knownInPerson: row?.inPerson == true,
+                    incoming: key,
+                    source: source)
+                if !decision.store {
+                    if known != nil && known != key {
+                        log.warning("a different phone key was offered, kept the one first seen")
+                    }
+                    return PhoneKeyLearned(stored: false, replaced: false)
+                }
+                try? await peerKeyDao.upsert(
+                    key: PeerKeyEntity(
+                        nodeNum: nodeNum,
+                        phoneKey: key.base64EncodedString(),
+                        learnedAt: clock(),
+                        inPerson: decision.inPerson)
+                )
+                return PhoneKeyLearned(stored: true, replaced: decision.replaced)
+            }) ?? PhoneKeyLearned(stored: false, replaced: false)
+        if learned.replaced {
+            await noticeKeyChanged(nodeNum: nodeNum)
+        }
+        return learned
+    }
+
+    private func noticeKeyChanged(nodeNum: Int32) async {
+        guard let myNodeNum = mesh.myNodeNum.value else {
             return
         }
-        let known = (try? await peerKeyDao.find(nodeNum: nodeNum))
-            .flatMap { Data(base64Encoded: $0.phoneKey) }
-        if !TrustRules.shouldStorePhoneKey(known: known, incoming: key, vouched: vouched) {
-            if known != nil && known != key {
-                log.warning("a different phone key was offered, kept the one first seen")
-            }
-            return
+        let cardName = (try? await personCardDao.findEntity(nodeNum: nodeNum))?.name
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let name: String
+        if let cardName, !cardName.isEmpty {
+            name = cardName
+        } else {
+            name = MeshConstants.formatNodeId(nodeNum)
         }
-        try? await peerKeyDao.upsert(
-            key: PeerKeyEntity(nodeNum: nodeNum, phoneKey: key.base64EncodedString(), learnedAt: clock())
+        try? await messageDao.save(
+            message: ChatMessage(
+                id: MeshPacketBuilder.randomPacketId(),
+                channel: 0,
+                fromNodeNum: Self.noticeNode,
+                toNodeNum: nodeNum,
+                text: "\(name)'s phone key changed. If they did not get a new phone, check with them in person.",
+                sentAt: clock(),
+                status: .received,
+                isOutgoing: false
+            ),
+            myNodeNum: myNodeNum
         )
     }
 
@@ -1469,7 +1521,7 @@ public final class RoomRepository: Sendable {
             }
         case .personCard(let card):
             if sealedUnderCurrent {
-                await learnPhoneKey(nodeNum: Int32(bitPattern: packet.from), key: card.phoneKey, vouched: false)
+                await learnPhoneKey(nodeNum: Int32(bitPattern: packet.from), key: card.phoneKey, source: .announced)
                 let name = sanitizeMeshText(card.name)
                 let tag = sanitizeMeshText(card.tag)
                 if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -1769,6 +1821,16 @@ public final class RoomRepository: Sendable {
     /// The room's own key is sealed to the phone key that came inside their
     /// hello, so the radios between us carry it without being able to read it.
     public func approveJoin(nodeNum: Int32) async throws {
+        let entered = approvingJoins.withLock { state -> Bool in
+            let (inserted, _) = state.insert(nodeNum)
+            return inserted
+        }
+        if !entered { return }
+        defer { _ = approvingJoins.withLock { $0.remove(nodeNum) } }
+        try await approveJoinOnce(nodeNum: nodeNum)
+    }
+
+    private func approveJoinOnce(nodeNum: Int32) async throws {
         guard let myNodeNum = mesh.myNodeNum.value else {
             throw RoomError.notConnected
         }
@@ -1821,7 +1883,7 @@ public final class RoomRepository: Sendable {
         try await memberDao.record(
             roomId: request.roomId, nodeNum: nodeNum,
             now: clock(), invitedBy: myNodeNum)
-        await learnPhoneKey(nodeNum: nodeNum, key: request.phoneKey, vouched: true)
+        await learnPhoneKey(nodeNum: nodeNum, key: request.phoneKey, source: .inPerson)
         await noteActivity(roomId: request.roomId)
         await announceJoined(
             roomId: request.roomId, joiner: nodeNum, myNodeNum: myNodeNum,
@@ -2127,8 +2189,17 @@ public final class RoomRepository: Sendable {
             return
         }
         let isNews = (try? await memberDao.findEntity(roomId: roomId, nodeNum: joiner)) == nil
-        try? await memberDao.record(roomId: roomId, nodeNum: joiner, now: clock(), invitedBy: from)
-        await learnPhoneKey(nodeNum: joiner, key: event.phoneKey, vouched: true)
+        let learned: PhoneKeyLearned
+        if joiner == mesh.myNodeNum.value {
+            learned = PhoneKeyLearned(stored: false, replaced: false)
+        } else {
+            learned = await learnPhoneKey(nodeNum: joiner, key: event.phoneKey, source: .vouched)
+        }
+        try? await memberDao.record(
+            roomId: roomId,
+            nodeNum: joiner,
+            now: clock(),
+            invitedBy: (isNews || learned.replaced) ? from : nil)
         await noteActivity(roomId: roomId)
         if isNews && joiner != mesh.myNodeNum.value {
             greet(roomId: roomId)
