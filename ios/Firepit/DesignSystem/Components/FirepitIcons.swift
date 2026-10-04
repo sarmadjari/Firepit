@@ -10,6 +10,7 @@ import SwiftUI
 nonisolated enum FirepitIcon: String, CaseIterable, Sendable {
     case chats, map, settings, search, more, add, mute, bell, locate, download, share, qr, back, send, pin, copy
     case clock, info, close, tick, tickDouble, pending, warning, chevron
+    case signed
     case rolePersonal, roleBase, roleRouter
 
     var systemName: String {
@@ -38,6 +39,8 @@ nonisolated enum FirepitIcon: String, CaseIterable, Sendable {
         case .pending: "clock"
         case .warning: "exclamationmark.triangle"
         case .chevron: "chevron.right"
+        // A radio signature on the message, from Meshtastic 2.8 (UX §5.4).
+        case .signed: "checkmark.shield"
         case .rolePersonal: "person"
         // Android draws the base station as a tent: a camp that stays put.
         case .roleBase: "tent"

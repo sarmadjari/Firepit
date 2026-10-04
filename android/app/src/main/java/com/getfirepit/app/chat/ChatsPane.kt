@@ -1177,6 +1177,7 @@ private fun ChannelChat(
                                         },
                                         isFirstInGroup = item.isFirstInGroup,
                                         isLastInGroup = item.isLastInGroup,
+                                        signed = message.signed && !message.isOutgoing,
                                         highlight = if (state.isSearching) {
                                             highlightRanges(message.text, state.query)
                                         } else {

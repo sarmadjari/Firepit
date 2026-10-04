@@ -742,7 +742,7 @@ Rules: one packet per event, except the sealed position, which is sent at the be
 
 #### 6.8.7 Trust display
 
-- Room chat: "encrypted with the room key; anyone holding the key can read and could impersonate members" (2.7), plus "signed by sender" badge when `xeddsa_signed` (2.8).
+- Room chat: "encrypted with the room key; anyone holding the key can read and could impersonate members" (2.7), plus "signed by sender" badge when `xeddsa_signed` (2.8). As built: a small shield before the time of each room message the radio verified, and "Signature: Verified" in its info (UX §7.2).
 - DM: "end-to-end encrypted to this node's key". Show `is_key_manually_verified` if it ever becomes true.
 - Location requests are answered automatically by firmware with no prompt on the target (design accepts this; say so in the room info screen).
 

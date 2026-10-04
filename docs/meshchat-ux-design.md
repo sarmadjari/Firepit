@@ -765,7 +765,7 @@ stateDiagram-v2
 
 Glyphs are stroke icons; the state is carried by colour **and** by the tooltip/label, never by colour alone.
 
-No blue ticks, no "read", no typing indicator. Message info (long-press) shows the timeline, hops, SNR, and on 2.8 "Signed · verified" when the packet carried a verified signature.
+No blue ticks, no "read", no typing indicator. Message info (long-press) shows the timeline, hops, SNR, and on 2.8 "Signed · verified" when the packet carried a verified signature. As built (both apps, 2026-10-04), a room message whose signature the radio verified also carries a small shield before its time, read out as "Signed by the sender's radio". It costs the message nothing: the radio signs it anyway. A message without one is not suspect, only unsigned: older radios do not sign, and a long message does not fit a signature.
 
 ### 7.3 Presence
 

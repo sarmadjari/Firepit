@@ -58,6 +58,9 @@ object FirepitIcons {
 
     @DrawableRes val TickDouble: Int = R.drawable.ic_tick_double
 
+    /** A radio signature on the message, from Meshtastic 2.8 (UX §5.4). */
+    @DrawableRes val Signed: Int = R.drawable.ic_signed
+
     @DrawableRes val Pending: Int = R.drawable.ic_pending
 
     @DrawableRes val Warning: Int = R.drawable.ic_warning

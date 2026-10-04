@@ -784,7 +784,8 @@ private struct ChannelChat: View {
                 onQuoteTap: parent.map { parent in { scrollTo(parent.id) } },
                 highlight: state.isSearching ? highlightRanges(message.text, query: state.query) : [],
                 isFirstInGroup: isFirst,
-                isLastInGroup: isLast
+                isLastInGroup: isLast,
+                signed: message.signed && !message.isOutgoing
             )
             .contentShape(.rect)
             .modifier(SwipeToReply { viewModel.startReply(message) })
