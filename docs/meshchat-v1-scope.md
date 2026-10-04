@@ -28,7 +28,7 @@ A native iOS + Android app that turns Meshtastic LoRa radios into a WhatsApp-lik
 
 Exit criteria: two phones + two nodes, create room → invite by QR → chat → see each other on the map, all without internet, for a full afternoon.
 
-**As built:** all of v0.1 on both apps except quick replies. The full-afternoon exit test has not been run yet.
+**As built:** all of v0.1 on both apps. The full-afternoon exit test has not been run yet.
 
 ### v1.0 — public beta
 

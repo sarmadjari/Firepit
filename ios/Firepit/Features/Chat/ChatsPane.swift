@@ -26,7 +26,9 @@ enum ChatRoute: Hashable {
 /// android/app/…/chat/ChatsPane.kt.
 struct ChatsPane: View {
     let app: AppContainer
-    let workspace: Workspace
+    /// Kept for the life of the view: a screen shown on its own is re-initialised whenever its parent redraws, and a
+    /// fresh workspace each time would empty its stack.
+    @State private var workspace: Workspace
 
     @State private var viewModel: ChatsViewModel
     @State private var rooms: RoomsViewModel
@@ -42,7 +44,7 @@ struct ChatsPane: View {
     /// The chat side of the shell, whose models and stack outlive a change of layout.
     init(app: AppContainer, workspace: Workspace) {
         self.app = app
-        self.workspace = workspace
+        _workspace = State(initialValue: workspace)
         _viewModel = State(initialValue: workspace.chats)
         _rooms = State(initialValue: workspace.rooms)
     }
@@ -783,6 +785,7 @@ private struct ChannelChat: View {
             isLastInGroup: isLast
         )
         .contentShape(.rect)
+        .modifier(SwipeToReply { viewModel.startReply(message) })
         .onTapGesture { viewModel.inspect(message) }
         .contextMenu {
             Button {
@@ -1050,6 +1053,9 @@ private struct Composer: View {
     /// straight to a value that refuses a keystroke keeps showing the keystroke; routing through local state makes
     /// the refusal visible.
     @State private var text = ""
+    /// ⚡: ready-made replies, one tap each (UX §5.4), sent through the same paced queue as anything typed and never
+    /// touching the draft.
+    @State private var showingQuick = false
 
     var body: some View {
         let state = viewModel.uiState
@@ -1057,6 +1063,22 @@ private struct Composer: View {
             CongestionNotice(load: state.channelLoad)
             if let parent = state.replyingTo {
                 ReplyBanner(parent: parent, name: state.nameOf(parent.fromNodeNum), cancel: viewModel.cancelReply)
+            }
+            if showingQuick && !viewModel.quickReplies.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: FirepitSpacing.xs) {
+                        ForEach(viewModel.quickReplies, id: \.self) { reply in
+                            FirepitChip(
+                                verbatim: reply, selected: false, enabled: state.connected && state.hasPrivateTarget
+                            ) {
+                                viewModel.sendQuickReply(reply)
+                                showingQuick = false
+                            }
+                        }
+                    }
+                    .padding(.horizontal, FirepitSpacing.s)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
             HStack(alignment: .bottom, spacing: FirepitSpacing.s) {
                 TextField("Message", text: $text, axis: .vertical)
@@ -1066,6 +1088,15 @@ private struct Composer: View {
                     .padding(.vertical, 12)
                     .background(FirepitColors.surface2, in: .rect(cornerRadius: 24))
                     .overlay { RoundedRectangle(cornerRadius: 24).strokeBorder(FirepitColors.outline) }
+                Button {
+                    withAnimation(.snappy) { showingQuick.toggle() }
+                } label: {
+                    Image(systemName: "bolt")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(showingQuick ? FirepitColors.primary : FirepitColors.textSecondary)
+                        .frame(width: FirepitSpacing.minTouchTarget, height: FirepitSpacing.minTouchTarget)
+                }
+                .accessibilityLabel(Text(showingQuick ? "Hide quick replies" : "Quick replies"))
                 Button(action: viewModel.send) {
                     Image(icon: .send)
                         .font(.system(size: 18, weight: .semibold))

@@ -11,6 +11,7 @@ enum SettingsSection: String, Hashable, CaseIterable {
     case nodes
     case offlineMaps
     case pins
+    case quickReplies
 }
 
 /// The page's sections, in order, so a debug route can open the page at one of them.
@@ -58,6 +59,7 @@ struct SettingsScreen: View {
                 radio: radioModel.uiState,
                 sharingModel: sharingModel,
                 scrollTo: scrollTo,
+                quickReplyCount: app.quickReplies.replies.count,
                 onOpen: { path.append($0) }
             )
             .navigationDestination(for: SettingsSection.self, destination: destination)
@@ -107,6 +109,9 @@ struct SettingsScreen: View {
         case .pins:
             PinsScreen(app: app)
                 .toolbar(.hidden, for: .tabBar)
+        case .quickReplies:
+            QuickRepliesScreen(store: app.quickReplies)
+                .toolbar(.hidden, for: .tabBar)
         }
     }
 }
@@ -116,9 +121,16 @@ private struct SettingsPage: View {
     let radio: RadioUiState
     let sharingModel: SharingViewModel
     let scrollTo: SettingsPageSection?
+    let quickReplyCount: Int
     let onOpen: (SettingsSection) -> Void
 
     @State private var confirmingErase = false
+
+    private var quickReplySummary: String {
+        quickReplyCount == 1
+            ? String(localized: "1 ready to send with ⚡")
+            : String(localized: "\(quickReplyCount) ready to send with ⚡")
+    }
     @State private var pickingRoom = false
 
     var body: some View {
@@ -174,6 +186,11 @@ private struct SettingsPage: View {
                         label: \.label, onChoose: model.chooseRoomLifetime)
                 } footer: {
                     Text("Leaving takes the room's messages and its key with it, and cannot be undone.")
+                }
+                Section {
+                    NavigationRow(title: "Quick replies", subtitle: quickReplySummary) {
+                        onOpen(.quickReplies)
+                    }
                 }
 
                 Section {

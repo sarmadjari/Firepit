@@ -79,6 +79,7 @@ final class AppContainer {
     let themePreferences = ThemePreferences()
     let notificationPreferences = NotificationPreferences()
     let screenPrivacy = ScreenPrivacyPreferences()
+    let quickReplies = QuickReplyStore()
     let mapPreferences = MapPreferences()
     let secureWindow = SecureWindow()
     let offlineMaps = OfflineMapRepository()

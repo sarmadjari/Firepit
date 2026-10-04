@@ -48,7 +48,7 @@ Android and iPhone users can share a room.
 
 | Area | State |
 |---|---|
-| Android app | ✅ Built: all v1 features except quick replies and emoji reactions |
+| Android app | ✅ Built: all v1 features except emoji reactions |
 | iPhone app | ✅ Built: a one-to-one port of the Android app, with the same features |
 | Android ↔ iPhone compatibility | ✅ Proven by tests: each app opens what the other encrypts. ⏳ Not yet tested on real radios |
 | Field test | ⏳ Initial field tests under way. The main tests, including a full afternoon outdoors with several phones and radios, decide the release |

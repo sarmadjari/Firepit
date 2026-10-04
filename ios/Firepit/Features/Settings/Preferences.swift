@@ -1,3 +1,4 @@
+import FirepitProtocol
 import Foundation
 import Observation
 
@@ -87,4 +88,31 @@ final class ThemePreferences {
     }
 
     private static let keyTheme = "theme_choice"
+}
+
+/// The quick replies the composer offers (UX §5.4), on this phone only. Ported from
+/// android/app/…/settings/QuickReplyStore.kt.
+@Observable
+final class QuickReplyStore {
+    private(set) var replies: [String]
+
+    @ObservationIgnored private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        replies = defaults.stringArray(forKey: Self.key).map(QuickReplies.normalise) ?? QuickReplies.defaults
+    }
+
+    func set(_ next: [String]) {
+        let kept = QuickReplies.normalise(next)
+        defaults.set(kept, forKey: Self.key)
+        replies = kept
+    }
+
+    func resetToDefaults() {
+        defaults.removeObject(forKey: Self.key)
+        replies = QuickReplies.defaults
+    }
+
+    private static let key = "quick_replies"
 }

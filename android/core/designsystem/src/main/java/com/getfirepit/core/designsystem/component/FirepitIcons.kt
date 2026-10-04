@@ -41,6 +41,8 @@ object FirepitIcons {
     @DrawableRes val Back: Int = R.drawable.ic_back
 
     @DrawableRes val Send: Int = R.drawable.ic_send
+    @DrawableRes val QuickReply: Int = R.drawable.ic_quick_reply
+    @DrawableRes val Reply: Int = R.drawable.ic_reply
 
     @DrawableRes val Pin: Int = R.drawable.ic_pin
 

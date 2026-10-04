@@ -3,6 +3,7 @@ package com.getfirepit.app.chat
 import android.view.KeyCharacterMap
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -1101,7 +1102,7 @@ private fun ChannelChat(
                             modifier = Modifier.padding(vertical = FirepitSpacing.s),
                         )
 
-                        is ChatItem.Bubble -> {
+                        is ChatItem.Bubble -> SwipeToReply(onReply = { viewModel.startReply(item.message) }) {
                             val message = item.message
                             val parent = state.repliedTo(message)
                             MessageBubble(
@@ -1306,6 +1307,32 @@ private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
         val requester = remember { FocusRequester() }
         var acceptsFocus by remember(state.selected, state.directPeer) { mutableStateOf(false) }
 
+        // ⚡: ready-made replies, one tap each (UX §5.4). Sent through the same
+        // paced queue as anything typed, and never touching the draft.
+        val quickReplies by viewModel.quickReplies.collectAsStateWithLifecycle()
+        var showingQuick by remember(state.selected, state.directPeer) { mutableStateOf(false) }
+        AnimatedVisibility(visible = showingQuick && quickReplies.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = FirepitSpacing.s),
+                horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.xs),
+            ) {
+                quickReplies.forEach { reply ->
+                    FirepitChip(
+                        label = reply,
+                        selected = false,
+                        enabled = state.connected && state.hasPrivateTarget,
+                        onClick = {
+                            viewModel.sendQuickReply(reply)
+                            showingQuick = false
+                        },
+                    )
+                }
+            }
+        }
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1357,6 +1384,16 @@ private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
                     unfocusedBorderColor = FirepitTheme.colors.outline,
                 ),
             )
+            IconButton(
+                onClick = { showingQuick = !showingQuick },
+                modifier = Modifier.size(FirepitSpacing.minTouchTarget),
+            ) {
+                Icon(
+                    painter = painterResource(FirepitIcons.QuickReply),
+                    contentDescription = if (showingQuick) "Hide quick replies" else "Quick replies",
+                    tint = if (showingQuick) MaterialTheme.colorScheme.primary else FirepitTheme.colors.textSecondary,
+                )
+            }
             FilledIconButton(
                 onClick = viewModel::send,
                 enabled = state.canSend,

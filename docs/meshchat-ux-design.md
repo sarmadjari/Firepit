@@ -179,9 +179,12 @@ flowchart TD
 ### 5.4 Chat in a room
 
 - Composer: `[＋] [Message] [⚡] [➤]`. ＋ opens: Drop a pin · Request someone's location · Share my location · Send alert. ⚡ opens quick replies (chips; editable in Settings). Send is a filled circle button, enabled when text is non-empty.
+  - Quick replies: one tap sends a chip at once, without touching what is typed, and answers the message being replied to if there is one. Defaults: On my way · Where are you? · Wait for me · I'm here · OK. Up to ten, each at most 40 bytes (IG §6.2.3).
+  - As built, the composer is `[Message] [⚡] [➤]`: pins, location and alerts live on the map and in room info.
 - Byte counter appears at 150 bytes ("50 left"); hard stop at 200 (IG §6.2.5). On 2.8 nodes, a subtle "long messages are sent unsigned" note appears past 165 — only when the node reports signing support.
 - Outgoing messages appear instantly with the clock glyph. Status glyph progression per §7.2. A sending queue spaces texts ≥ 2 s apart (IG §3.5) — the user can type freely; the app paces sends.
 - Long-press message: Reply (uses native `reply_id`), Copy, Message info, Delete for me. Reply renders a quoted block like WhatsApp.
+- Swipe a message towards the reading end to reply: it follows the finger a short way over a reply arrow, and a haptic marks the point where letting go replies.
 - Reactions (native `emoji` + `reply_id`): long-press a message → six fixed emoji 👍 ❤️ 😂 😮 😢 🙏, one tap, no picker. One packet each, and a reaction replaces an "ok" text, so airtime-neutral (U-1, locked).
 - Date separators, day headers, system chips (joined, key rotated, live location started).
 - Header: room name · "7 members" · node status line (§7.4). Tap → Room info.

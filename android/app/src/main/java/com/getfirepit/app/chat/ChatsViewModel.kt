@@ -1,5 +1,6 @@
 package com.getfirepit.app.chat
 
+import com.getfirepit.app.settings.QuickReplyStore
 import com.getfirepit.core.protocol.ChannelLoad
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -161,7 +162,11 @@ class ChatsViewModel @Inject constructor(
     private val receipts: ReceiptRepository,
     private val history: RoomHistory,
     rooms: RoomRepository,
+    quickReplyStore: QuickReplyStore,
 ) : ViewModel() {
+
+    /** What ⚡ offers above the composer (UX §5.4). */
+    val quickReplies: StateFlow<List<String>> = quickReplyStore.replies
 
     private val selected = MutableStateFlow<Int?>(null)
     private val directPeer = MutableStateFlow<Int?>(null)
@@ -384,14 +389,26 @@ class ChatsViewModel @Inject constructor(
     }
 
     fun send() {
-        val peer = directPeer.value
-        val channel = selected.value
-        if (peer == null && channel == null) return
         val text = draft.value.trim()
         if (text.isEmpty()) return
-        val replyId = replyingTo.value?.id
+        if (!deliver(text, replyingTo.value?.id)) return
         draft.value = ""
         replyingTo.value = null
+    }
+
+    /**
+     * Sends a quick reply as it is, leaving anything half-typed in the composer
+     * alone. A reply being written answers a message, and so does this.
+     */
+    fun sendQuickReply(text: String) {
+        if (deliver(text, replyingTo.value?.id)) replyingTo.value = null
+    }
+
+    /** False when no conversation is open to send to. */
+    private fun deliver(text: String, replyId: Int?): Boolean {
+        val peer = directPeer.value
+        val channel = selected.value
+        if (peer == null && channel == null) return false
         viewModelScope.launch {
             runCatching {
                 if (peer != null) {
@@ -404,5 +421,6 @@ class ChatsViewModel @Inject constructor(
                 }
             }.onFailure { cause -> error.value = cause.message ?: "Could not send" }
         }
+        return true
     }
 }

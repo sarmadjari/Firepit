@@ -19,7 +19,7 @@ RTL-ready from Stage 3) · invite-link domain deferred until Stage 8.
 | Stage | What it delivers | Status |
 |---|---|---|
 | 0–2 | Foundations, talking to a radio, the data layer and honest message pipeline | ✅ Built |
-| 3–6 | Adaptive shell and design system, rooms and QR invites, chat, map and location | ✅ Built, except quick replies. The exit proofs that need people outdoors wait for the field test |
+| 3–6 | Adaptive shell and design system, rooms and QR invites, chat, map and location | ✅ Built. The exit proofs that need people outdoors wait for the field test |
 | 7–7.9 | Hardening, identity and privacy, sealed rooms, the two-phone bench test, two security reviews | ✅ Built. A full-afternoon field test and battery over 8 h are not yet measured |
 | 8 | v1.0 features | ✅ Built, except emoji reactions |
 | 9 | Release prep: accessibility and RTL pass, R8, store listing | Not started |
@@ -317,10 +317,14 @@ the session through 70 s of confirmed Dozing with zero link transitions.
 
 ### Deferred from this stage
 
-- **Quick replies** — not built.
-- **Swipe-to-reply** — long-press works and carries an accessibility label, but there is no visible
-  affordance and swipe is the gesture people reach for. Best done alongside quick replies, since
-  both belong in the same gesture layer.
+- **Quick replies** — built 2026-10-04 on both apps. ⚡ beside the message box opens a row of chips,
+  and one tap sends one through the same paced queue as anything typed, without touching the draft;
+  a reply being written applies to it too. Five defaults ("On my way", "Where are you?", "Wait for
+  me", "I'm here", "OK"), up to ten, each at most 40 bytes, edited in Settings › Quick replies. The
+  rules are one pure `QuickReplies` object on both apps, with the same tests.
+- **Swipe-to-reply** — built 2026-10-04 on both apps. A message dragged towards the reading end follows
+  the finger a short way over a reply arrow; past the mark a haptic says letting go will reply. Long-press
+  and the Reply accessibility action still work.
 - Notification actions (reply from the shade, mark read) — the notification only opens the room.
 - Pre-existing incoming rows keep `REACHED_MESH`. Never rendered, so not worth a data migration.
 

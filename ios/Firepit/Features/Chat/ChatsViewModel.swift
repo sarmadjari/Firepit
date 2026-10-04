@@ -315,6 +315,10 @@ final class ChatsViewModel {
     @ObservationIgnored private let receipts: ReceiptRepository
     @ObservationIgnored private let history: RoomHistory
     @ObservationIgnored private let rooms: RoomRepository
+    @ObservationIgnored private let quickReplyStore: QuickReplyStore
+
+    /// What ⚡ offers above the composer (UX §5.4).
+    var quickReplies: [String] { quickReplyStore.replies }
 
     /// Where words go. Switched at once, while `state.directPeer` waits for the seal flag so the two change together.
     @ObservationIgnored private var openChannel: Int?
@@ -332,8 +336,10 @@ final class ChatsViewModel {
         people: PersonStore,
         receipts: ReceiptRepository,
         history: RoomHistory,
-        rooms: RoomRepository
+        rooms: RoomRepository,
+        quickReplyStore: QuickReplyStore = QuickReplyStore()
     ) {
+        self.quickReplyStore = quickReplyStore
         self.repository = repository
         self.channelState = channelState
         self.presence = presence
@@ -351,7 +357,8 @@ final class ChatsViewModel {
             people: app.people,
             receipts: app.receipts,
             history: app.history,
-            rooms: app.rooms
+            rooms: app.rooms,
+            quickReplyStore: app.quickReplies
         )
     }
 
@@ -491,14 +498,24 @@ final class ChatsViewModel {
     }
 
     func send() {
-        let peer = openPeer
-        let channel = openChannel
-        guard peer != nil || channel != nil else { return }
         let text = state.draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        let replyId = state.replyingTo?.id
+        guard !text.isEmpty, deliver(text, replyId: state.replyingTo?.id) else { return }
         state.draft = ""
         state.replyingTo = nil
+    }
+
+    /// Sends a quick reply as it is, leaving anything half-typed in the composer alone. A reply being written answers
+    /// a message, and so does this.
+    func sendQuickReply(_ text: String) {
+        if deliver(text, replyId: state.replyingTo?.id) { state.replyingTo = nil }
+    }
+
+    /// False when no conversation is open to send to.
+    @discardableResult
+    private func deliver(_ text: String, replyId: Int32?) -> Bool {
+        let peer = openPeer
+        let channel = openChannel
+        guard peer != nil || channel != nil else { return false }
         let repository = repository
         Task {
             do {
@@ -513,6 +530,7 @@ final class ChatsViewModel {
                 self.state.error = ChatsCopy.sendFailure(error)
             }
         }
+        return true
     }
 
     /// Replaces the open conversation's subscriptions: its messages, the seal flag for a person, receipts for what we
