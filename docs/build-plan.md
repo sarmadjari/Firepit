@@ -22,7 +22,7 @@ RTL-ready from Stage 3) · invite-link domain deferred until Stage 8.
 | 3–6 | Adaptive shell and design system, rooms and QR invites, chat, map and location | ✅ Built. The exit proofs that need people outdoors wait for the field test |
 | 7–7.9 | Hardening, identity and privacy, sealed rooms, the two-phone bench test, two security reviews | ✅ Built. A full-afternoon field test and battery over 8 h are not yet measured |
 | 8 | v1.0 features | ✅ Built, except emoji reactions |
-| 9 | Release prep: accessibility and RTL pass, R8, store listing | In progress: no analytics confirmed, store listing written, contrast and touch targets fixed, R8 on, 16 KB alignment checked |
+| 9 | Release prep: accessibility and RTL pass, R8, store listing | ✅ Done 2026-10-04: accessibility, right to left, R8, 16 KB pages, store listing, no analytics. Left for release day: the release key and store submission |
 | 10 | The iPhone app | ✅ Built. An iPhone and an Android phone in one room over real radios is still to be tested |
 | 11 | Security within Meshtastic's limits: Signal-grade protections where the radio allows, with no message growing by a byte | In progress: Phase 1 done on both apps, Phase 2 next |
 | 12 | Large screens: the conversation and the map side by side on foldables, tablets and wide windows; the phone app in narrow ones | Built on both apps, 2026-10-04 (decisions U-8 to U-14, UX §11.4). Open: the chat-to-map actions, which need features not built yet; the iOS 27.1 fold APIs; Figma frames; device runs on an iPhone Duo, a Flip and a TriFold |
@@ -833,6 +833,11 @@ no analytics confirmed.
   build uses the release key.
 - **16 KB pages:** every native library (MapLibre, SQLCipher, CameraX, graphics) is 16 KB aligned in
   the APK and in its ELF load segments, as Android 15 requires on 16 KB devices.
+- **Right to left:** both apps mirror. iOS was run in the demo world with right-to-left forced (the
+  room, the chat list): the back button, bubbles, quote bar, composer and list rows all mirror.
+  Android was run on the Galaxy Fold with Firepit set to Arabic: the bar's title and actions, the
+  filter chips, the tabs and the new-room button all swap sides. The words stay English: there is no
+  Arabic translation yet, which is a release decision rather than a layout one.
 
 ## Stage 10 — iOS ✅ built
 
