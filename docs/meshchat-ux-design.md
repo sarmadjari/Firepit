@@ -679,9 +679,9 @@ When only the arrangement changes, the map is moved, not rebuilt, so no tiles re
   - Rows and buttons show hover.
   - A right-click opens the long-press menu.
   - The scroll wheel zooms the map.
-  - Enter sends; Shift+Enter starts a new line.
-  - Esc closes the top sheet or menu.
-  - Ctrl+F (⌘F on iPad) searches the chats.
+  - Enter sends; Shift+Enter starts a new line. This is for a hardware keyboard only: the on-screen keyboard's Enter still starts a new line.
+  - Esc closes the top sheet or menu. Otherwise it goes back, but never past the top of the app.
+  - Ctrl+F (⌘F on iPad) opens the search of the open room, or of the selected one. The 🔍 on the chat list does the same.
   - Tab moves between the two sides.
 
 #### 6.11.10 Accessibility and right-to-left

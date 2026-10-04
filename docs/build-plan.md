@@ -1051,8 +1051,10 @@ The design is UX §6.11; this is how it gets built.
        rebuilt the view, but it destroyed it while it was still on screen, and MapLibre crashed in
        `onSurfaceChanged` on the next resize. The view now lives as long as its place in the composition
        and resizes in place.
-     - **Still to do in this phase:** the map's camera surviving recreation, chrome below 320 dp, and the
-       mouse and keyboard.
+     - **Then:** the map's camera is kept in `MapViewModel` and a rebuilt map starts there, so unfolding
+       or rotating keeps the view. Chips stay on one line and the chat filters scroll at 220 dp. Enter
+       sends from a hardware keyboard, Ctrl+F opens a room's search wherever focus is, Esc goes back
+       (never out of the app), and a right-click does what a long press does.
 3. **iOS shell.**
    - **A universal app:** iPhone and iPad (U-14). Build with the iOS 27.1 SDK so the iPhone Duo gets
      edge-to-edge drawing and toolbars at the side. The scene lifecycle iOS 27 requires is already in use.

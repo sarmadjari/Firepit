@@ -1,11 +1,14 @@
 package com.getfirepit.app.chat
 
+import android.view.KeyCharacterMap
+import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +28,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -70,6 +74,12 @@ import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -89,6 +99,7 @@ import com.getfirepit.app.rooms.RoomMembersScreen
 import com.getfirepit.app.rooms.RoomsViewModel
 import com.getfirepit.core.designsystem.adaptive.WideScreenActions
 import com.getfirepit.core.designsystem.adaptive.foldAwarePaneDirective
+import com.getfirepit.core.designsystem.adaptive.onSecondaryClick
 import com.getfirepit.core.designsystem.adaptive.paneSheetMaxWidth
 import com.getfirepit.core.designsystem.adaptive.withinPane
 import com.getfirepit.core.designsystem.component.BackButton
@@ -138,6 +149,9 @@ fun ChatsPane(
     onWholeWindowChange: (Boolean) -> Unit = {},
     /** False while the map beside it was touched last: back belongs to that side (UX §6.11.7). */
     backEnabled: Boolean = true,
+    /** Ctrl+F asked for a search: the open room's, or the selected one's. Cleared once taken. */
+    searchAsked: Boolean = false,
+    onSearchTaken: () -> Unit = {},
     /** A conversation asked for from outside Chats; opened once, then handed back through [onTargetOpened]. */
     openTarget: ChatTarget? = null,
     onTargetOpened: () -> Unit = {},
@@ -153,6 +167,18 @@ fun ChatsPane(
 
     var overlay by remember { mutableStateOf<RoomsOverlay?>(null) }
     var showCreateDialog by remember { mutableStateOf(false) }
+
+    // The list's search and Ctrl+F open the selected room with its search
+    // already open. Search reads a room's conversation, so it needs one.
+    var searchOnOpen by remember { mutableStateOf(false) }
+    suspend fun searchSelected() {
+        val index = state.selected ?: return
+        if (state.directPeer != null) return
+        searchOnOpen = true
+        if (navigator.currentDestination?.pane != ListDetailPaneScaffoldRole.Detail) {
+            navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, index)
+        }
+    }
 
     LaunchedEffect(openTarget) {
         val target = openTarget ?: return@LaunchedEffect
@@ -244,6 +270,13 @@ fun ChatsPane(
         )
     }
 
+    LaunchedEffect(searchAsked) {
+        if (searchAsked) {
+            onSearchTaken()
+            searchSelected()
+        }
+    }
+
     BackHandler(enabled = backEnabled && chatCoversList) {
         scope.launch { navigator.navigateBack() }
     }
@@ -289,12 +322,7 @@ fun ChatsPane(
                         overlay = RoomsOverlay.Join
                     },
                     onDismissMessage = roomsViewModel::clearMessages,
-                    onSearch = {
-                        // Search reads the open conversation, so it needs one open.
-                        state.selected?.let { index ->
-                            scope.launch { navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, index) }
-                        }
-                    },
+                    onSearch = { scope.launch { searchSelected() } },
                 )
             }
         },
@@ -321,6 +349,8 @@ fun ChatsPane(
                         channel = channel,
                         viewModel = viewModel,
                         onBack = back,
+                        startSearch = searchOnOpen,
+                        onSearchStarted = { searchOnOpen = false },
                         // Firepit issues its own invites and no others: they
                         // carry a room key the Meshtastic link format cannot.
                         onInvite = if (channel.kind == RoomKind.FIREPIT) {
@@ -442,10 +472,14 @@ private fun ChannelList(
     ) { padding ->
         Column(Modifier.padding(padding)) {
             Row(
-                modifier = Modifier.padding(
-                    horizontal = FirepitSpacing.screenMargin,
-                    vertical = FirepitSpacing.m,
-                ),
+                modifier = Modifier
+                    // A third of a split screen is narrower than the three
+                    // chips: they scroll rather than squeeze.
+                    .horizontalScroll(rememberScrollState())
+                    .padding(
+                        horizontal = FirepitSpacing.screenMargin,
+                        vertical = FirepitSpacing.m,
+                    ),
                 horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
             ) {
                 ChannelFilter.entries.forEach { option ->
@@ -673,6 +707,7 @@ private fun ChannelRow(
                     MaterialTheme.colorScheme.surface
                 },
             )
+            .onSecondaryClick(onToggleMute)
             .combinedClickable(
                 onClick = onSelect,
                 onLongClick = onToggleMute,
@@ -895,11 +930,19 @@ private fun ChannelChat(
     onInvite: (() -> Unit)?,
     onShowMembers: (() -> Unit)?,
     memberCount: Int?,
+    startSearch: Boolean = false,
+    onSearchStarted: () -> Unit = {},
 ) {
     val receipts by viewModel.receiptsOnScreen.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var searching by rememberSaveable(channel.index) { mutableStateOf(false) }
+    LaunchedEffect(startSearch) {
+        if (startSearch) {
+            searching = true
+            onSearchStarted()
+        }
+    }
 
     val visible = state.visibleMessages
     val items = remember(visible) { buildChatItems(visible) }
@@ -1061,6 +1104,7 @@ private fun ChannelChat(
                                 // Tight inside a block, open between speakers.
                                 modifier = Modifier
                                     .padding(top = if (item.isFirstInGroup) FirepitSpacing.s else 2.dp)
+                                    .onSecondaryClick { viewModel.startReply(message) }
                                     .combinedClickable(
                                         onClick = { viewModel.inspect(message) },
                                         onLongClick = { viewModel.startReply(message) },
@@ -1240,6 +1284,21 @@ private fun Composer(state: ChatsUiState, viewModel: ChatsViewModel) {
                     .heightIn(max = 140.dp)
                     .focusRequester(requester)
                     .focusProperties { canFocus = acceptsFocus }
+                    // A hardware keyboard's Enter sends and Shift+Enter starts a
+                    // new line (UX §6.11.9). The on-screen keyboard's Enter still
+                    // starts a new line, as it always has.
+                    .onPreviewKeyEvent { event ->
+                        val native = event.nativeKeyEvent
+                        val hardware = native.deviceId != KeyCharacterMap.VIRTUAL_KEYBOARD &&
+                            native.flags and AndroidKeyEvent.FLAG_SOFT_KEYBOARD == 0
+                        val enter = event.key == Key.Enter || event.key == Key.NumPadEnter
+                        if (hardware && enter && !event.isShiftPressed) {
+                            if (event.type == KeyEventType.KeyDown && state.canSend) viewModel.send()
+                            true
+                        } else {
+                            false
+                        }
+                    }
                     .pointerInput(state.selected, state.directPeer) {
                         awaitEachGesture {
                             awaitFirstDown(requireUnconsumed = false)

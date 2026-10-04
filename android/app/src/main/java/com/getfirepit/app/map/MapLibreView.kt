@@ -9,6 +9,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import org.maplibre.android.MapLibre
+import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.MapView
 
@@ -25,6 +26,8 @@ import org.maplibre.android.maps.MapView
 fun MapLibreView(
     styleUrl: String,
     modifier: Modifier = Modifier,
+    /** Where a new view starts looking, set before the style loads so it does not jump. */
+    initialCamera: CameraPosition? = null,
     onMapReady: (MapLibreMap, MapView) -> Unit,
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -62,6 +65,7 @@ fun MapLibreView(
                 mapView.view = view
                 view.onCreate(null)
                 view.getMapAsync { map ->
+                    initialCamera?.let { map.cameraPosition = it }
                     map.setStyle(styleUrl) { onMapReady(map, view) }
                 }
             }

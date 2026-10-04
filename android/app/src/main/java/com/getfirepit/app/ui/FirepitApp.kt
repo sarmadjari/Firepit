@@ -76,6 +76,9 @@ fun FirepitApp(
     modifier: Modifier = Modifier,
     openRequest: ChatTarget? = null,
     onOpenRequestTaken: () -> Unit = {},
+    /** Ctrl+F: search the chats, from wherever the user is. */
+    searchAsked: Boolean = false,
+    onSearchTaken: () -> Unit = {},
     shell: ShellViewModel = hiltViewModel(),
 ) {
     // rememberSaveable so the selected tab survives a fold, rotation or process
@@ -99,6 +102,17 @@ fun FirepitApp(
         openRequest?.let {
             chatTarget = it
             onOpenRequestTaken()
+        }
+    }
+    // Chats answers it once it is on screen, so a search asked for from the
+    // map or Settings in one pane goes to Chats first.
+    var chatsSearch by remember { mutableStateOf(false) }
+    LaunchedEffect(searchAsked) {
+        if (searchAsked) {
+            onSearchTaken()
+            selected = TopLevelDestination.CHATS
+            settingsOverPanes = false
+            chatsSearch = true
         }
     }
     LaunchedEffect(chatTarget) {
@@ -142,6 +156,8 @@ fun FirepitApp(
                 onChatOpenChange = { chatOpen = it },
                 onWholeWindowChange = { chatsWholeWindow = it },
                 backEnabled = !splitNow || lastTouched == Side.CHAT,
+                searchAsked = chatsSearch,
+                onSearchTaken = { chatsSearch = false },
                 openTarget = chatTarget,
                 onTargetOpened = { chatTarget = null },
             )

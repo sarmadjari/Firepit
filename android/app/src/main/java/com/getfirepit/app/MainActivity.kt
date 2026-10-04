@@ -2,6 +2,7 @@ package com.getfirepit.app
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -58,6 +59,9 @@ class MainActivity : ComponentActivity() {
 
     /** The conversation a tapped notification asked for, until Chats has opened it. */
     private val openRequest = MutableStateFlow<ChatTarget?>(null)
+
+    /** Ctrl+F pressed and not yet answered (UX §6.11.9). */
+    private val searchRequest = MutableStateFlow(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -118,10 +122,13 @@ class MainActivity : ComponentActivity() {
                 ) {
                     NoPersonalizedLearning {
                         val request by openRequest.collectAsStateWithLifecycle()
+                        val searchAsked by searchRequest.collectAsStateWithLifecycle()
                         FirepitApp(
                             modifier = Modifier.fillMaxSize(),
                             openRequest = request,
                             onOpenRequestTaken = { openRequest.value = null },
+                            searchAsked = searchAsked,
+                            onSearchTaken = { searchRequest.value = false },
                         )
                         ClockOfferDialog(nodeClock)
                         RoomJoinPrompts()
@@ -129,6 +136,34 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    // Ctrl+F reaches here when no view took it, which is wherever focus is
+    // in Firepit, or when nothing has it.
+    override fun onKeyShortcut(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_F) {
+            searchRequest.value = true
+            return true
+        }
+        return super.onKeyShortcut(keyCode, event)
+    }
+
+    // Esc goes back, as on a desktop, but only from somewhere: at the top of
+    // the app it does nothing rather than close Firepit. Sheets and menus
+    // close on Esc by themselves.
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean =
+        if (keyCode == KeyEvent.KEYCODE_ESCAPE && onBackPressedDispatcher.hasEnabledCallbacks()) {
+            true
+        } else {
+            super.onKeyDown(keyCode, event)
+        }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_ESCAPE && onBackPressedDispatcher.hasEnabledCallbacks()) {
+            onBackPressedDispatcher.onBackPressed()
+            return true
+        }
+        return super.onKeyUp(keyCode, event)
     }
 
     override fun onNewIntent(intent: Intent) {

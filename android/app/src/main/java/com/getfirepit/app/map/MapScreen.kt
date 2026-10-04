@@ -156,7 +156,7 @@ fun MapScreen(
     // annotation layers on the style until the map stopped drawing.
     val markerLayer = remember { MarkerLayer() }
     val coverageMask = remember { CoverageMask() }
-    var hasFramedMarkers by remember { mutableStateOf(false) }
+    var hasFramedMarkers by viewModel::framed
     var droppingAt by remember { mutableStateOf<LatLng?>(null) }
     var openPin by remember { mutableStateOf<MapPin?>(null) }
     var openMarker by remember { mutableStateOf<MapMarker?>(null) }
@@ -196,8 +196,10 @@ fun MapScreen(
         MapLibreView(
             styleUrl = OPEN_FREE_MAP_STYLE,
             modifier = Modifier.fillMaxSize(),
+            initialCamera = viewModel.camera,
         ) { map, view ->
             markerLayer.attach(map, view)
+            map.addOnCameraIdleListener { viewModel.camera = map.cameraPosition }
             markerLayer.setOnPinClick { pin -> openPin = pin }
             markerLayer.setOnMarkerClick { marker -> if (!marker.isSelf) openMarker = marker }
                 map.style?.let { coverageMask.apply(it, areas, offlineOnly) }

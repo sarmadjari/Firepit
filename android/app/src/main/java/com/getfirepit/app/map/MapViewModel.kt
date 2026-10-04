@@ -1,5 +1,8 @@
 package com.getfirepit.app.map
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.getfirepit.core.data.LocationRepository
@@ -31,6 +34,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import org.maplibre.android.camera.CameraPosition
 
 /** What asking somebody's radio for its position is doing, one person at a time. */
 sealed interface LocationAsk {
@@ -138,6 +142,16 @@ class MapViewModel @Inject constructor(
     }
 
     val offlineOnly: StateFlow<Boolean> = mapPreferences.offlineOnly
+
+    /**
+     * Where the map was last looking. Folding, unfolding or rotating rebuilds the
+     * map's view, and it picks up here rather than back at the world (UX §6.11.5).
+     * Held in memory only: never saved or sent.
+     */
+    var camera: CameraPosition? = null
+
+    /** The camera has been to everyone already, so it is not pulled there again on its own. */
+    var framed by mutableStateOf(false)
 
     val areas: StateFlow<List<OfflineArea>> = savedAreas.asStateFlow()
 

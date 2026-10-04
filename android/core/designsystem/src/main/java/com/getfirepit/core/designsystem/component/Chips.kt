@@ -47,6 +47,9 @@ fun FirepitChip(
                 text = label,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                // A chip's word is never split: in a narrow window "Direct" broke into "Dire" and "ct".
+                maxLines = 1,
+                softWrap = false,
             )
         },
         colors = FilterChipDefaults.filterChipColors(
