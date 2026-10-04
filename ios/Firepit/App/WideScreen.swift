@@ -35,7 +35,7 @@ struct LayoutMenu<Label: View>: View {
         if let controls, controls.canSplit {
             Menu {
                 Picker(
-                    selection: Binding(get: { controls.arrangement }, set: controls.onArrange)
+                    selection: Binding(get: { controls.arrangement }, set: { controls.onArrange($0) })
                 ) {
                     ForEach(PaneArrangement.allCases, id: \.self) { option in
                         Text(verbatim: option.label).tag(option)

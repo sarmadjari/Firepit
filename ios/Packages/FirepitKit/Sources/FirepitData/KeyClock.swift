@@ -155,7 +155,8 @@ private func bootSession() -> String? {
     guard sysctlbyname("kern.bootsessionuuid", &buffer, &size, nil, 0) == 0 else {
         return nil
     }
-    return String(cString: buffer)
+    let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+    return String(decoding: bytes, as: UTF8.self)
 }
 
 /// Where `KeyClock` keeps its anchor. Nothing in it is secret.
