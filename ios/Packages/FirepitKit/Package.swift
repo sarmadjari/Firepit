@@ -62,6 +62,10 @@ let package = Package(
             dependencies: ["FirepitProtocol"]
         ),
         .testTarget(
+            name: "FirepitModelTests",
+            dependencies: ["FirepitModel"]
+        ),
+        .testTarget(
             name: "FirepitCryptoTests",
             dependencies: ["FirepitCrypto"],
             // android-vectors.json: seals, keys, tokens and links produced by the Android app's own crypto
