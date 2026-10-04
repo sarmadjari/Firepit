@@ -35,6 +35,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Badge
+import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -921,6 +922,8 @@ private fun DirectChat(
                                                 clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("Message", message.text)))
                                             }
                                         },
+                                        onSendAgain = { viewModel.sendAgain(message) }
+                                            .takeIf { message.isOutgoing && message.status.isFailure },
                                     )
                                 }
                                 state.reactions[message.id]?.let { counts ->
@@ -1200,6 +1203,8 @@ private fun ChannelChat(
                                             }
                                         },
                                         onInfo = { viewModel.inspect(message) },
+                                        onSendAgain = { viewModel.sendAgain(message) }
+                                            .takeIf { message.isOutgoing && message.status.isFailure },
                                     )
                                 }
                                 state.reactions[message.id]?.let { counts ->
@@ -1236,6 +1241,7 @@ private fun ChannelChat(
             receipts = receipts,
             nameOf = state::nameOf,
             onDismiss = { viewModel.inspect(null) },
+            onSendAgain = { viewModel.sendAgain(message) },
         )
     }
 }
@@ -1635,6 +1641,7 @@ private fun MessageInfoSheet(
     receipts: List<Receipt>,
     nameOf: (Int) -> String,
     onDismiss: () -> Unit,
+    onSendAgain: () -> Unit,
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1660,6 +1667,9 @@ private fun MessageInfoSheet(
             if (message.isOutgoing) {
                 InfoRow("Status", message.status.label())
                 message.failureReason?.let { InfoRow("Reason", it) }
+                if (message.status.isFailure) {
+                    Button(onClick = onSendAgain, modifier = Modifier.fillMaxWidth()) { Text("Send again") }
+                }
             }
 
             message.hopsAway?.let { hops ->

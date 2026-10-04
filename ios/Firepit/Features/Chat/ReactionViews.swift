@@ -49,16 +49,23 @@ struct ReactionRow: View {
     }
 }
 
-/// What a long press on a message offers (UX §5.4): the six reactions in one row, one tap each, then Reply, Copy and
-/// Message info where the conversation has them. The contents of the message's context menu.
+/// What a long press on a message offers (UX §5.4): the six reactions in one row, one tap each, then Send again for a
+/// message that failed, and Reply, Copy and Message info where the conversation has them. The contents of the
+/// message's context menu.
 struct ReactionMenu: View {
     let text: String
     let onReact: (String) -> Void
     var onReply: (() -> Void)?
     var onInfo: (() -> Void)?
+    var onSendAgain: (() -> Void)?
 
     var body: some View {
         ReactionPalette(onReact: onReact)
+        if let onSendAgain {
+            Button(action: onSendAgain) {
+                Label("Send again", systemImage: "arrow.clockwise")
+            }
+        }
         if let onReply {
             Button(action: onReply) {
                 Label("Reply", systemImage: "arrowshape.turn.up.left")

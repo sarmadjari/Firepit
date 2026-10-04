@@ -94,6 +94,10 @@ interface MessageDao {
     @Query("DELETE FROM messages")
     suspend fun deleteAll()
 
+    /** One message, when a new attempt to send it takes its place. */
+    @Query("DELETE FROM messages WHERE id = :id")
+    suspend fun deleteById(id: Int)
+
     /**
      * Leaving a channel that has no id takes its history with it. Only rows
      * filed under no room: a room's own history is deleted by its id.

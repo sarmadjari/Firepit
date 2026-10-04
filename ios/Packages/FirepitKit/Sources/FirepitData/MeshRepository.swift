@@ -471,6 +471,20 @@ public final class MeshRepository: Sendable {
         return ChannelKey.of(psk)
     }
 
+    /// Sends a message that failed once more, as a new packet, and lets the failed copy go: the conversation keeps one
+    /// copy, the new attempt, at the bottom where it now is (UX §5.4). Nothing changes when it cannot be sent.
+    public func sendAgain(_ message: ChatMessage) async throws {
+        guard message.isOutgoing, message.status.isFailure else { return }
+        try await sendText(
+            channel: message.channel,
+            text: message.text,
+            to: message.toNodeNum,
+            replyId: message.replyId,
+            reaction: Reactions.isReaction(message)
+        )
+        try await messageDao.deleteById(id: message.id)
+    }
+
     /**
      * Saves text sent by the UI, choosing the same carriage Android does.
      *

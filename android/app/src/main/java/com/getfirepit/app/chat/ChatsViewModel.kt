@@ -424,6 +424,16 @@ class ChatsViewModel @Inject constructor(
         deliver(emoji, message.id, reaction = true)
     }
 
+    /** A message that failed goes out again as a new attempt, which takes its place (UX §5.4). */
+    fun sendAgain(message: ChatMessage) {
+        if (!message.isOutgoing || !message.status.isFailure) return
+        if (inspecting.value?.id == message.id) inspecting.value = null
+        viewModelScope.launch {
+            runCatching { repository.sendAgain(message) }
+                .onFailure { cause -> error.value = cause.message ?: "Could not send" }
+        }
+    }
+
     /** False when no conversation is open to send to. */
     private fun deliver(text: String, replyId: Int?, reaction: Boolean = false): Boolean {
         val peer = directPeer.value

@@ -520,6 +520,20 @@ final class ChatsViewModel {
         deliver(emoji, replyId: message.id, reaction: true)
     }
 
+    /// A message that failed goes out again as a new attempt, which takes its place (UX §5.4).
+    func sendAgain(_ message: ChatMessage) {
+        guard message.isOutgoing, message.status.isFailure else { return }
+        if state.inspecting?.id == message.id { inspect(nil) }
+        let repository = repository
+        Task {
+            do {
+                try await repository.sendAgain(message)
+            } catch {
+                self.state.error = ChatsCopy.sendFailure(error)
+            }
+        }
+    }
+
     /// False when no conversation is open to send to.
     @discardableResult
     private func deliver(_ text: String, replyId: Int32?, reaction: Bool = false) -> Bool {

@@ -87,8 +87,8 @@ fun ReactionRow(
 
 /**
  * What a long press on a message offers (UX §5.4): the six reactions in one
- * row, one tap each, then Reply, Copy and Message info where the conversation
- * has them.
+ * row, one tap each, then Send again for a message that failed, and Reply,
+ * Copy and Message info where the conversation has them.
  */
 @Composable
 fun ReactionMenu(
@@ -98,6 +98,7 @@ fun ReactionMenu(
     onCopy: () -> Unit,
     onReply: (() -> Unit)? = null,
     onInfo: (() -> Unit)? = null,
+    onSendAgain: (() -> Unit)? = null,
 ) {
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
         // Six 48 dp targets: 296 dp in all, so the row fits the narrowest phone.
@@ -116,6 +117,9 @@ fun ReactionMenu(
             }
         }
         HorizontalDivider()
+        onSendAgain?.let { again ->
+            DropdownMenuItem(text = { Text("Send again") }, onClick = { onDismiss(); again() })
+        }
         onReply?.let { reply -> DropdownMenuItem(text = { Text("Reply") }, onClick = { onDismiss(); reply() }) }
         DropdownMenuItem(text = { Text("Copy") }, onClick = { onDismiss(); onCopy() })
         onInfo?.let { info -> DropdownMenuItem(text = { Text("Message info") }, onClick = { onDismiss(); info() }) }

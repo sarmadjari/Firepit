@@ -20,6 +20,7 @@ import com.getfirepit.core.model.ChannelRole
 import com.getfirepit.core.model.ChatMessage
 import com.getfirepit.core.model.MeshNode
 import com.getfirepit.core.model.MessageStatus
+import com.getfirepit.core.model.Reactions
 import com.getfirepit.core.model.RoomChannel
 import com.getfirepit.core.model.RoomKind
 import com.getfirepit.core.protocol.ChannelKey
@@ -415,6 +416,23 @@ class MeshRepository @Inject constructor(
         scope.launch {
             link.inbound.collect { message -> handle(message) }
         }
+    }
+
+    /**
+     * Sends a message that failed once more, as a new packet, and lets the
+     * failed copy go: the conversation keeps one copy, the new attempt, at the
+     * bottom where it now is (UX §5.4). Nothing changes when it cannot be sent.
+     */
+    suspend fun sendAgain(message: ChatMessage) {
+        if (!message.isOutgoing || !message.status.isFailure) return
+        sendText(
+            channel = message.channel,
+            text = message.text,
+            replyId = message.replyId,
+            to = message.toNodeNum,
+            reaction = Reactions.isReaction(message),
+        )
+        messageDao.deleteById(message.id)
     }
 
     /**

@@ -193,6 +193,7 @@ flowchart TD
 - Header: room name · "7 members" · node status line (§7.4). Tap → Room info.
 
 **States:** no node connected (composer stays usable; banner "Not connected to your node — messages will send when reconnected"); mesh busy (banner when ChUtil > 40 % or after `DUTY_CYCLE_LIMIT`); message failed (red glyph, tap → retry / info); rate-limited (never shown — the queue handles it).
+- As built (both apps, 2026-10-04): a failed message (failed, or nobody heard it) offers **Send again** in its long-press menu, in rooms and direct chats, and in a room's Message info. The new attempt is a new packet and takes the failed copy's place at the bottom of the conversation, so there is only ever one copy.
 
 ### 5.5 Direct chat
 

@@ -105,6 +105,8 @@ public struct MessageDao: Sendable {
         try await execute("DELETE FROM messages WHERE roomId = ? AND toNodeNum = ?", [roomId, broadcast])
     }
     public func deleteAll() async throws { try await execute("DELETE FROM messages", []) }
+    /// One message, when a new attempt to send it takes its place.
+    public func deleteById(id: Int32) async throws { try await execute("DELETE FROM messages WHERE id = ?", [id]) }
     public func deleteUnfiled(slot: Int, broadcast: Int32) async throws {
         try await execute("DELETE FROM messages WHERE channel = ? AND roomId = 0 AND toNodeNum = ?", [slot, broadcast])
     }

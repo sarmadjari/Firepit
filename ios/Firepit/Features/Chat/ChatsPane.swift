@@ -794,7 +794,9 @@ private struct ChannelChat: View {
                     text: message.text,
                     onReact: { emoji in viewModel.react(message, emoji: emoji) },
                     onReply: { viewModel.startReply(message) },
-                    onInfo: { viewModel.inspect(message) }
+                    onInfo: { viewModel.inspect(message) },
+                    onSendAgain: message.isOutgoing && message.status.isFailure
+                        ? { viewModel.sendAgain(message) } : nil
                 )
             }
             .accessibilityAction(named: Text("Reply")) { viewModel.startReply(message) }
@@ -869,7 +871,12 @@ private struct DirectChat: View {
                     )
                     .contentShape(.rect)
                     .contextMenu {
-                        ReactionMenu(text: message.text) { emoji in viewModel.react(message, emoji: emoji) }
+                        ReactionMenu(
+                            text: message.text,
+                            onReact: { emoji in viewModel.react(message, emoji: emoji) },
+                            onSendAgain: message.isOutgoing && message.status.isFailure
+                                ? { viewModel.sendAgain(message) } : nil
+                        )
                     }
                     if let counts = state.reactions[message.id] {
                         ReactionRow(counts: counts, isOutgoing: message.isOutgoing) { emoji in
@@ -1263,6 +1270,11 @@ private struct MessageInfoSheet: View {
                 }
                 ReceiptList(label: "Read by", receipts: receipts.filter { $0.state == .read }, nameOf: nameOf)
                 ReceiptList(label: "Received by", receipts: receipts.filter { $0.state == .received }, nameOf: nameOf)
+                if message.isOutgoing && message.status.isFailure {
+                    Section {
+                        Button("Send again") { viewModel.sendAgain(message) }
+                    }
+                }
                 Section {
                 } footer: {
                     Text(
