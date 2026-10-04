@@ -201,6 +201,22 @@
             try? await app.receiptDao.recordRead(messageId: 107, nodeNum: maya, at: now - 70 * minute)
             try? await app.receiptDao.recordReceived(messageId: 110, nodeNum: jonas, at: now - 2 * minute)
 
+            // Reactions are messages of their own, shown under the one they answer (UX §5.4).
+            let reactions: [(Int32, Int32, Int64, String, Int32)] = [
+                (111, jonas, now - 94 * minute, "❤️", 105),
+                (112, me, now - 93 * minute, "❤️", 105),
+                (113, priya, now - 92 * minute, "😂", 105),
+                (114, jonas, now - 87 * minute, "👍", 107),
+            ]
+            for (id, from, at, emoji, target) in reactions {
+                let mine = from == me
+                let reaction = ChatMessage(
+                    id: id, channel: 1, fromNodeNum: from, toNodeNum: broadcastNodeNum, text: emoji, sentAt: at,
+                    rxTime: mine ? nil : at, status: mine ? .reachedMesh : .received, isOutgoing: mine,
+                    replyId: target, emoji: 1, signed: true, roomId: camp)
+                try? await app.messageDao.save(message: reaction, myNodeNum: me)
+            }
+
             let crewTexts: [(Int32, Int32, Int64, String)] = [
                 (201, jonas, now - 30 * minute, "Headlamps for tonight?"),
                 (202, priya, now - 25 * minute, "Two spares in my pack"),

@@ -187,6 +187,10 @@ message RoomText {
   string text = 1;
   // Mirrors MeshPacket.reply_id, which cannot be read without the key.
   fixed32 reply_id = 2;
+  // Mirrors Data.emoji: non-zero makes text one emoji reacting to reply_id,
+  // one of six fixed ones (UX 5.4). Only reactions carry it, so no other
+  // message grows.
+  uint32 emoji = 3;
 }
 
 // Who in a room has received a message and who has opened it, batched so one

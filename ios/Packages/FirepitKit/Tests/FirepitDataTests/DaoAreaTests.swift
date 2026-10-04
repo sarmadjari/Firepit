@@ -38,6 +38,29 @@ import Testing
     #expect(rows.map(\.id) == [16])
 }
 
+@Test func reactionsAreNotPreviewsOrUnread() async throws {
+    let queue = try makeDatabase()
+    let dao = MessageDao(queue)
+    let states = ChannelStateDao(queue)
+    try await dao.save(message: sampleMessage(id: 30, channel: 3, sentAt: 10), myNodeNum: 99)
+    try await dao.save(
+        message: ChatMessage(
+            id: 31, channel: 3, fromNodeNum: 11, toNodeNum: broadcastNodeNum, text: "👍", sentAt: 20,
+            status: .received, replyId: 30, emoji: 1),
+        myNodeNum: 99)
+    try await dao.save(message: sampleMessage(id: 32, channel: 0, from: 7, to: 99, sentAt: 10), myNodeNum: 99)
+    try await dao.save(
+        message: ChatMessage(
+            id: 33, channel: 0, fromNodeNum: 7, toNodeNum: 99, text: "❤️", sentAt: 20, status: .received,
+            replyId: 32, emoji: 1),
+        myNodeNum: 99)
+    try await states.markRead(channel: 3, now: 5)
+
+    #expect(try await firstValue(dao.latestPerChannel()).map(\.id) == [30])
+    #expect(try await firstValue(dao.directLatest()).map(\.id) == [32])
+    #expect(try await firstValue(states.observeUnread()).contains(UnreadCount(channel: 3, count: 1)))
+}
+
 @Test func messageDeleteOlderThanReturnsCount() async throws {
     let queue = try makeDatabase()
     let dao = MessageDao(queue)

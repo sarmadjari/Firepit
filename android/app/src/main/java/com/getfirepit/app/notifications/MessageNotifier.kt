@@ -22,6 +22,7 @@ import com.getfirepit.core.data.RoomRepository
 import com.getfirepit.core.database.ChannelStateDao
 import com.getfirepit.core.database.observeMuted
 import com.getfirepit.core.model.ChatMessage
+import com.getfirepit.core.model.Reactions
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -54,6 +55,8 @@ class MessageNotifier @Inject constructor(
     }
 
     private suspend fun notifyIfUnseen(message: ChatMessage) {
+        // A reaction is a nod, not news: it shows under the message when the conversation is opened.
+        if (Reactions.isReaction(message)) return
         if (presence.isWatching(message.channel)) return
         if (message.channel in channelState.observeMuted().first()) return
 

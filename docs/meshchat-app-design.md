@@ -297,7 +297,7 @@ The cost is real and accepted: you cannot add someone who is not with you. That 
 | Live location | precision toggle per room for start/stop; duration tier change may restart the node; presets 15 min · 1 h · 8 h · Custom | guide D-6, UX U-6 |
 | Telemetry | device telemetry on, every 30 min, primary channel | guide D-7 |
 | Favorites | all room members favorited on the Personal node | guide D-8 |
-| Reactions | yes, six fixed emoji 👍 ❤️ 😂 😮 😢 🙏 (not built yet) | UX U-1 |
+| Reactions | yes, six fixed emoji 👍 ❤️ 😂 😮 😢 🙏 (built on both apps) | UX U-1 |
 | Precision | every room precise (32 bits); per-room reduced precision deferred | UX U-2 |
 | Identity tag | 2 characters, default first + last initials, always editable, duplicate hint | UX §5.1, §7.1 |
 | Room avatar | eight fixed icons (tent default), no emoji | UX U-5 |

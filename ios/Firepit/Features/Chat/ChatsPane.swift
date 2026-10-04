@@ -662,6 +662,7 @@ private struct ChannelChat: View {
         ConversationScroll(
             conversation: AnyHashable(index),
             items: buildChatItems(state.visibleMessages),
+            reactions: state.reactions,
             autoScroll: !state.isSearching
         ) { item, scrollTo in
             ChatRow(item: item) { message, isFirst, isLast in
@@ -767,39 +768,42 @@ private struct ChannelChat: View {
         scrollTo: @escaping (Int32) -> Void
     ) -> some View {
         let parent = state.repliedTo(message)
-        return MessageBubble(
-            text: message.text,
-            time: MessageTimestamp.bubbleFormat(message.shownAt()),
-            isOutgoing: message.isOutgoing,
-            senderName: state.nameOf(message.fromNodeNum),
-            senderNodeNum: message.fromNodeNum,
-            status: message.isOutgoing ? message.status : nil,
-            footnote: ChatsCopy.receiptFootnote(viewModel.receiptsOnScreen[message.id])
-                ?? ChatsCopy.hopsFootnote(message.hopsAway),
-            quoted: parent.map {
-                QuotedMessage(senderName: state.nameOf($0.fromNodeNum), senderNodeNum: $0.fromNodeNum, text: $0.text)
-            },
-            onQuoteTap: parent.map { parent in { scrollTo(parent.id) } },
-            highlight: state.isSearching ? highlightRanges(message.text, query: state.query) : [],
-            isFirstInGroup: isFirst,
-            isLastInGroup: isLast
-        )
-        .contentShape(.rect)
-        .modifier(SwipeToReply { viewModel.startReply(message) })
-        .onTapGesture { viewModel.inspect(message) }
-        .contextMenu {
-            Button {
-                viewModel.startReply(message)
-            } label: {
-                Label("Reply", systemImage: "arrowshape.turn.up.left")
+        return VStack(spacing: 0) {
+            MessageBubble(
+                text: message.text,
+                time: MessageTimestamp.bubbleFormat(message.shownAt()),
+                isOutgoing: message.isOutgoing,
+                senderName: state.nameOf(message.fromNodeNum),
+                senderNodeNum: message.fromNodeNum,
+                status: message.isOutgoing ? message.status : nil,
+                footnote: ChatsCopy.receiptFootnote(viewModel.receiptsOnScreen[message.id])
+                    ?? ChatsCopy.hopsFootnote(message.hopsAway),
+                quoted: parent.map {
+                    QuotedMessage(senderName: state.nameOf($0.fromNodeNum), senderNodeNum: $0.fromNodeNum, text: $0.text)
+                },
+                onQuoteTap: parent.map { parent in { scrollTo(parent.id) } },
+                highlight: state.isSearching ? highlightRanges(message.text, query: state.query) : [],
+                isFirstInGroup: isFirst,
+                isLastInGroup: isLast
+            )
+            .contentShape(.rect)
+            .modifier(SwipeToReply { viewModel.startReply(message) })
+            .onTapGesture { viewModel.inspect(message) }
+            .contextMenu {
+                ReactionMenu(
+                    text: message.text,
+                    onReact: { emoji in viewModel.react(message, emoji: emoji) },
+                    onReply: { viewModel.startReply(message) },
+                    onInfo: { viewModel.inspect(message) }
+                )
             }
-            Button {
-                viewModel.inspect(message)
-            } label: {
-                Label("Message info", systemImage: FirepitIcon.info.systemName)
+            .accessibilityAction(named: Text("Reply")) { viewModel.startReply(message) }
+            if let counts = state.reactions[message.id] {
+                ReactionRow(counts: counts, isOutgoing: message.isOutgoing) { emoji in
+                    viewModel.react(message, emoji: emoji)
+                }
             }
         }
-        .accessibilityAction(named: Text("Reply")) { viewModel.startReply(message) }
     }
 }
 
@@ -848,19 +852,31 @@ private struct DirectChat: View {
         ConversationScroll(
             conversation: AnyHashable(peer),
             items: buildChatItems(state.messages),
+            reactions: state.reactions,
             autoScroll: true
         ) { item, _ in
             ChatRow(item: item) { message, isFirst, isLast in
-                MessageBubble(
-                    text: message.text,
-                    time: MessageTimestamp.bubbleFormat(message.shownAt()),
-                    isOutgoing: message.isOutgoing,
-                    senderName: nil,
-                    senderNodeNum: message.fromNodeNum,
-                    status: message.isOutgoing ? message.status : nil,
-                    isFirstInGroup: isFirst,
-                    isLastInGroup: isLast
-                )
+                VStack(spacing: 0) {
+                    MessageBubble(
+                        text: message.text,
+                        time: MessageTimestamp.bubbleFormat(message.shownAt()),
+                        isOutgoing: message.isOutgoing,
+                        senderName: nil,
+                        senderNodeNum: message.fromNodeNum,
+                        status: message.isOutgoing ? message.status : nil,
+                        isFirstInGroup: isFirst,
+                        isLastInGroup: isLast
+                    )
+                    .contentShape(.rect)
+                    .contextMenu {
+                        ReactionMenu(text: message.text) { emoji in viewModel.react(message, emoji: emoji) }
+                    }
+                    if let counts = state.reactions[message.id] {
+                        ReactionRow(counts: counts, isOutgoing: message.isOutgoing) { emoji in
+                            viewModel.react(message, emoji: emoji)
+                        }
+                    }
+                }
             }
         } empty: {
             if viewModel.messagesLoaded && state.messages.isEmpty {
@@ -918,15 +934,26 @@ private struct ChatRow<Bubble: View>: View {
 ///
 /// The first landing jumps; later arrivals animate. Somebody opening a room asked for the conversation, not a scroll
 /// through it, but a message arriving while they read is worth seeing move. Autoscroll pauses during a search, where
-/// jumping to the newest message would fight the reader.
+/// jumping to the newest message would fight the reader. A reaction makes its message taller without adding one:
+/// whoever was reading the newest message keeps it in view, and whoever was reading further up stays where they were.
 private struct ConversationScroll<Row: View, Empty: View>: View {
     let conversation: AnyHashable
     let items: [ChatItem]
+    let reactions: [Int32: [Reactions.Count]]
     let autoScroll: Bool
     @ViewBuilder let row: (ChatItem, @escaping (Int32) -> Void) -> Row
     @ViewBuilder let empty: () -> Empty
 
     @State private var landed = false
+    /// Whether the newest message is on screen.
+    @State private var atNewest = false
+    /// The latest jump to the newest message, which the settling landing follows.
+    @State private var landing = Landing()
+
+    private struct Landing {
+        var count = 0
+        var animated = false
+    }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -937,6 +964,8 @@ private struct ConversationScroll<Row: View, Empty: View>: View {
                             withAnimation { proxy.scrollTo(ChatItem.Key.message(id), anchor: .center) }
                         }
                         .id(item.id)
+                        .onAppear { if item.id == items.last?.id { atNewest = true } }
+                        .onDisappear { if item.id == items.last?.id { atNewest = false } }
                     }
                 }
                 .padding(.horizontal, FirepitSpacing.screenMargin)
@@ -948,6 +977,16 @@ private struct ConversationScroll<Row: View, Empty: View>: View {
             .onAppear { land(proxy, animated: false) }
             .onChange(of: items.last?.id) { land(proxy, animated: landed) }
             .onChange(of: autoScroll) { land(proxy, animated: true) }
+            .onChange(of: reactions) { if landed && atNewest { land(proxy, animated: true) } }
+            .task(id: autoScroll ? landing.count : -1) {
+                // A jump aims with estimated heights for the rows the lazy stack has not drawn, and rows drawn on the
+                // way can turn out taller. Once they are drawn, land exactly, without animation. A search starting
+                // in the meantime cancels it.
+                guard autoScroll, landing.count > 0 else { return }
+                try? await Task.sleep(for: landing.animated ? .milliseconds(450) : .milliseconds(60))
+                guard !Task.isCancelled, let last = items.last?.id else { return }
+                proxy.scrollTo(last, anchor: .bottom)
+            }
         }
     }
 
@@ -959,6 +998,7 @@ private struct ConversationScroll<Row: View, Empty: View>: View {
             proxy.scrollTo(last, anchor: .bottom)
         }
         landed = true
+        landing = Landing(count: landing.count + 1, animated: animated)
     }
 }
 

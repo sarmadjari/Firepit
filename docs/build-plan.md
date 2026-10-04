@@ -21,7 +21,7 @@ RTL-ready from Stage 3) · invite-link domain deferred until Stage 8.
 | 0–2 | Foundations, talking to a radio, the data layer and honest message pipeline | ✅ Built |
 | 3–6 | Adaptive shell and design system, rooms and QR invites, chat, map and location | ✅ Built. The exit proofs that need people outdoors wait for the field test |
 | 7–7.9 | Hardening, identity and privacy, sealed rooms, the two-phone bench test, two security reviews | ✅ Built. A full-afternoon field test and battery over 8 h are not yet measured |
-| 8 | v1.0 features | ✅ Built, except emoji reactions |
+| 8 | v1.0 features | ✅ Built, emoji reactions last (2026-10-04) |
 | 9 | Release prep: accessibility and RTL pass, R8, store listing | ✅ Done 2026-10-04: accessibility, right to left, R8, 16 KB pages, store listing, no analytics. Left for release day: the release key and store submission |
 | 10 | The iPhone app | ✅ Built. An iPhone and an Android phone in one room over real radios is still to be tested |
 | 11 | Security within Meshtastic's limits: Signal-grade protections where the radio allows, with no message growing by a byte | In progress: Phase 1 done on both apps, Phase 2 next |
@@ -802,7 +802,7 @@ In dependency order: DMs (`add_contact` before every DM) → alerts → reaction
 fallback → Base/Router admin (roles, fixed position, favorites) → key rotation → Group + public
 relays mode → offline map packs → dark theme → diagnostics → 2.8 signing badge.
 
-**Status:** all built except reactions, on both apps. Diagnostics are the radio details screen,
+**Status:** all built on both apps; reactions were the last, on 2026-10-04 (UX §5.4). Diagnostics are the radio details screen,
 traceroute and the channel-congestion warning. The signing badge is "Signature: Verified" in the info
 of any message the firmware marked as signed, and the radio's details say whether it can sign
 ("Signed messages").

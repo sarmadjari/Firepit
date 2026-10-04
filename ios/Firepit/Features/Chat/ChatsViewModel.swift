@@ -9,7 +9,10 @@ struct ChatsUiState: Equatable {
     var connected = false
     var channels: [RoomChannel] = []
     var selected: Int?
+    /// The conversation's lines; reactions are not among them, see `reactions`.
     var messages: [ChatMessage] = []
+    /// Reactions counted under the message they react to, by its id (UX §5.4).
+    var reactions: [Int32: [Reactions.Count]] = [:]
     var nodes: [Int32: MeshNode] = [:]
     /// How the people in our rooms name themselves, by node number.
     var cards: [Int32: PersonCard] = [:]
@@ -510,9 +513,16 @@ final class ChatsViewModel {
         if deliver(text, replyId: state.replyingTo?.id) { state.replyingTo = nil }
     }
 
+    /// Reacts to `message` with one of the six (UX §5.4): one small packet of its own, sealed as the conversation's
+    /// words are. Your latest reaction to a message is the one that counts, so choosing again replaces it.
+    func react(_ message: ChatMessage, emoji: String) {
+        guard Reactions.choices.contains(emoji) else { return }
+        deliver(emoji, replyId: message.id, reaction: true)
+    }
+
     /// False when no conversation is open to send to.
     @discardableResult
-    private func deliver(_ text: String, replyId: Int32?) -> Bool {
+    private func deliver(_ text: String, replyId: Int32?, reaction: Bool = false) -> Bool {
         let peer = openPeer
         let channel = openChannel
         guard peer != nil || channel != nil else { return false }
@@ -522,9 +532,9 @@ final class ChatsViewModel {
                 if let peer {
                     // The channel index is ignored for a direct message: the firmware encrypts to the recipient's key
                     // and puts a channel hash of 0 on the wire.
-                    try await repository.sendText(channel: 0, text: text, to: peer, replyId: replyId)
+                    try await repository.sendText(channel: 0, text: text, to: peer, replyId: replyId, reaction: reaction)
                 } else if let channel {
-                    try await repository.sendText(channel: channel, text: text, replyId: replyId)
+                    try await repository.sendText(channel: channel, text: text, replyId: replyId, reaction: reaction)
                 }
             } catch {
                 self.state.error = ChatsCopy.sendFailure(error)
@@ -562,7 +572,8 @@ final class ChatsViewModel {
             Task {
                 for await messages in source {
                     guard !Task.isCancelled else { break }
-                    self.state.messages = messages
+                    self.state.messages = messages.filter { !Reactions.isReaction($0) }
+                    self.state.reactions = Reactions.countsByTarget(messages, myNodeNum: self.state.myNode?.nodeNum)
                     self.messagesLoaded = true
                     self.followReceipts(for: messages)
                     await self.markRead(channel: channel, messages: messages)
@@ -591,9 +602,9 @@ final class ChatsViewModel {
         conversation = Task { await awaitObservers(observers) }
     }
 
-    /// Receipts for the messages we sent that are on screen, so a sender can see them arrive.
+    /// Receipts for the messages we sent that are on screen, so a sender can see them arrive. Reactions get none.
     private func followReceipts(for messages: [ChatMessage]) {
-        let ids = messages.filter(\.isOutgoing).map(\.id)
+        let ids = messages.filter { $0.isOutgoing && !Reactions.isReaction($0) }.map(\.id)
         guard ids != receiptIds else { return }
         receiptIds = ids
         receiptsTask?.cancel()
@@ -616,6 +627,7 @@ final class ChatsViewModel {
 
     private func reportRead(channel: Int?, peer: Int32?) async {
         guard presence.foreground.value, channel != nil || peer != nil else { return }
+        // `state.messages` holds no reactions: they show no ticks, so they are not reported.
         let incoming = Set(state.messages.filter { !$0.isOutgoing }.map(\.id))
         await receipts.read(channel: channel ?? 0, messageIds: incoming, peer: peer)
     }

@@ -69,6 +69,8 @@ final class MessageNotifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     private func notifyIfUnseen(_ message: ChatMessage) async {
+        // A reaction is a nod, not news: it shows under the message when the conversation is opened.
+        if Reactions.isReaction(message) { return }
         if presence.isWatching(channel: message.channel) { return }
         if await firstValue(channelState.observeMuted())?.contains(message.channel) == true { return }
 

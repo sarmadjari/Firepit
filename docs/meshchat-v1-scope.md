@@ -34,7 +34,7 @@ Exit criteria: two phones + two nodes, create room → invite by QR → chat →
 
 Everything in the design doc: DMs (PKI), reactions (6 fixed), alerts, location requests, duration tiers with phone-GPS fallback, Base/Router node admin with favorites and fixed position, Group + public relays mode, offline map packs, dark theme, diagnostics, 2.8 signing badge.
 
-**As built:** all of it on both apps, except reactions.
+**As built:** all of it on both apps.
 
 ### Not in v1 (from the design doc)
 

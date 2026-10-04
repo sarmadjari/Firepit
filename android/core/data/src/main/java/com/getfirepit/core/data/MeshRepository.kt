@@ -434,7 +434,10 @@ class MeshRepository @Inject constructor(
         text: String,
         replyId: Int? = null,
         to: Int = BROADCAST_NODE_NUM,
+        /** One of the six reactions to [replyId] (UX §5.4): Meshtastic's `emoji`, sealed inside where the words are. */
+        reaction: Boolean = false,
     ) {
+        val emoji = if (reaction) REACTION_EMOJI else 0
         val myNodeNum = _myNodeNum.value ?: throw SendError.NotConnected
         val payload = text.encodeUtf8()
 
@@ -478,7 +481,7 @@ class MeshRepository @Inject constructor(
                     requireNotNull(peerPhoneKey),
                     MeshChatControl(
                         version = InviteCodec.VERSION,
-                        room_text = RoomText(text = text, reply_id = replyId ?: 0),
+                        room_text = RoomText(text = text, reply_id = replyId ?: 0, emoji = emoji),
                     ).encode(),
                     DirectSeal.contextOf(myNodeNum, carriage.nodeNum),
                 )
@@ -508,6 +511,7 @@ class MeshRepository @Inject constructor(
                 // there would be no "heard by the mesh" signal at all.
                 wantAck = true,
                 replyId = replyId,
+                emoji = emoji.takeIf { it != 0 },
                 pkiEncrypted = true,
                 publicKey = requireNotNull(peerKey),
             )
@@ -522,13 +526,14 @@ class MeshRepository @Inject constructor(
                 hopLimit = hopLimit,
                 wantAck = true,
                 replyId = replyId,
+                emoji = emoji.takeIf { it != 0 },
             )
 
             is Carriage.SealedRoom -> {
                 val sealed = roomKeys.seal(
                     carriage.roomId,
                     myNodeNum,
-                    MeshChatControl(room_text = RoomText(text = text, reply_id = replyId ?: 0)).encode(),
+                    MeshChatControl(room_text = RoomText(text = text, reply_id = replyId ?: 0, emoji = emoji)).encode(),
                 ) ?: throw SendError.RoomKeyMissing
                 MeshPacketBuilder.meshPacket(
                     to = to,
@@ -552,6 +557,7 @@ class MeshRepository @Inject constructor(
                 status = MessageStatus.QUEUED,
                 isOutgoing = true,
                 replyId = replyId,
+                emoji = emoji.takeIf { it != 0 },
                 roomId = if (to == BROADCAST_NODE_NUM) conversationIdOf(channel) else 0,
             ),
             myNodeNum,
@@ -740,13 +746,13 @@ class MeshRepository @Inject constructor(
      * Words that arrived sealed in [roomId]. Stored like any other message: the
      * encryption is how it travelled, and the database is encrypted in its turn.
      */
-    internal suspend fun saveSealedText(packet: MeshPacket, text: String, replyId: Int?, roomId: Int) {
-        saveText(packet, sanitizeMeshText(text), replyId, emoji = null, roomId = roomId)
+    internal suspend fun saveSealedText(packet: MeshPacket, text: String, replyId: Int?, roomId: Int, emoji: Int? = null) {
+        saveText(packet, sanitizeMeshText(text), replyId, emoji = emoji, roomId = roomId)
     }
 
     /** One person's words, sealed by their phone to ours and already opened. */
-    internal suspend fun saveSealedDirectText(packet: MeshPacket, text: String, replyId: Int?) {
-        saveText(packet, sanitizeMeshText(text), replyId, emoji = null, roomId = 0)
+    internal suspend fun saveSealedDirectText(packet: MeshPacket, text: String, replyId: Int?, emoji: Int? = null) {
+        saveText(packet, sanitizeMeshText(text), replyId, emoji = emoji, roomId = 0)
     }
 
     private suspend fun saveText(
@@ -875,6 +881,9 @@ class MeshRepository @Inject constructor(
     }
 
     private companion object {
+        /** Meshtastic's value for "this text is a reaction" in `Data.emoji`, which other apps set too. */
+        const val REACTION_EMOJI = 1
+
         const val TAG = "FirepitMesh"
 
         /** Curve25519 public key length; anything else cannot be a PKI key. */

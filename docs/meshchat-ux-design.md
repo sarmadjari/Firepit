@@ -186,6 +186,9 @@ flowchart TD
 - Long-press message: Reply (uses native `reply_id`), Copy, Message info, Delete for me. Reply renders a quoted block like WhatsApp.
 - Swipe a message towards the reading end to reply: it follows the finger a short way over a reply arrow, and a haptic marks the point where letting go replies.
 - Reactions (native `emoji` + `reply_id`): long-press a message → six fixed emoji 👍 ❤️ 😂 😮 😢 🙏, one tap, no picker. One packet each, and a reaction replaces an "ok" text, so airtime-neutral (U-1, locked).
+  - As built (both apps, 2026-10-04): a long press, or a right-click, opens the six in one row above Reply, Copy and Message info; a direct chat offers Copy. Reactions sit under their message as small pills, with a count when more than one person chose the same one and yours outlined; tapping someone else's adds yours. A mesh cannot take a reaction back, so a person's latest reaction to a message replaces their earlier one.
+  - A reaction is a nod, not news: it does not notify, does not count as unread, is never a list's preview line, and gets no receipts, since it shows no ticks. In a Firepit room or a sealed direct message the flag travels inside the seal (`RoomText.emoji`), so relays cannot tell it from words (IG §6.2.1).
+  - Whoever is reading the newest message keeps it in view when a reaction makes a message above it taller.
 - Date separators, day headers, system chips (joined, key rotated, live location started).
 - Header: room name · "7 members" · node status line (§7.4). Tap → Room info.
 

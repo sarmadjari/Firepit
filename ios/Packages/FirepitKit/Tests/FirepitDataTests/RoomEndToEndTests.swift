@@ -163,6 +163,33 @@ struct RoomEndToEndTests {
             })
     }
 
+    /// UX §5.4: a reaction crosses sealed, arrives as a reaction to its message, and owes nobody a receipt.
+    @Test func aReactionCrossesSealedAndOwesNoReceipt() async throws {
+        let (mesh, phones) = try await makeMesh(2)
+        let (room, invite) = try await createAndInvite(phones[0])
+        try await join(phones[1], invite: invite, approver: phones[0])
+        try await phones[0].meshRepository.sendText(channel: room.index, text: "coffee's on")
+        #expect(await waitUntil { (try? await storedTexts(phones[1], channel: room.index).isEmpty) == false })
+        let original = try await storedTexts(phones[1], channel: room.index).first!
+        try await phones[1].meshRepository.sendText(
+            channel: room.index, text: "❤️", replyId: original.id, reaction: true)
+        #expect(
+            await waitUntil {
+                (try? await storedTexts(phones[0], channel: room.index).contains {
+                    $0.emoji == 1 && $0.replyId == original.id && $0.text == "❤️"
+                }) == true
+            })
+        #expect(
+            !mesh.airPackets.contains {
+                $0.from == phones[1].radio.nodeNum && $0.payload.range(of: Data("❤️".utf8)) != nil
+            })
+
+        let reaction = try #require(try await storedTexts(phones[1], channel: room.index).first { $0.emoji == 1 })
+        try await phones[0].receipts.flush()
+        await settle(mesh)
+        #expect(try await firstValue(phones[1].receiptDao.observe(messageId: reaction.id)).isEmpty)
+    }
+
     @Test func directMessagesAreSealedBothWays() async throws {
         let (mesh, phones) = try await makeMesh(2)
         let (room, invite) = try await createAndInvite(phones[0])

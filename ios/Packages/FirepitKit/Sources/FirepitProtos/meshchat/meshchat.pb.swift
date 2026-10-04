@@ -498,6 +498,11 @@ public nonisolated struct Meshchat_RoomText: Sendable {
   /// Mirrors MeshPacket.reply_id, which cannot be read without the key.
   public var replyID: UInt32 = 0
 
+  /// Mirrors Data.emoji: non-zero makes text one emoji reacting to reply_id,
+  /// one of six fixed ones (UX 5.4). Only reactions carry it, so no other
+  /// message grows.
+  public var emoji: UInt32 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1524,7 +1529,7 @@ nonisolated extension Meshchat_SealedMessage: SwiftProtobuf.Message, SwiftProtob
 
 nonisolated extension Meshchat_RoomText: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".RoomText"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{3}reply_id\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{3}reply_id\0\u{1}emoji\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1534,6 +1539,7 @@ nonisolated extension Meshchat_RoomText: SwiftProtobuf.Message, SwiftProtobuf._M
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.text) }()
       case 2: try { try decoder.decodeSingularFixed32Field(value: &self.replyID) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.emoji) }()
       default: break
       }
     }
@@ -1546,12 +1552,16 @@ nonisolated extension Meshchat_RoomText: SwiftProtobuf.Message, SwiftProtobuf._M
     if self.replyID != 0 {
       try visitor.visitSingularFixed32Field(value: self.replyID, fieldNumber: 2)
     }
+    if self.emoji != 0 {
+      try visitor.visitSingularUInt32Field(value: self.emoji, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Meshchat_RoomText, rhs: Meshchat_RoomText) -> Bool {
     if lhs.text != rhs.text {return false}
     if lhs.replyID != rhs.replyID {return false}
+    if lhs.emoji != rhs.emoji {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
