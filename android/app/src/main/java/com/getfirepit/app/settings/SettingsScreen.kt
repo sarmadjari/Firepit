@@ -231,9 +231,9 @@ fun SettingsScreen(
                 pickingRoom = false
                 sharingViewModel.stop()
             },
-            onShare = { roomId, choice ->
+            onShare = { roomId, choice, radioSafetyNet ->
                 pickingRoom = false
-                sharingViewModel.share(roomId, choice)
+                sharingViewModel.share(roomId, choice, radioSafetyNet)
             },
         )
     }

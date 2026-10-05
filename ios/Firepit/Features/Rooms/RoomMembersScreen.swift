@@ -142,9 +142,9 @@ struct RoomMembersScreen: View {
             ShareLocationSheet(
                 state: sharingViewModel.state,
                 onDismiss: { pickingRoom = false },
-                onShare: { chosen, choice in
+                onShare: { chosen, choice, radioSafetyNet in
                     pickingRoom = false
-                    sharingViewModel.share(roomId: chosen, choice: choice)
+                    sharingViewModel.share(roomId: chosen, choice: choice, radioSafetyNet: radioSafetyNet)
                 },
                 onStop: {
                     pickingRoom = false

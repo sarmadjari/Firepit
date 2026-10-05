@@ -296,6 +296,7 @@ The cost is real and accepted: you cannot add someone who is not with you. That 
 | Room keys over time | moved on every hour, one way, with old hours erased; each sender seals under a key of their own; each message opens once. No byte added: the hour rides in the nonce (2026-10, Stage 11 phase 1) | security.md §3, build plan Stage 11 |
 | Room messages | sent with `want_ack` for the "heard by the mesh" tick; no delivery claim | guide D-5, UX §7.2 |
 | Live location | precision toggle per room for start/stop; duration tier change may restart the node; presets 15 min · 1 h · 8 h · Custom | guide D-6, UX U-6 |
+| Radio safety net when the phone dies | opt-in per share; the radio answers "where are you?" on the room's radio key — Meshtastic's protection, not Firepit's (2026-10-05) | security.md §2, UX §6.7 |
 | Your place on the map | the phone's GPS, the radio's only when the phone has none; one dot, never a second you; a Radio GPS switch to save the radio's battery (2026-10-04) | UX §6.6, guide §6.3 |
 | Telemetry | device telemetry on, every 30 min, primary channel | guide D-7 |
 | Favorites | all room members favorited on the Personal node | guide D-8 |

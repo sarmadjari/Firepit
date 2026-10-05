@@ -301,9 +301,9 @@ private struct SettingsPage: View {
             ShareLocationSheet(
                 state: sharingModel.state,
                 onDismiss: { pickingRoom = false },
-                onShare: { roomId, choice in
+                onShare: { roomId, choice, radioSafetyNet in
                     pickingRoom = false
-                    sharingModel.share(roomId: roomId, choice: choice)
+                    sharingModel.share(roomId: roomId, choice: choice, radioSafetyNet: radioSafetyNet)
                 },
                 onStop: {
                     pickingRoom = false

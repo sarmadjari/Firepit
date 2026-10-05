@@ -22,7 +22,9 @@
             ShareLocationSheet(
                 state: model.state,
                 onDismiss: {},
-                onShare: { room, choice in model.share(roomId: room, choice: choice) },
+                onShare: { room, choice, radioSafetyNet in
+                    model.share(roomId: room, choice: choice, radioSafetyNet: radioSafetyNet)
+                },
                 onStop: { model.stop() }
             )
             .id(model.state)

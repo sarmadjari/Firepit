@@ -232,7 +232,7 @@ public final class MeshRepository: Sendable {
         // Listening starts before sending: an answer can arrive first. Subscribing here, synchronously, rather than
         // inside the task below, which may only start after the send has returned.
         let events = routing.subscribe()
-        let answerTask = Task<RoutingEvent?, Never> {
+        let routingAnswer = Task<RoutingEvent?, Never> {
             try? await withTimeoutOrNil(timeout) {
                 await events.first { event in
                     event.requestId == requestId && (event.from == from || (event.from == own && event.error != .none))
@@ -244,12 +244,32 @@ public final class MeshRepository: Sendable {
             toRadio.packet = packet
             try await link.send(toRadio)
         } catch {
-            answerTask.cancel()
+            routingAnswer.cancel()
             log.warning("could not send packet")
             return false
         }
-        let event = await answerTask.value
+        let event = await routingAnswer.value
         return event?.from == from && event?.error == Routing.Error.none
+    }
+
+    public func sendPositionRequest(to: Int32, channel: Int) async -> Bool {
+        do {
+            let packet = try MeshPacketBuilder.meshPacket(
+                to: to,
+                channel: channel,
+                portNum: .positionApp,
+                payload: Data(),
+                hopLimit: hopLimitForSending(),
+                wantResponse: true,
+                priority: .reliable)
+            var toRadio = ToRadio()
+            toRadio.packet = packet
+            try await link.send(toRadio)
+            return true
+        } catch {
+            log.warning("could not send radio position request")
+            return false
+        }
     }
 
     /// Whether words to peer can be sealed to their phone, as that changes.
@@ -472,7 +492,8 @@ public final class MeshRepository: Sendable {
             positionTime: timeMillis,
             positionPrecision: PositionPrecision.full,
             groundSpeed: nil,
-            groundTrack: nil
+            groundTrack: nil,
+            positionFromRadio: false
         )
     }
 
@@ -635,6 +656,7 @@ public final class MeshRepository: Sendable {
             role: role,
             id: id,
             positionPrecision: Int(channel.settings.moduleSettings.positionPrecision),
+            psk: psk,
             kind: kindOf(roomId: id, psk: psk, secondary: role == .secondary)
         )
     }
@@ -995,6 +1017,13 @@ public final class MeshRepository: Sendable {
         RadioClock.ifPlausible(claimSeconds: Int32(bitPattern: claimSeconds), now: currentEpochMillis())
     }
 
+    private func radioTimestamp(_ claimSeconds: UInt32, receivedAt: Int64) -> Int64? {
+        guard let plausible = RadioClock.ifPlausible(claimSeconds: Int32(bitPattern: claimSeconds), now: receivedAt) else {
+            return nil
+        }
+        return min(plausible, receivedAt)
+    }
+
     private func handlePacket(_ packet: MeshPacket) async {
         guard case .decoded(let data)? = packet.payloadVariant else {
             return
@@ -1198,8 +1227,12 @@ public final class MeshRepository: Sendable {
         // The radio learned this from an unsealed broadcast, if at all; a member's position is only believed sealed,
         // from their phone.
         let isMember = (try? await memberDao.isInAnyRoom(nodeNum: Int32(bitPattern: info.num))) == true
-        let position: Position? =
-            info.hasPosition && TrustRules.unsealedPositionAcceptable(senderInOurRooms: isMember) ? info.position : nil
+        let position: Position? = info.hasPosition && (
+            !isMember || TrustRules.unsealedPositionAcceptable(
+                senderInOurRooms: isMember,
+                channel: 0,
+                sharedFirepitRoomSlot: nil,
+                pkiEncrypted: false)) ? info.position : nil
         try await nodeDao.save(
             node: MeshNode(
                 nodeNum: Int32(bitPattern: info.num),
@@ -1256,15 +1289,29 @@ public final class MeshRepository: Sendable {
             return
         }
         let isMember = (try? await memberDao.isInAnyRoom(nodeNum: from)) == true
-        if !TrustRules.unsealedPositionAcceptable(senderInOurRooms: isMember) {
+        let memberRoomSlot = await sharedFirepitRoomSlot(nodeNum: from, slot: Int(packet.channel))
+        if !TrustRules.unsealedPositionAcceptable(
+            senderInOurRooms: isMember,
+            channel: Int(packet.channel),
+            sharedFirepitRoomSlot: memberRoomSlot,
+            pkiEncrypted: packet.pkiEncrypted
+        ) {
             log.warning("dropped an unsealed position for a room member")
             return
         }
         await storePosition(
             nodeNum: from,
             position: position,
-            precision: position.precisionBits == 0 ? nil : Int(position.precisionBits)
+            precision: position.precisionBits == 0 ? nil : Int(position.precisionBits),
+            fromRadio: isMember
         )
+    }
+
+    private func sharedFirepitRoomSlot(nodeNum: Int32, slot: Int) async -> Int? {
+        guard let room = channels.value.first(where: { $0.index == slot && $0.kind == .firepit && $0.isRoom }) else {
+            return nil
+        }
+        return ((try? await memberDao.findEntity(roomId: room.id, nodeNum: nodeNum)) != nil) ? room.index : nil
     }
 
     private func noteRadioFix(position: Position, receivedAt: Int64) {
@@ -1284,7 +1331,7 @@ public final class MeshRepository: Sendable {
                 latitude: Double(latitude) / 1e7,
                 longitude: Double(longitude) / 1e7,
                 altitude: position.hasAltitude ? Int(position.altitude) : nil,
-                timeMillis: ifPlausible(position.time) ?? receivedAt,
+                timeMillis: ifPlausible(position.timestamp) ?? ifPlausible(position.time) ?? 0,
                 source: .radio
             ))
     }
@@ -1294,10 +1341,10 @@ public final class MeshRepository: Sendable {
      * already opened and checked by the room layer.
      */
     internal func storeSealedPosition(nodeNum: Int32, position: Position) async {
-        await storePosition(nodeNum: nodeNum, position: position, precision: PositionPrecision.full)
+        await storePosition(nodeNum: nodeNum, position: position, precision: PositionPrecision.full, fromRadio: false)
     }
 
-    private func storePosition(nodeNum: Int32, position: Position, precision: Int?) async {
+    private func storePosition(nodeNum: Int32, position: Position, precision: Int?, fromRadio: Bool) async {
         guard position.hasLatitudeI, position.hasLongitudeI else {
             return
         }
@@ -1306,15 +1353,28 @@ public final class MeshRepository: Sendable {
         if latitude == 0 && longitude == 0 {
             return
         }
+        let now = currentEpochMillis()
+        let positionTime = fromRadio ? radioTimestamp(position.timestamp, receivedAt: now) : (ifPlausible(position.time) ?? now)
+        let existing = try? await nodeDao.findEntity(nodeNum: nodeNum)
+        if fromRadio && !TrustRules.radioPositionMayReplace(
+            existingHasPosition: existing?.latitudeI != nil && existing?.longitudeI != nil,
+            existingFromRadio: existing?.positionFromRadio == true,
+            existingPositionTime: existing?.positionTime,
+            incomingPositionTime: positionTime,
+            nowMillis: now
+        ) {
+            return
+        }
         try? await nodeDao.updatePosition(
             nodeNum: nodeNum,
             latitudeI: latitude,
             longitudeI: longitude,
             altitude: position.hasAltitude ? Int(position.altitude) : nil,
-            positionTime: ifPlausible(position.time) ?? currentEpochMillis(),
+            positionTime: positionTime,
             positionPrecision: precision,
             groundSpeed: position.hasGroundSpeed ? Int(position.groundSpeed) : nil,
-            groundTrack: position.hasGroundTrack ? Int(position.groundTrack) : nil
+            groundTrack: position.hasGroundTrack ? Int(position.groundTrack) : nil,
+            positionFromRadio: fromRadio
         )
     }
 

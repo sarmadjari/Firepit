@@ -2,6 +2,7 @@ import CoreLocation
 import FirepitData
 import FirepitModel
 import FirepitProtocol
+import FirepitProtos
 import Foundation
 import Observation
 import os
@@ -17,6 +18,9 @@ struct SharingUiState: Hashable {
     var roomName: String?
     var choice: ShareDuration = .default
     var endsAt: Int64?
+    var radioSafetyNet = false
+    var radioGpsAvailable = false
+    var error: String?
     /// Chosen, but not going anywhere now: the phone is away from its radio, or the radio connected does not carry
     /// the room. It resumes on its own.
     var paused = false
@@ -34,6 +38,7 @@ struct SharingUiState: Hashable {
 @Observable
 final class SharingViewModel {
     private(set) var state = SharingUiState()
+    private var error: String?
 
     @ObservationIgnored private let location: LocationRepository
     @ObservationIgnored private let mesh: MeshRepository
@@ -50,29 +55,47 @@ final class SharingViewModel {
         let myNodeNum = mesh.myNodeNum.subscribe()
         let deadline = location.sharingDeadline.subscribe()
         let connected = mesh.isConnected.subscribe()
+        let snapshot = mesh.snapshot.subscribe()
         await withTaskGroup(of: Void.self) { group in
             group.addTask { for await _ in channels { await self.recompute() } }
             group.addTask { for await _ in myNodeNum { await self.recompute() } }
             group.addTask { for await _ in deadline { await self.recompute() } }
             group.addTask { for await _ in connected { await self.recompute() } }
+            group.addTask { for await _ in snapshot { await self.recompute() } }
         }
     }
 
-    func share(roomId: Int32, choice: ShareDuration) {
+    func share(roomId: Int32, choice: ShareDuration, radioSafetyNet: Bool) {
         let location = location
         Task {
             LocationPermission.requestIfNeeded()
             do {
-                try await location.shareWith(roomId: roomId, choice: choice)
+                try await location.shareWith(roomId: roomId, choice: choice, radioSafetyNet: radioSafetyNet)
+                error = nil
+                recompute()
             } catch {
+                self.error = error.localizedDescription.isEmpty
+                    ? "Could not set up the radio safety net. Connect your radio and try again."
+                    : error.localizedDescription
                 sharingLog.warning("could not start sharing")
+                recompute()
             }
         }
     }
 
     /// Takes effect at once, whether or not a radio is connected: the phone is what sends.
     func stop() {
-        location.stopSharing()
+        let location = location
+        Task {
+            do {
+                try await location.stopSharingAndSilence()
+                error = nil
+                recompute()
+            } catch {
+                self.error = "Could not turn off the radio safety net. Connect your radio and try again."
+                recompute()
+            }
+        }
     }
 
     private func recompute() {
@@ -84,12 +107,15 @@ final class SharingViewModel {
         // room can be reached right now.
         let room = deadline.flatMap { chosen in rooms.first { $0.id == chosen.roomId } }
         state = SharingUiState(
-            connected: mesh.myNodeNum.value != nil,
+            connected: mesh.isConnected.value,
             rooms: rooms,
             roomId: deadline?.roomId,
             roomName: room?.displayName,
             choice: deadline?.choice ?? .default,
             endsAt: deadline?.endsAt,
+            radioSafetyNet: deadline?.radioSafetyNet == true,
+            radioGpsAvailable: mesh.isConnected.value && (mesh.snapshot.value?.position.map { $0.gpsMode != .notPresent } ?? false),
+            error: error,
             paused: deadline != nil && (!mesh.isConnected.value || room == nil)
         )
     }

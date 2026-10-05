@@ -40,6 +40,8 @@ data class MeshNode(
     val groundSpeed: Int? = null,
     /** True North course in hundredths of a degree. */
     val groundTrack: Int? = null,
+    /** True when the newest stored position came from the radio safety net. */
+    val positionFromRadio: Boolean = false,
 ) {
     /** Display form used by every Meshtastic client. */
     val displayId: String get() = userId ?: "!%08x".format(nodeNum)

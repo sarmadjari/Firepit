@@ -114,6 +114,8 @@ data class RoomChannel(
     val id: Int,
     /** 0 means positions are never sent on this channel. */
     val positionPrecision: Int,
+    /** The radio's channel PSK as reported now. Kept only in memory. */
+    val psk: ByteArray? = null,
     /** Least private by default: a slot is only a sealed room once a key proves it. */
     val kind: RoomKind = RoomKind.MESHTASTIC_PUBLIC,
 ) {

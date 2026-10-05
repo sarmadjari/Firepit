@@ -44,6 +44,7 @@ public final class LocationRepository: Sendable {
     public let phoneLocation: any PhoneLocationProviding
     public let rooms: RoomRepository
     public let sharingStore: SharingStore
+    public let locationSettings: LocationSettingsStore
 
     /**
      * Set while the map is on screen.
@@ -77,6 +78,9 @@ public final class LocationRepository: Sendable {
         phoneLocation: any PhoneLocationProviding,
         rooms: RoomRepository,
         sharingStore: SharingStore,
+        locationSettings: LocationSettingsStore = LocationSettingsStore(
+            defaults: UserDefaults(suiteName: "firepit.location.\(UUID().uuidString)")!
+        ),
         nowMillis: @escaping @Sendable () -> Int64 = currentEpochMillis
     ) {
         self.mesh = mesh
@@ -84,6 +88,7 @@ public final class LocationRepository: Sendable {
         self.phoneLocation = phoneLocation
         self.rooms = rooms
         self.sharingStore = sharingStore
+        self.locationSettings = locationSettings
         self.nowMillis = nowMillis
     }
 
@@ -119,6 +124,10 @@ public final class LocationRepository: Sendable {
         sharingStore.deadline
     }
 
+    public var settings: CurrentValue<LocationSettings> {
+        locationSettings.settings
+    }
+
     /** Nodes with a known fix, newest sighting first. */
     public func observePositions() -> AsyncStream<[MeshNode]> {
         AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
@@ -140,27 +149,25 @@ public final class LocationRepository: Sendable {
             jobs.append(
                 Task { [weak self] in
                     guard let self else { return }
+                    for await snapshot in mesh.snapshot.subscribe() {
+                        locationSettings.initializeFromRadio(snapshot?.position)
+                    }
+                })
+            jobs.append(
+                Task { [weak self] in
+                    guard let self else { return }
                     for await channels in mesh.channels.subscribe() {
                         if channels.isEmpty {
                             continue
                         }
-                        let writes = PositionSharing.writesToSilence(channels: channels)
-                        if !writes.isEmpty {
-                            log.warning("the radio broadcasts position, silencing it")
-                            do {
-                                try await silence(writes: writes)
-                            } catch {
-                                log.error("could not stop the radio broadcasting position")
-                            }
-                        }
-                        enforceDeadline()
+                        try? await enforceSafetyNetPrecision()
                     }
                 })
             jobs.append(
                 Task { [weak self] in
                     guard let self else { return }
                     while !Task.isCancelled {
-                        enforceDeadline()
+                        try? await enforceSafetyNetPrecision()
                         try? await Task.sleep(for: Self.deadlineCheck)
                     }
                 })
@@ -285,15 +292,15 @@ public final class LocationRepository: Sendable {
         guard let roomId = activeSharingRoom() else {
             return
         }
+        locationSettings.initializeFromRadio(mesh.snapshot.value?.position)
         let now = nowMillis()
-        let config = mesh.snapshot.value?.position
-        let configured = config?.positionBroadcastSecs ?? 0
-        let rawInterval = configured > 0 ? Int64(configured) : Self.firmwareDefaultSeconds
+        let config = locationSettings.settings.value
+        let rawInterval = Int64(config.rateSeconds)
         let interval = max(rawInterval, Self.minimumBeaconSeconds) * 1_000
         let previousSent = lastSharedAt.withLock { $0 }
         let sinceLast = now - previousSent
         let smartDue =
-            (config?.positionBroadcastSmartEnabled ?? false) && movedEnough(location: location, config: config)
+            config.whenMoved && movedEnough(location: location, config: config)
             && sinceLast >= durationMillis(smartInterval(config: config))
         let due = previousSent == 0 || sinceLast >= interval || smartDue
         if due {
@@ -301,18 +308,16 @@ public final class LocationRepository: Sendable {
         }
     }
 
-    private func movedEnough(location: OwnPosition.Fix, config: Config.PositionConfig?) -> Bool {
+    private func movedEnough(location: OwnPosition.Fix, config: LocationSettings) -> Bool {
         guard let previous = lastShared.withLock({ $0 }) else {
             return true
         }
-        let configured = config?.broadcastSmartMinimumDistance ?? 0
-        let minimum = configured > 0 ? Double(configured) : Self.smartDistanceMetres
+        let minimum = config.smartDistanceMetres > 0 ? Double(config.smartDistanceMetres) : Self.smartDistanceMetres
         return OwnPosition.distanceMetres(previous, location) >= minimum
     }
 
-    private func smartInterval(config: Config.PositionConfig?) -> Duration {
-        let configured = config?.broadcastSmartMinimumIntervalSecs ?? 0
-        return configured > 0 ? .seconds(Int64(configured)) : Self.smartMinimumInterval
+    private func smartInterval(config: LocationSettings) -> Duration {
+        config.smartIntervalSeconds > 0 ? .seconds(Int64(config.smartIntervalSeconds)) : Self.smartMinimumInterval
     }
 
     /** Seals the fix under the room's key and sends it to the room. */
@@ -410,19 +415,52 @@ public final class LocationRepository: Sendable {
      * Only a Firepit room whose key this phone holds: nowhere else can a
      * position be sealed.
      */
-    public func shareWith(roomId: Int32?, choice: ShareDuration) async throws {
+    public func shareWith(roomId: Int32?, choice: ShareDuration, radioSafetyNet: Bool = false) async throws {
         guard let roomId else {
-            stopSharing()
+            try await stopSharingAndSilence()
             return
         }
-        guard mesh.channels.value.contains(where: { $0.id == roomId && PositionSharing.canShare(channel: $0) }) else {
+        let room = mesh.channels.value.first { $0.id == roomId && PositionSharing.canShare(channel: $0) }
+        if room == nil && sharingStore.deadline.value?.roomId != roomId {
             throw LocationRepositoryError.notShareable
         }
-        sharingStore.remember(roomId: roomId, choice: choice, nowMillis: nowMillis())
+        let bound = radioSafetyNet ? (mesh.snapshot.value?.myNodeNum ?? sharingStore.deadline.value?.safetyNetNodeNum) : nil
+        sharingStore.remember(
+            roomId: roomId,
+            choice: choice,
+            nowMillis: nowMillis(),
+            radioSafetyNet: radioSafetyNet,
+            safetyNetNodeNum: bound)
+        if radioSafetyNet {
+            guard let room else { throw LocationRepositoryError.notConnected }
+            try await prepareRadioSafetyNet(roomSlot: room.index)
+        }
+        try await enforceSafetyNetPrecision(throwOnFailure: true)
         lastSharedAt.withLock { $0 = 0 }
         if let fix = chosenOwnPosition.value {
             await shareIfDue(location: fix)
         }
+    }
+
+    private func prepareRadioSafetyNet(roomSlot: Int) async throws {
+        guard var position = mesh.snapshot.value?.position else { throw LocationRepositoryError.notConnected }
+        guard position.gpsMode != .notPresent else { throw LocationRepositoryError.noRadioGps }
+        guard let channel = await admin.getChannel(index: roomSlot), channel.hasSettings else {
+            throw LocationRepositoryError.channelUnreadable
+        }
+        _ = channel.settings.psk
+        if position.gpsMode == .enabled && !position.fixedPosition
+            && position.positionBroadcastSecs == Self.radioSafetyNetSeconds
+            && !position.positionBroadcastSmartEnabled
+            && (position.positionFlags & UInt32(Config.PositionConfig.PositionFlags.timestamp.rawValue)) != 0 {
+            return
+        }
+        position.gpsMode = .enabled
+        position.fixedPosition = false
+        position.positionBroadcastSecs = Self.radioSafetyNetSeconds
+        position.positionBroadcastSmartEnabled = false
+        position.positionFlags |= UInt32(Config.PositionConfig.PositionFlags.timestamp.rawValue)
+        try await admin.setPositionConfig(position: position)
     }
 
     /** Stops sharing if its time has run out. Safe to call as often as you like. */
@@ -434,7 +472,33 @@ public final class LocationRepository: Sendable {
             return
         }
         log.info("sharing has run out, stopping")
-        stopSharing()
+        stopSharingLocalOnly()
+    }
+
+    private func enforceSafetyNetPrecision(throwOnFailure: Bool = false) async throws {
+        enforceDeadline()
+        guard mesh.isConnected.value, !mesh.channels.value.isEmpty else {
+            return
+        }
+        try await rooms.history.whileRearranging {
+            enforceDeadline()
+            let channels = mesh.channels.value
+            guard !channels.isEmpty else { return }
+            let keep = activeSafetyNetSlot(channels: channels)
+            let writes = PositionSharing.writesToSilence(channels: channels, keepSlot: keep)
+            if !writes.isEmpty {
+                log.warning("the radio broadcasts position, fixing precision")
+                if throwOnFailure {
+                    try await silence(writes: writes)
+                } else {
+                    do {
+                        try await silence(writes: writes)
+                    } catch {
+                        log.error("could not stop the radio broadcasting position")
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -442,6 +506,15 @@ public final class LocationRepository: Sendable {
      * every radio, whether or not one is connected.
      */
     public func stopSharing() {
+        Task { try? await stopSharingAndSilence() }
+    }
+
+    public func stopSharingAndSilence() async throws {
+        stopSharingLocalOnly()
+        try await enforceSafetyNetPrecision(throwOnFailure: true)
+    }
+
+    private func stopSharingLocalOnly() {
         sharingStore.clear()
         lastShared.withLock { $0 = nil }
         lastSharedAt.withLock { $0 = 0 }
@@ -453,6 +526,27 @@ public final class LocationRepository: Sendable {
             return nil
         }
         return mesh.channels.value.first { $0.id == roomId && PositionSharing.canShare(channel: $0) }?.id
+    }
+
+    private func activeSafetyNetSlot(channels: [RoomChannel]) -> Int? {
+        guard let deadline = sharingStore.deadline.value else { return nil }
+        return PositionSharing.safetyNetSlot(
+            channels: channels,
+            share: SafetyNetShare(
+                roomId: deadline.roomId,
+                endsAt: deadline.endsAt,
+                radioSafetyNet: deadline.radioSafetyNet,
+                safetyNetNodeNum: deadline.safetyNetNodeNum),
+            nowMillis: nowMillis(),
+            connectedNodeNum: mesh.snapshot.value?.myNodeNum,
+            positionConfig: mesh.snapshot.value?.position,
+            heldRoomIds: Set(channels.filter { PositionSharing.canShare(channel: $0) }.map(\.id)),
+            primaryKey: PrimaryChannel.key,
+            licensedMode: {
+                guard let snapshot = mesh.snapshot.value, let node = snapshot.myNodeNum else { return false }
+                return snapshot.nodes[node]?.user.isLicensed == true
+            }()
+        )
     }
 
     /**
@@ -499,7 +593,13 @@ public final class LocationRepository: Sendable {
         if sendFailed.withLock({ $0 }) {
             return .notConnected
         }
-        return heard == nil ? .silent : .answered
+        if heard != nil {
+            return .answered
+        }
+        guard let fallbackRoom = await rooms.sharedRoomWith(nodeNum: nodeNum) else {
+            return .noSharedRoom
+        }
+        return await mesh.sendPositionRequest(to: nodeNum, channel: fallbackRoom.index) ? .asked : .silent
     }
 
     private func ask(roomId: Int32, nodeNum: Int32) async -> Bool {
@@ -521,10 +621,12 @@ public final class LocationRepository: Sendable {
     private enum LocationRepositoryError: Error {
         case channelUnreadable
         case notShareable
+        case notConnected
+        case noRadioGps
     }
 
-    private static let firmwareDefaultSeconds: Int64 = 900
     private static let minimumBeaconSeconds: Int64 = 30
+    private static let radioSafetyNetSeconds: UInt32 = 86_400
     /// Generous: the question crosses the mesh, and so does the answer.
     public static let replyTimeout: Duration = .seconds(60)
     /// The firmware's own smart-beacon defaults, used when the radio leaves them at zero.

@@ -15,11 +15,19 @@ final class SimulatedRadio: RadioLinking, @unchecked Sendable {
     let radioKey: Data
     weak var mesh: SimulatedMesh?
     var isOnline = true
+    var radioPosition: Position?
     private let lock = Mutex(State())
 
     struct State {
         var channels: [Int: Channel] = [:]
         var sent: [ToRadio] = []
+        var positionConfig: Config.PositionConfig = {
+            var position = Config.PositionConfig()
+            position.gpsMode = .enabled
+            position.positionBroadcastSecs = 300
+            position.positionBroadcastSmartEnabled = true
+            return position
+        }()
     }
 
     init(nodeNum: Int32, radioKey: Data) {
@@ -82,10 +90,12 @@ final class SimulatedRadio: RadioLinking, @unchecked Sendable {
         lora.hopLimit = UInt32(MeshConstants.defaultHopLimit)
         var config = Config()
         config.lora = lora
+        var positionConfig = Config()
+        positionConfig.position = lock.withLock { $0.positionConfig }
         let snapshot = RadioSnapshot(
             myInfo: my,
             channels: Dictionary(uniqueKeysWithValues: channels.map { (Int32($0.key), $0.value) }),
-            configs: [config],
+            configs: [config, positionConfig],
             nodes: [nodeNum: node]
         )
         state.set(.ready(snapshot))
@@ -101,6 +111,12 @@ final class SimulatedRadio: RadioLinking, @unchecked Sendable {
         }
         if case .setChannel(let channel)? = admin.payloadVariant {
             setChannel(channel)
+            ack(requestId: packet.id)
+            return
+        }
+        if case .setConfig(let config)? = admin.payloadVariant, case .position(let position)? = config.payloadVariant {
+            lock.withLock { $0.positionConfig = position }
+            publishReady()
             ack(requestId: packet.id)
             return
         }
@@ -404,6 +420,11 @@ final class SimulatedMesh: @unchecked Sendable {
         if lock.withLock({ $0.silenced.contains(sender.nodeNum) }) {
             return
         }
+        if data.portnum == .positionApp && data.wantResponse && Int32(bitPattern: packet.to) != broadcastNodeNum {
+            if answerPositionRequest(from: sender, request: packet) {
+                return
+            }
+        }
         let delivered: Bool
         if packet.pkiEncrypted, Int32(bitPattern: packet.to) != broadcastNodeNum {
             delivered = deliverDirect(sender: sender, packet: packet)
@@ -422,6 +443,28 @@ final class SimulatedMesh: @unchecked Sendable {
                 : Int32(bitPattern: packet.to)
             sender.recipientAck(requestId: packet.id, from: ackFrom)
         }
+    }
+
+    private func answerPositionRequest(from sender: SimulatedRadio, request: MeshPacket) -> Bool {
+        let to = Int32(bitPattern: request.to)
+        guard let target = phone(to)?.radio, target.isOnline else { return false }
+        let slot = Int(request.channel)
+        guard let channel = target.channels[slot], channel.settings.moduleSettings.positionPrecision > 0,
+            var position = target.radioPosition
+        else { return false }
+        position.precisionBits = channel.settings.moduleSettings.positionPrecision
+        var reply = MeshPacket()
+        reply.from = UInt32(bitPattern: to)
+        reply.to = UInt32(bitPattern: sender.nodeNum)
+        reply.channel = UInt32(slot)
+        reply.id = MeshPacketBuilder.randomPacketId().asUInt32
+        var data = DataMessage()
+        data.portnum = .positionApp
+        data.requestID = request.id
+        data.payload = (try? position.serializedData()) ?? Data()
+        reply.decoded = data
+        sender.push(reply)
+        return true
     }
 
     private func deliverDirect(sender: SimulatedRadio, packet: MeshPacket) -> Bool {

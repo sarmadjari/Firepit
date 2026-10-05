@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import org.meshtastic.proto.Config
 
 /**
  * Everything about where your position is going, in one place.
@@ -30,40 +31,55 @@ class SharingViewModel @Inject constructor(
     private val location: LocationRepository,
     mesh: MeshRepository,
 ) : ViewModel() {
+    private val error = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
 
     val state: StateFlow<SharingUiState> = combine(
         mesh.channels,
         mesh.myNodeNum,
         location.sharingDeadline,
         mesh.isConnected,
-    ) { channels, myNodeNum, deadline, connected ->
+        combine(mesh.snapshot, error) { snapshot, error -> snapshot to error },
+    ) { channels, myNodeNum, deadline, connected, extra ->
+        val (snapshot, error) = extra
         val rooms = ChannelSlotManager.rooms(channels).filter(PositionSharing::canShare)
         // The phone does the sharing, so the choice it recorded is the truth;
         // the radio only tells us whether that room can be reached right now.
         val room = deadline?.let { chosen -> rooms.firstOrNull { it.id == chosen.roomId } }
         SharingUiState(
-            connected = myNodeNum != null,
+            connected = connected,
             rooms = rooms,
             roomId = deadline?.roomId,
             roomName = room?.displayName,
             choice = deadline?.choice ?: ShareDuration.DEFAULT,
             endsAt = deadline?.endsAt,
+            radioSafetyNet = deadline?.radioSafetyNet == true,
+            radioGpsAvailable = connected && snapshot?.position?.gps_mode
+                ?.let { it != Config.PositionConfig.GpsMode.NOT_PRESENT } == true,
+            error = error,
             paused = deadline != null && (!connected || room == null),
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SharingUiState())
 
-    fun share(roomId: Int, choice: ShareDuration) {
+    fun share(roomId: Int, choice: ShareDuration, radioSafetyNet: Boolean) {
         viewModelScope.launch {
-            runCatching { location.shareWith(roomId, choice) }
-                .onFailure { cause -> Log.w(TAG, "could not start sharing", cause) }
+            runCatching { location.shareWith(roomId, choice, radioSafetyNet) }
+                .onSuccess { error.value = null }
+                .onFailure { cause ->
+                    error.value = cause.message ?: "Could not set up the radio safety net. Connect your radio and try again."
+                    Log.w(TAG, "could not start sharing", cause)
+                }
         }
     }
 
     /** Takes effect at once, whether or not a radio is connected: the phone is what sends. */
     fun stop() {
         viewModelScope.launch {
-            runCatching { location.stopSharing() }
-                .onFailure { cause -> Log.w(TAG, "could not stop sharing", cause) }
+            runCatching { location.stopSharingAndSilence() }
+                .onSuccess { error.value = null }
+                .onFailure { cause ->
+                    error.value = cause.message ?: "Could not turn off the radio safety net. Connect your radio and try again."
+                    Log.w(TAG, "could not stop sharing", cause)
+                }
         }
     }
 
@@ -80,6 +96,9 @@ data class SharingUiState(
     val roomName: String? = null,
     val choice: ShareDuration = ShareDuration.DEFAULT,
     val endsAt: Long? = null,
+    val radioSafetyNet: Boolean = false,
+    val radioGpsAvailable: Boolean = false,
+    val error: String? = null,
     /**
      * Chosen, but not going anywhere now: the phone is away from its radio, or
      * the radio connected does not carry the room. It resumes on its own.

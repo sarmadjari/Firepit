@@ -3,6 +3,8 @@ package com.getfirepit.core.protocol
 import com.getfirepit.core.model.ChannelRole
 import com.getfirepit.core.model.RoomChannel
 import com.getfirepit.core.model.RoomKind
+import okio.ByteString
+import org.meshtastic.proto.Config
 import kotlin.random.Random
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -140,6 +142,35 @@ class PositionSharingTest {
     }
 
     @Test
+    fun `silencing keeps only the active safety-net room precision`() {
+        val channels = listOf(
+            channel(0, 32, id = 0),
+            channel(1, 0, id = 111),
+            channel(2, 32, id = 222),
+            channel(3, 32, id = 333, kind = RoomKind.MESHTASTIC_PRIVATE),
+        )
+
+        assertEquals(
+            listOf(PrecisionWrite(0, 0), PrecisionWrite(2, 0), PrecisionWrite(3, 0), PrecisionWrite(1, 32)),
+            PositionSharing.writesToSilence(channels, keepSlot = 1),
+        )
+    }
+
+    @Test
+    fun `silencing writes all zeroes before the single full precision write`() {
+        val channels = listOf(
+            channel(0, 13, id = 0),
+            channel(1, 16, id = 111),
+            channel(2, 32, id = 222),
+        )
+
+        assertEquals(
+            listOf(PrecisionWrite(0, 0), PrecisionWrite(1, 0), PrecisionWrite(2, 0), PrecisionWrite(1, 32)),
+            PositionSharing.writesToSilence(channels, keepSlot = 1),
+        )
+    }
+
+    @Test
     fun `an already silent radio needs no writes`() {
         val channels = listOf(channel(0, 0, id = 0), channel(1, 0, id = 111))
 
@@ -173,10 +204,56 @@ class PositionSharingTest {
         assertFalse(PositionSharing.canShare(channel(4, 0, kind = RoomKind.FIREPIT_MOVED_ON)))
     }
 
+    @Test
+    fun `safety net slot requires every guard including signed room id and private key`() {
+        val roomId = -123456789
+        val share = SafetyNetShare(roomId, endsAt = 2_000, radioSafetyNet = true, safetyNetNodeNum = 111)
+        val ready = readyPosition()
+        val primary = ByteString.of(*ByteArray(32) { 9 })
+        val roomKey = ByteArray(32) { 7 }
+        val channel = channel(1, 0, id = roomId, psk = roomKey)
+
+        assertEquals(
+            1,
+            PositionSharing.safetyNetSlot(
+                channels = listOf(channel),
+                share = share,
+                nowMillis = 1_000,
+                connectedNodeNum = 111,
+                positionConfig = ready,
+                heldRoomIds = setOf(roomId),
+                primaryKey = primary,
+            ),
+        )
+
+        val cases = listOf(
+            "no share" to null,
+            "not opted in" to share.copy(radioSafetyNet = false),
+            "expired" to share.copy(endsAt = 1_000),
+            "other node" to share.copy(safetyNetNodeNum = 222),
+        )
+        cases.forEach { (name, badShare) ->
+            assertEquals(
+                name,
+                null,
+                PositionSharing.safetyNetSlot(listOf(channel), badShare, 1_000, 111, ready, setOf(roomId), primary),
+            )
+        }
+        assertEquals(null, PositionSharing.safetyNetSlot(listOf(channel), share, 1_000, 111, readyPosition(secs = 1), setOf(roomId), primary))
+        assertEquals(null, PositionSharing.safetyNetSlot(listOf(channel), share, 1_000, 111, ready, setOf(roomId), primary, licensedMode = true))
+        assertEquals(null, PositionSharing.safetyNetSlot(listOf(channel(1, 0, id = roomId, psk = byteArrayOf())), share, 1_000, 111, ready, setOf(roomId), primary))
+        assertEquals(null, PositionSharing.safetyNetSlot(listOf(channel(1, 0, id = roomId, psk = ByteArray(16))), share, 1_000, 111, ready, setOf(roomId), primary))
+        assertEquals(null, PositionSharing.safetyNetSlot(listOf(channel(1, 0, id = roomId, psk = primary.toByteArray())), share, 1_000, 111, ready, setOf(roomId), primary))
+        assertEquals(null, PositionSharing.safetyNetSlot(listOf(channel.copy(kind = RoomKind.FIREPIT_KEY_MISSING)), share, 1_000, 111, ready, setOf(roomId), primary))
+        assertEquals(null, PositionSharing.safetyNetSlot(listOf(channel), share, 1_000, 111, ready, emptySet(), primary))
+        assertEquals(null, PositionSharing.safetyNetSlot(listOf(channel, channel(2, 0, id = roomId, psk = roomKey)), share, 1_000, 111, ready, setOf(roomId), primary))
+    }
+
     private fun channel(
         index: Int,
         precision: Int,
         id: Int = index * 100,
+        psk: ByteArray? = ByteArray(32) { index.toByte() },
         kind: RoomKind = RoomKind.FIREPIT,
     ) = RoomChannel(
         index = index,
@@ -184,6 +261,15 @@ class PositionSharingTest {
         role = if (index == 0) ChannelRole.PRIMARY else ChannelRole.SECONDARY,
         id = id,
         positionPrecision = precision,
+        psk = psk,
         kind = kind,
+    )
+
+    private fun readyPosition(secs: Int = 86_400) = Config.PositionConfig(
+        gps_mode = Config.PositionConfig.GpsMode.ENABLED,
+        fixed_position = false,
+        position_broadcast_secs = secs,
+        position_broadcast_smart_enabled = false,
+        position_flags = Config.PositionConfig.PositionFlags.TIMESTAMP.value,
     )
 }

@@ -92,6 +92,7 @@ final class RadioViewModel {
     private let alerts: AlertClient
     private let traceroute: TracerouteClient
     private let rooms: RoomRepository
+    private let locationSettings: LocationSettingsStore
     private let notifier: MessageNotifier?
 
     private(set) var uiState = RadioUiState()
@@ -125,6 +126,7 @@ final class RadioViewModel {
         alerts: AlertClient,
         traceroute: TracerouteClient,
         rooms: RoomRepository,
+        locationSettings: LocationSettingsStore,
         notifier: MessageNotifier? = nil
     ) {
         self.scanner = scanner
@@ -140,6 +142,7 @@ final class RadioViewModel {
         self.alerts = alerts
         self.traceroute = traceroute
         self.rooms = rooms
+        self.locationSettings = locationSettings
         self.notifier = notifier
         rebuildState(linkState: link.state.value)
     }
@@ -160,6 +163,7 @@ final class RadioViewModel {
             alerts: app.alerts,
             traceroute: app.traceroute,
             rooms: app.rooms,
+            locationSettings: app.locationSettings,
             notifier: app.notifier
         )
     }
@@ -171,10 +175,17 @@ final class RadioViewModel {
             group.addTask { await self.observeMyNode() }
             group.addTask { await self.observeOwner() }
             group.addTask { await self.observeBluetooth() }
+            group.addTask { await self.observeLocationSettings() }
             if let central {
                 group.addTask { await self.observeAvailability(central) }
             }
             await group.waitForAll()
+        }
+    }
+
+    private func observeLocationSettings() async {
+        for await _ in locationSettings.settings.subscribe() {
+            rebuildState()
         }
     }
 
@@ -419,19 +430,13 @@ final class RadioViewModel {
     }
 
     func setBeaconRate(_ rate: BeaconRate) {
-        writePosition { position in
-            var copy = position
-            copy.positionBroadcastSecs = UInt32(rate.seconds)
-            return copy
-        }
+        locationSettings.setRate(rate)
+        say("Saved. This no longer restarts your radio.")
     }
 
     func setBeaconWhenMoved(_ enabled: Bool) {
-        writePosition { position in
-            var copy = position
-            copy.positionBroadcastSmartEnabled = enabled
-            return copy
-        }
+        locationSettings.setWhenMoved(enabled)
+        say("Saved. This no longer restarts your radio.")
     }
 
     func setRadioGps(_ enabled: Bool) {
@@ -561,8 +566,8 @@ final class RadioViewModel {
             bluetooth: bluetooth,
             bluetoothAvailability: bluetoothAvailability,
             relayReach: linkState.relayReach,
-            beaconRate: linkState.beaconRate,
-            beaconWhenMoved: linkState.beaconWhenMoved,
+            beaconRate: BeaconRate.of(seconds: locationSettings.settings.value.rateSeconds),
+            beaconWhenMoved: locationSettings.settings.value.whenMoved,
             radioGpsAvailable: linkState.radioGpsAvailable,
             radioGpsEnabled: linkState.radioGpsEnabled,
             risks: linkState.risks,

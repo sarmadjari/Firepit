@@ -844,6 +844,21 @@ private func positionPacket(
     return packet
 }
 
+private func telemetryPacket(from node: Int32, batteryLevel: UInt32) throws -> MeshPacket {
+    var metrics = DeviceMetrics()
+    metrics.batteryLevel = batteryLevel
+    var telemetry = Telemetry()
+    telemetry.deviceMetrics = metrics
+    var data = DataMessage()
+    data.portnum = .telemetryApp
+    data.payload = try telemetry.serializedData()
+    var packet = MeshPacket()
+    packet.id = 89
+    packet.from = UInt32(bitPattern: node)
+    packet.decoded = data
+    return packet
+}
+
 @Test func ownPositionPacketSetsRadioFixAndIsNotStoredAsMemberPosition() async throws {
     let h = try Harness()
     try await h.memberDao.record(roomId: 42, nodeNum: 111, now: 1)
@@ -877,7 +892,6 @@ private func positionPacket(
     #expect(await eventually { h.mesh.radioFix.value?.latitudeI == 12_000_000 })
 }
 
-/// Kotlin's handlePosition: an unsealed position is kept for a node outside our rooms, where it is all there is.
 @Test func anUnsealedPositionFromOutsideOurRoomsIsKept() async throws {
     let h = try Harness()
     h.mesh.start()
@@ -885,6 +899,8 @@ private func positionPacket(
     h.link.push(fromRadio(packet: try positionPacket(from: 222, latitudeI: 10, precisionBits: 13)))
     #expect(try await eventually { try await h.nodeDao.find(nodeNum: 222)?.latitudeI == 10 })
     #expect(try await h.nodeDao.find(nodeNum: 222)?.positionPrecision == 13)
+    // Not a member, so not a member's radio safety net either.
+    #expect(try await h.nodeDao.find(nodeNum: 222)?.positionFromRadio == false)
 }
 
 /// Never for a member: their phones only ever send positions sealed, so an unsealed one naming a member was put on the
@@ -895,10 +911,8 @@ private func positionPacket(
     h.mesh.start()
     try await h.nodeDao.save(node: MeshNode(nodeNum: 333), now: 1)
     h.link.push(fromRadio(packet: try positionPacket(from: 333, latitudeI: 10, precisionBits: 32)))
-    // A packet from a non-member pushed after it proves the first one has been handled.
-    try await h.nodeDao.save(node: MeshNode(nodeNum: 222), now: 1)
-    h.link.push(fromRadio(packet: try positionPacket(from: 222, latitudeI: 11, precisionBits: 32)))
-    #expect(try await eventually { try await h.nodeDao.find(nodeNum: 222)?.latitudeI == 11 })
+    h.link.push(fromRadio(packet: try telemetryPacket(from: 333, batteryLevel: 12)))
+    #expect(try await eventually { try await h.nodeDao.find(nodeNum: 333)?.batteryLevel == 12 })
     #expect(try await h.nodeDao.find(nodeNum: 333)?.latitudeI == nil)
 }
 

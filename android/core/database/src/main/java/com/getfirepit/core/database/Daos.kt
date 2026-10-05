@@ -175,7 +175,7 @@ interface NodeDao {
         """
         UPDATE nodes SET latitudeI = :latitudeI, longitudeI = :longitudeI, altitude = :altitude,
         positionTime = :positionTime, positionPrecision = :positionPrecision,
-        groundSpeed = :groundSpeed, groundTrack = :groundTrack
+        groundSpeed = :groundSpeed, groundTrack = :groundTrack, positionFromRadio = :positionFromRadio
         WHERE nodeNum = :nodeNum
         """,
     )
@@ -188,6 +188,7 @@ interface NodeDao {
         positionPrecision: Int?,
         groundSpeed: Int?,
         groundTrack: Int?,
+        positionFromRadio: Boolean,
     )
 
     /**
@@ -227,11 +228,20 @@ interface NodeDao {
     )
     suspend fun markHeard(nodeNum: Int, heardAt: Long, snr: Float?, rssi: Int?, hopsAway: Int?)
 
+    @Query(
+        """
+        UPDATE nodes SET latitudeI = NULL, longitudeI = NULL, altitude = NULL, positionTime = NULL,
+            positionPrecision = NULL, groundSpeed = NULL, groundTrack = NULL, positionFromRadio = 0
+        WHERE nodeNum = :nodeNum
+        """,
+    )
+    suspend fun clearPosition(nodeNum: Int)
+
     /** Forgets where nodes were, once that is older than the retention window. */
     @Query(
         """
         UPDATE nodes SET latitudeI = NULL, longitudeI = NULL, altitude = NULL, positionTime = NULL,
-            positionPrecision = NULL, groundSpeed = NULL, groundTrack = NULL
+            positionPrecision = NULL, groundSpeed = NULL, groundTrack = NULL, positionFromRadio = 0
         WHERE latitudeI IS NOT NULL AND (positionTime IS NULL OR positionTime < :cutoff)
         """,
     )
@@ -252,7 +262,7 @@ interface NodeDao {
     @Query(
         """
         UPDATE nodes SET latitudeI = NULL, longitudeI = NULL, altitude = NULL, positionTime = NULL,
-            positionPrecision = NULL, groundSpeed = NULL, groundTrack = NULL
+            positionPrecision = NULL, groundSpeed = NULL, groundTrack = NULL, positionFromRadio = 0
         """,
     )
     suspend fun forgetAllPositions()
@@ -274,6 +284,11 @@ suspend fun NodeDao.save(node: MeshNode, now: Long) {
         altitude = node.altitude ?: existing?.altitude,
         positionTime = node.positionTime ?: existing?.positionTime,
         positionPrecision = node.positionPrecision ?: existing?.positionPrecision,
+        positionFromRadio = if (node.latitudeI != null && node.longitudeI != null) {
+            node.positionFromRadio
+        } else {
+            existing?.positionFromRadio ?: false
+        },
     )
     upsert(merged.toEntity(firstSeen = existing?.firstSeen ?: now))
 }
@@ -458,6 +473,15 @@ interface RoomMemberDao {
     @Query("SELECT EXISTS(SELECT 1 FROM room_members WHERE nodeNum = :nodeNum)")
     suspend fun isInAnyRoom(nodeNum: Int): Boolean
 
+    @Query(
+        """
+        UPDATE nodes SET latitudeI = NULL, longitudeI = NULL, altitude = NULL, positionTime = NULL,
+            positionPrecision = NULL, groundSpeed = NULL, groundTrack = NULL, positionFromRadio = 0
+        WHERE nodeNum = :nodeNum
+        """,
+    )
+    suspend fun clearStoredPosition(nodeNum: Int)
+
     @Query("DELETE FROM room_members WHERE roomId = :roomId")
     suspend fun deleteRoom(roomId: Int)
 }
@@ -470,6 +494,7 @@ fun RoomMemberDao.observeRoom(roomId: Int): Flow<List<RoomMember>> =
  * cleared, so hearing a vouched member speak does not downgrade them.
  */
 suspend fun RoomMemberDao.record(roomId: Int, nodeNum: Int, now: Long, invitedBy: Int? = null) {
+    val wasMember = isInAnyRoom(nodeNum)
     val existing = findEntity(roomId, nodeNum)
     upsert(
         RoomMemberEntity(
@@ -481,6 +506,7 @@ suspend fun RoomMemberDao.record(roomId: Int, nodeNum: Int, now: Long, invitedBy
             lastOpenedGeneration = existing?.lastOpenedGeneration,
         ),
     )
+    if (!wasMember) clearStoredPosition(nodeNum)
 }
 
 /**
@@ -489,6 +515,7 @@ suspend fun RoomMemberDao.record(roomId: Int, nodeNum: Int, now: Long, invitedBy
  * sighting.
  */
 suspend fun RoomMemberDao.recordReported(roomId: Int, nodeNum: Int, now: Long, invitedBy: Int?) {
+    val wasMember = isInAnyRoom(nodeNum)
     val existing = findEntity(roomId, nodeNum)
     upsert(
         RoomMemberEntity(
@@ -500,6 +527,7 @@ suspend fun RoomMemberDao.recordReported(roomId: Int, nodeNum: Int, now: Long, i
             lastOpenedGeneration = existing?.lastOpenedGeneration,
         ),
     )
+    if (!wasMember) clearStoredPosition(nodeNum)
 }
 
 @Dao

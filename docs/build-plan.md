@@ -1364,6 +1364,28 @@ Espresso Device API (`setDisplaySize`, `setScreenOrientation`) for automated fol
 
 ## Open decisions
 
+## As-built note — 2026-10-05 radio safety net
+
+Location sharing now keeps the sealed phone cadence in app settings on Android
+and iOS, initialised once from the radio only when the real position config is
+known and the interval is one Firepit offers. The share sheet has an off-by-default
+radio safety-net switch for GPS radios. When enabled, Firepit sets that one room
+to position precision 32 only on the prepared node with the expected room key,
+leaves every other channel at 0, and writes the radio position config only if it
+needs GPS on, fixed position off, one-day periodic beacons, smart beacons off or
+GPS timestamps on. A location ask first waits for the sealed phone answer, then
+sends one Meshtastic position request on the current room slot. Radio answers
+are stored with a `positionFromRadio` flag and labelled "radio" on both maps.
+The data-layer safety net is now covered deepest on iOS (`RadioSafetyNetTests`):
+realistic unsealed `POSITION_APP` acceptance, replacement by GPS `timestamp`,
+own-radio fixes, setup, keep-on-connect, stop retry, fallback requests, simulated
+radio answers and cadence initialisation. Android has JVM coverage for the pure
+shared rules that do not need a repository harness (`TrustRulesTest` and
+`PositionSharingTest`: acceptance, replacement and keep/silence decisions) plus
+compile coverage for `:core:data`; repository-level fallback/setup behaviour is
+covered by the iOS harness because Android has no equivalent fake PhoneAPI +
+RoomRepository mesh harness.
+
 | # | Decision | Status |
 |---|---|---|
 | 1 | **Licensing.** The vendored Meshtastic protobufs are GPL-3.0, so generated-and-linked code makes Firepit a derivative work. Every official Meshtastic client is GPL-3.0. Path of least resistance: license Firepit GPL-3.0. | **Needs owner decision before public release** |

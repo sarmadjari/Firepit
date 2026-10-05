@@ -33,6 +33,7 @@ data class NodeEntity(
     val groundSpeed: Int? = null,
     /** True North course in hundredths of a degree, as the radio reports it. */
     val groundTrack: Int? = null,
+    val positionFromRadio: Boolean = false,
 )
 
 internal fun NodeEntity.toDomain() = MeshNode(
@@ -60,6 +61,7 @@ internal fun NodeEntity.toDomain() = MeshNode(
     positionPrecision = positionPrecision,
     groundSpeed = groundSpeed,
     groundTrack = groundTrack,
+    positionFromRadio = positionFromRadio,
 )
 
 internal fun MeshNode.toEntity(firstSeen: Long) = NodeEntity(
@@ -88,4 +90,5 @@ internal fun MeshNode.toEntity(firstSeen: Long) = NodeEntity(
     positionPrecision = positionPrecision,
     groundSpeed = groundSpeed,
     groundTrack = groundTrack,
+    positionFromRadio = positionFromRadio,
 )

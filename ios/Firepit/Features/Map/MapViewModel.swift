@@ -556,10 +556,11 @@ nonisolated enum MapWords {
 
     static func markerLabel(_ marker: MapMarker) -> String {
         if marker.isSelf { return marker.name }
-        guard let minutes = marker.fixAgeMinutes, minutes >= 1 else { return marker.name }
-        if minutes < 60 { return String(localized: "\(marker.name) · \(minutes)m") }
-        if minutes < 60 * 24 { return String(localized: "\(marker.name) · \(minutes / 60)h") }
-        return String(localized: "\(marker.name) · \(minutes / (60 * 24))d")
+        let radio = marker.node.positionFromRadio ? " · radio" : ""
+        guard let minutes = marker.fixAgeMinutes, minutes >= 1 else { return marker.name + radio }
+        if minutes < 60 { return String(localized: "\(marker.name)\(radio) · \(minutes)m") }
+        if minutes < 60 * 24 { return String(localized: "\(marker.name)\(radio) · \(minutes / 60)h") }
+        return String(localized: "\(marker.name)\(radio) · \(minutes / (60 * 24))d")
     }
 
     static func agePhrase(minutes: Int64) -> String {

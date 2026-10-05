@@ -236,14 +236,23 @@ public struct NodeDao: Sendable {
     public func upsert(node: NodeEntity) async throws { try await writer.write { db in try node.save(db) } }
     public func updatePosition(
         nodeNum: Int32, latitudeI: Int32?, longitudeI: Int32?, altitude: Int?, positionTime: Int64?,
-        positionPrecision: Int?, groundSpeed: Int?, groundTrack: Int?
+        positionPrecision: Int?, groundSpeed: Int?, groundTrack: Int?, positionFromRadio: Bool
     ) async throws {
         try await execute(
             """
             UPDATE nodes SET latitudeI = ?, longitudeI = ?, altitude = ?, positionTime = ?, positionPrecision = ?,
-            groundSpeed = ?, groundTrack = ? WHERE nodeNum = ?
+            groundSpeed = ?, groundTrack = ?, positionFromRadio = ? WHERE nodeNum = ?
             """,
-            [latitudeI, longitudeI, altitude, positionTime, positionPrecision, groundSpeed, groundTrack, nodeNum])
+            [latitudeI, longitudeI, altitude, positionTime, positionPrecision, groundSpeed, groundTrack,
+             positionFromRadio, nodeNum])
+    }
+    public func clearPosition(nodeNum: Int32) async throws {
+        try await execute(
+            """
+            UPDATE nodes SET latitudeI = NULL, longitudeI = NULL, altitude = NULL, positionTime = NULL,
+            positionPrecision = NULL, groundSpeed = NULL, groundTrack = NULL, positionFromRadio = 0 WHERE nodeNum = ?
+            """,
+            [nodeNum])
     }
     public func updateMetrics(
         nodeNum: Int32, batteryLevel: Int?, voltage: Float?, channelUtilization: Float?, airUtilTx: Float?
@@ -267,7 +276,8 @@ public struct NodeDao: Sendable {
         try await executeCount(
             """
             UPDATE nodes SET latitudeI = NULL, longitudeI = NULL, altitude = NULL, positionTime = NULL,
-            positionPrecision = NULL, groundSpeed = NULL, groundTrack = NULL WHERE latitudeI IS NOT NULL AND
+            positionPrecision = NULL, groundSpeed = NULL, groundTrack = NULL, positionFromRadio = 0
+            WHERE latitudeI IS NOT NULL AND
             (positionTime IS NULL OR positionTime < ?)
             """,
             [cutoff])
@@ -284,7 +294,7 @@ public struct NodeDao: Sendable {
         try await execute(
             """
             UPDATE nodes SET latitudeI = NULL, longitudeI = NULL, altitude = NULL, positionTime = NULL,
-            positionPrecision = NULL, groundSpeed = NULL, groundTrack = NULL
+            positionPrecision = NULL, groundSpeed = NULL, groundTrack = NULL, positionFromRadio = 0
             """,
             [])
     }
@@ -298,6 +308,8 @@ public struct NodeDao: Sendable {
         merged.altitude = node.altitude ?? existing?.altitude
         merged.positionTime = node.positionTime ?? existing?.positionTime
         merged.positionPrecision = node.positionPrecision ?? existing?.positionPrecision
+        merged.positionFromRadio =
+            node.latitudeI != nil && node.longitudeI != nil ? node.positionFromRadio : (existing?.positionFromRadio ?? false)
         try await upsert(node: NodeEntity.fromDomain(merged, firstSeen: existing?.firstSeen ?? now))
     }
     private func execute(_ sql: String, _ arguments: StatementArguments) async throws {
@@ -532,20 +544,40 @@ public struct RoomMemberDao: Sendable {
         mapStream(observeRoomEntities(roomId: roomId)) { $0.map { $0.toDomain() } }
     }
     public func record(roomId: Int32, nodeNum: Int32, now: Int64, invitedBy: Int32? = nil) async throws {
+        let wasMember = try await isInAnyRoom(nodeNum: nodeNum)
         let existing = try await findEntity(roomId: roomId, nodeNum: nodeNum)
         try await upsert(
             member: RoomMemberEntity(
                 roomId: roomId, nodeNum: nodeNum, invitedBy: invitedBy ?? existing?.invitedBy,
                 firstSeen: existing?.firstSeen ?? now, lastHeard: max(now, existing?.lastHeard ?? now),
                 lastOpenedGeneration: existing?.lastOpenedGeneration))
+        if !wasMember {
+            try await clearStoredPosition(nodeNum: nodeNum)
+        }
     }
     public func recordReported(roomId: Int32, nodeNum: Int32, now: Int64, invitedBy: Int32?) async throws {
+        let wasMember = try await isInAnyRoom(nodeNum: nodeNum)
         let existing = try await findEntity(roomId: roomId, nodeNum: nodeNum)
         try await upsert(
             member: RoomMemberEntity(
                 roomId: roomId, nodeNum: nodeNum, invitedBy: invitedBy ?? existing?.invitedBy,
                 firstSeen: existing?.firstSeen ?? now, lastHeard: existing?.lastHeard,
                 lastOpenedGeneration: existing?.lastOpenedGeneration))
+        if !wasMember {
+            try await clearStoredPosition(nodeNum: nodeNum)
+        }
+    }
+
+    private func clearStoredPosition(nodeNum: Int32) async throws {
+        try await writer.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE nodes SET latitudeI = NULL, longitudeI = NULL, altitude = NULL, positionTime = NULL,
+                    positionPrecision = NULL, groundSpeed = NULL, groundTrack = NULL, positionFromRadio = 0
+                    WHERE nodeNum = ?
+                    """,
+                arguments: [nodeNum])
+        }
     }
 }
 

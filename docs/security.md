@@ -411,13 +411,33 @@ phone lost, or which moved to a key that never reached us, is refused rather
 than treated as an ordinary channel.
 
 **Positions and pins are sealed like words.** The phone seals its own fix under
-the room's key and sends it at the beacon rate while sharing is on
-(`LocationRepository`); pins travel the same way (`WaypointRepository`). The
-radio's own position broadcast is kept off on every channel, re-asserted on
-every connection (`PositionSharing.writesToSilence`), because it would go out
-under the channel key and carry on with the phone away. "Where are you?" is a
-sealed question answered by the other phone, and only while it is sharing with
-that room (`TrustRules.positionQueryAnswerable`).
+the room's key and sends it at the app's beacon rate while sharing is on
+(`LocationRepository`); pins travel the same way (`WaypointRepository`). By
+default the radio's own position broadcast is kept off on every channel,
+re-asserted on every connection (`PositionSharing.writesToSilence`), because it
+would go out under the channel key and carry on with the phone away. "Where are
+you?" first sends a sealed question answered by the other phone, and only while
+it is sharing with that room (`TrustRules.positionQueryAnswerable`).
+
+**Radio safety net is opt-in per share.** If a person turns it on, Firepit puts
+that room's radio channel at full position precision and leaves every other
+channel at 0 only while the radio currently reports exactly one eligible
+Firepit room slot for the active share, on the node the share was prepared on,
+with a private 32-byte room channel key that is not the app-wide primary key.
+The setup also sets the radio for GPS, stops any fixed position, uses one-day
+beacons, turns smart off and includes GPS timestamps. If their phone dies, a later
+"where are you?" can fall back to one Meshtastic `POSITION_APP` request on the
+room's slot, and their radio may answer under the room's radio key. That is
+Meshtastic's protection, not Firepit's: it does not use Firepit's per-hour phone
+keys, does not prove the sender was the member's phone, and anyone holding a
+room's radio key can read the answer. It carries on through room key changes
+while this phone is present, because the decision is made from the radio's
+current channel list instead of a stored key. Until the phone is back, the radio
+keeps answering on the room key it already has — including for someone removed
+by a key change made meanwhile — and the share's end time does not stop it. A radio answer is
+stored as such and never replaces a newer sealed phone position
+(`TrustRules.radioPositionMayReplace`); without a GPS timestamp its age is
+unknown and it cannot replace a sealed one.
 
 ### Enforced at construction
 

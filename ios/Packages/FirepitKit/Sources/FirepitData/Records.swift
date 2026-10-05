@@ -190,6 +190,7 @@ public struct NodeEntity: Codable, FetchableRecord, PersistableRecord, Sendable,
     public var positionPrecision: Int?
     public var groundSpeed: Int?
     public var groundTrack: Int?
+    public var positionFromRadio: Bool
 
     public init(
         nodeNum: Int32, userId: String?, longName: String?, shortName: String?, hwModel: String?, role: String?,
@@ -197,7 +198,7 @@ public struct NodeEntity: Codable, FetchableRecord, PersistableRecord, Sendable,
         batteryLevel: Int?, voltage: Float?, channelUtilization: Float?, airUtilTx: Float?, isFavorite: Bool,
         firstSeen: Int64, latitudeI: Int32? = nil, longitudeI: Int32? = nil, altitude: Int? = nil,
         positionTime: Int64? = nil, positionPrecision: Int? = nil, groundSpeed: Int? = nil,
-        groundTrack: Int? = nil
+        groundTrack: Int? = nil, positionFromRadio: Bool = false
     ) {
         self.nodeNum = nodeNum
         self.userId = userId
@@ -224,6 +225,7 @@ public struct NodeEntity: Codable, FetchableRecord, PersistableRecord, Sendable,
         self.positionPrecision = positionPrecision
         self.groundSpeed = groundSpeed
         self.groundTrack = groundTrack
+        self.positionFromRadio = positionFromRadio
     }
 
     public func toDomain() -> MeshNode {
@@ -233,7 +235,8 @@ public struct NodeEntity: Codable, FetchableRecord, PersistableRecord, Sendable,
             rssi: rssi, hopsAway: hopsAway, batteryLevel: batteryLevel, voltage: voltage,
             channelUtilization: channelUtilization, airUtilTx: airUtilTx, isFavorite: isFavorite,
             latitudeI: latitudeI, longitudeI: longitudeI, altitude: altitude, positionTime: positionTime,
-            positionPrecision: positionPrecision, groundSpeed: groundSpeed, groundTrack: groundTrack)
+            positionPrecision: positionPrecision, groundSpeed: groundSpeed, groundTrack: groundTrack,
+            positionFromRadio: positionFromRadio)
     }
 
     public static func fromDomain(_ node: MeshNode, firstSeen: Int64) -> NodeEntity {
@@ -244,7 +247,8 @@ public struct NodeEntity: Codable, FetchableRecord, PersistableRecord, Sendable,
             batteryLevel: node.batteryLevel, voltage: node.voltage, channelUtilization: node.channelUtilization,
             airUtilTx: node.airUtilTx, isFavorite: node.isFavorite, firstSeen: firstSeen, latitudeI: node.latitudeI,
             longitudeI: node.longitudeI, altitude: node.altitude, positionTime: node.positionTime,
-            positionPrecision: node.positionPrecision, groundSpeed: node.groundSpeed, groundTrack: node.groundTrack)
+            positionPrecision: node.positionPrecision, groundSpeed: node.groundSpeed, groundTrack: node.groundTrack,
+            positionFromRadio: node.positionFromRadio)
     }
 }
 

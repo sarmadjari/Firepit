@@ -21,6 +21,7 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -215,7 +216,7 @@ fun SharingBanner(
 fun ShareLocationSheet(
     state: SharingUiState,
     onDismiss: () -> Unit,
-    onShare: (roomId: Int, choice: ShareDuration) -> Unit,
+    onShare: (roomId: Int, choice: ShareDuration, radioSafetyNet: Boolean) -> Unit,
     onStop: () -> Unit,
     /** The room open beside the map, offered first when nothing is being shared yet (UX §6.11.6). */
     preferredRoomId: Int? = null,
@@ -228,6 +229,7 @@ fun ShareLocationSheet(
         )
     }
     var choice by remember(state.choice) { mutableStateOf(state.choice) }
+    var radioSafetyNet by remember(state.radioSafetyNet) { mutableStateOf(state.radioSafetyNet) }
 
     // Half height puts the confirm buttons under the navigation bar, where a
     // sheet asking about location sharing must not hide its own Stop button.
@@ -310,6 +312,37 @@ fun ShareLocationSheet(
                         )
                     }
 
+                    if (state.radioGpsAvailable) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Switch(checked = radioSafetyNet, onCheckedChange = { radioSafetyNet = it })
+                            Text(
+                                text = "If my phone dies, my radio answers 'where are you?'",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                        Text(
+                            text = "Uses Meshtastic's own protection, not Firepit's. " +
+                                "Firepit's protection needs your phone.\n" +
+                                "While you share, your radio also answers 'where are you?' itself, at most every " +
+                                "3 minutes, and sends its position when it starts and once a day. Anyone holding " +
+                                "the room's radio key could read it. If your phone dies, it keeps answering on " +
+                                "the key it has until your phone is back, even after the share's end.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = FirepitTheme.colors.textSecondary,
+                        )
+                        if (radioSafetyNet) {
+                            Text(
+                                text = "Your radio restarts once if setup needs GPS on, fixed position off, one-day beacons, or smart off.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = FirepitTheme.colors.warn,
+                            )
+                        }
+                    }
+
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(FirepitSpacing.s),
                         modifier = Modifier.fillMaxWidth(),
@@ -324,9 +357,16 @@ fun ShareLocationSheet(
                             TextButton(onClick = onDismiss) { Text("Cancel") }
                             TextButton(
                                 enabled = room != null,
-                                onClick = { room?.let { onShare(it, choice) } },
+                                onClick = { room?.let { onShare(it, choice, radioSafetyNet && state.radioGpsAvailable) } },
                             ) { Text(if (state.isSharing) "Update" else "Share") }
                         }
+                    }
+                    state.error?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = FirepitTheme.colors.danger,
+                        )
                     }
                 }
             }

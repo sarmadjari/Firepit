@@ -1,4 +1,5 @@
 import FirepitModel
+import FirepitProtos
 import Foundation
 import Testing
 
@@ -128,6 +129,43 @@ import Testing
             "a reconnect check must be silent when nothing is wrong")
     }
 
+    @Test func silencingKeepsOnlyTheActiveSafetyNetRoomPrecision() {
+        let writes = PositionSharing.writesToSilence(
+            channels: [
+                channel(0, 32, id: 0),
+                channel(1, 0, id: 111),
+                channel(2, 32, id: 222),
+                channel(3, 32, id: 333, kind: .meshtasticPrivate),
+            ],
+            keepSlot: 1)
+
+        #expect(
+            writes == [
+                PrecisionWrite(index: 0, precision: 0),
+                PrecisionWrite(index: 2, precision: 0),
+                PrecisionWrite(index: 3, precision: 0),
+                PrecisionWrite(index: 1, precision: 32),
+            ])
+    }
+
+    @Test func silencingWritesAllZeroesBeforeTheSingleFullPrecisionWrite() {
+        let writes = PositionSharing.writesToSilence(
+            channels: [
+                channel(0, 13, id: 0),
+                channel(1, 16, id: 111),
+                channel(2, 32, id: 222),
+            ],
+            keepSlot: 1)
+
+        #expect(
+            writes == [
+                PrecisionWrite(index: 0, precision: 0),
+                PrecisionWrite(index: 1, precision: 0),
+                PrecisionWrite(index: 2, precision: 0),
+                PrecisionWrite(index: 1, precision: 32),
+            ])
+    }
+
     /// The trap behind a real bug: a radio we cannot see produces the same empty answer as a radio that is already
     /// correct. Callers must establish that the channels are known *before* reading anything into an empty result.
     @Test func anUnknownRadioIsIndistinguishableFromACorrectOne() {
@@ -150,10 +188,43 @@ import Testing
         #expect(!PositionSharing.canShare(channel: channel(4, 0, kind: .firepitMovedOn)))
     }
 
+    @Test func safetyNetSlotRequiresEveryGuardIncludingNegativeRoomIdAndPrivateKey() {
+        let roomId: Int32 = -123_456_789
+        let share = SafetyNetShare(roomId: roomId, endsAt: 2_000, radioSafetyNet: true, safetyNetNodeNum: 111)
+        let ready = readyPosition()
+        let primary = Data(repeating: 9, count: 32)
+        let roomKey = Data(repeating: 7, count: 32)
+        let room = channel(1, 0, id: roomId, psk: roomKey)
+
+        #expect(
+            PositionSharing.safetyNetSlot(
+                channels: [room],
+                share: share,
+                nowMillis: 1_000,
+                connectedNodeNum: 111,
+                positionConfig: ready,
+                heldRoomIds: [roomId],
+                primaryKey: primary) == 1)
+
+        #expect(PositionSharing.safetyNetSlot(channels: [room], share: nil, nowMillis: 1_000, connectedNodeNum: 111, positionConfig: ready, heldRoomIds: [roomId], primaryKey: primary) == nil)
+        #expect(PositionSharing.safetyNetSlot(channels: [room], share: SafetyNetShare(roomId: roomId, endsAt: 2_000, radioSafetyNet: false, safetyNetNodeNum: 111), nowMillis: 1_000, connectedNodeNum: 111, positionConfig: ready, heldRoomIds: [roomId], primaryKey: primary) == nil)
+        #expect(PositionSharing.safetyNetSlot(channels: [room], share: SafetyNetShare(roomId: roomId, endsAt: 1_000, radioSafetyNet: true, safetyNetNodeNum: 111), nowMillis: 1_000, connectedNodeNum: 111, positionConfig: ready, heldRoomIds: [roomId], primaryKey: primary) == nil)
+        #expect(PositionSharing.safetyNetSlot(channels: [room], share: SafetyNetShare(roomId: roomId, endsAt: 2_000, radioSafetyNet: true, safetyNetNodeNum: 222), nowMillis: 1_000, connectedNodeNum: 111, positionConfig: ready, heldRoomIds: [roomId], primaryKey: primary) == nil)
+        #expect(PositionSharing.safetyNetSlot(channels: [room], share: share, nowMillis: 1_000, connectedNodeNum: 111, positionConfig: readyPosition(secs: 1), heldRoomIds: [roomId], primaryKey: primary) == nil)
+        #expect(PositionSharing.safetyNetSlot(channels: [room], share: share, nowMillis: 1_000, connectedNodeNum: 111, positionConfig: ready, heldRoomIds: [roomId], primaryKey: primary, licensedMode: true) == nil)
+        #expect(PositionSharing.safetyNetSlot(channels: [channel(1, 0, id: roomId, psk: Data())], share: share, nowMillis: 1_000, connectedNodeNum: 111, positionConfig: ready, heldRoomIds: [roomId], primaryKey: primary) == nil)
+        #expect(PositionSharing.safetyNetSlot(channels: [channel(1, 0, id: roomId, psk: Data(repeating: 1, count: 16))], share: share, nowMillis: 1_000, connectedNodeNum: 111, positionConfig: ready, heldRoomIds: [roomId], primaryKey: primary) == nil)
+        #expect(PositionSharing.safetyNetSlot(channels: [channel(1, 0, id: roomId, psk: primary)], share: share, nowMillis: 1_000, connectedNodeNum: 111, positionConfig: ready, heldRoomIds: [roomId], primaryKey: primary) == nil)
+        #expect(PositionSharing.safetyNetSlot(channels: [channel(1, 0, id: roomId, psk: roomKey, kind: .firepitKeyMissing)], share: share, nowMillis: 1_000, connectedNodeNum: 111, positionConfig: ready, heldRoomIds: [roomId], primaryKey: primary) == nil)
+        #expect(PositionSharing.safetyNetSlot(channels: [room], share: share, nowMillis: 1_000, connectedNodeNum: 111, positionConfig: ready, heldRoomIds: [], primaryKey: primary) == nil)
+        #expect(PositionSharing.safetyNetSlot(channels: [room, channel(2, 0, id: roomId, psk: roomKey)], share: share, nowMillis: 1_000, connectedNodeNum: 111, positionConfig: ready, heldRoomIds: [roomId], primaryKey: primary) == nil)
+    }
+
     private func channel(
         _ index: Int,
         _ precision: Int,
         id: Int32? = nil,
+        psk: Data? = Data(repeating: 7, count: 32),
         kind: RoomKind = .firepit
     ) -> RoomChannel {
         RoomChannel(
@@ -162,7 +233,18 @@ import Testing
             role: index == 0 ? .primary : .secondary,
             id: id ?? Int32(index * 100),
             positionPrecision: precision,
+            psk: psk,
             kind: kind
         )
+    }
+
+    private func readyPosition(secs: UInt32 = 86_400) -> Config.PositionConfig {
+        var position = Config.PositionConfig()
+        position.gpsMode = .enabled
+        position.fixedPosition = false
+        position.positionBroadcastSecs = secs
+        position.positionBroadcastSmartEnabled = false
+        position.positionFlags = UInt32(Config.PositionConfig.PositionFlags.timestamp.rawValue)
+        return position
     }
 }

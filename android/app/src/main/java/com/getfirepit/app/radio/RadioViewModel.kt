@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.getfirepit.core.data.AlertClient
 import com.getfirepit.core.data.BuzzResult
+import com.getfirepit.core.data.LocationSettingsStore
 import com.getfirepit.core.data.MeshRepository
 import com.getfirepit.core.data.NodeAdminClient
 import com.getfirepit.core.data.Owner
@@ -123,6 +124,7 @@ class RadioViewModel @Inject constructor(
     private val alerts: AlertClient,
     private val traceroute: TracerouteClient,
     private val rooms: RoomRepository,
+    private val locationSettings: LocationSettingsStore,
 ) : ViewModel() {
 
     private val scanning = MutableStateFlow(false)
@@ -153,9 +155,9 @@ class RadioViewModel @Inject constructor(
             traceResult,
             savedRadios.radios,
             owners.owner,
-            combine(newPin, session.identityDoubt) { pin, doubt -> pin to doubt },
-        ) { tracing, result, saved, owner, (pin, doubt) ->
-            Extras(tracing, result, saved, owner, pin, doubt)
+            combine(newPin, session.identityDoubt, locationSettings.settings) { pin, doubt, location -> Triple(pin, doubt, location) },
+        ) { tracing, result, saved, owner, extra ->
+            Extras(tracing, result, saved, owner, extra.first, extra.second, extra.third)
         },
         presence.state(),
     ) { base, nodes, me, extras, bluetooth ->
@@ -175,11 +177,8 @@ class RadioViewModel @Inject constructor(
             relayReach = RelayReach.of(
                 (linkState as? LinkState.Ready)?.snapshot?.device?.rebroadcast_mode,
             ),
-            beaconRate = BeaconRate.of(
-                (linkState as? LinkState.Ready)?.snapshot?.position?.position_broadcast_secs,
-            ),
-            beaconWhenMoved =
-                (linkState as? LinkState.Ready)?.snapshot?.position?.position_broadcast_smart_enabled == true,
+            beaconRate = BeaconRate.of(extras.location.rateSeconds),
+            beaconWhenMoved = extras.location.whenMoved,
             radioGpsAvailable = (linkState as? LinkState.Ready)?.snapshot?.position?.gps_mode
                 ?.let { it != Config.PositionConfig.GpsMode.NOT_PRESENT } == true,
             radioGpsEnabled = (linkState as? LinkState.Ready)?.snapshot?.position?.gps_mode ==
@@ -451,11 +450,15 @@ class RadioViewModel @Inject constructor(
     fun showOnMap(saved: SavedRadio, onMap: Boolean) =
         savedRadios.showOnMap(saved.identifier, onMap)
 
-    fun setBeaconRate(rate: BeaconRate) =
-        writePosition { it.copy(position_broadcast_secs = rate.seconds) }
+    fun setBeaconRate(rate: BeaconRate) {
+        locationSettings.setRate(rate)
+        say("Saved. This no longer restarts your radio.")
+    }
 
-    fun setBeaconWhenMoved(enabled: Boolean) =
-        writePosition { it.copy(position_broadcast_smart_enabled = enabled) }
+    fun setBeaconWhenMoved(enabled: Boolean) {
+        locationSettings.setWhenMoved(enabled)
+        say("Saved. This no longer restarts your radio.")
+    }
 
     fun setRadioGps(enabled: Boolean) =
         writePosition {
@@ -552,4 +555,5 @@ private data class Extras(
     val owner: Owner?,
     val newPin: Int?,
     val identityDoubt: String?,
+    val location: com.getfirepit.core.data.LocationSettings,
 )

@@ -409,7 +409,7 @@ People sheet rows: avatar, name, distance and bearing from me, age of last posit
 
 Marker sizes, identical on both apps (dp on Android, points on iOS, so a marker is the same physical size on every phone): disc 34 across; ring 3 (4 on your own marker, in `#1B73E8`), drawn inside the disc's edge, `live` when live and `stale` otherwise; tag 14 bold, shrinking to fit 78 % of the disc; Base/Router glyph 62 % of the disc; approximate fix at 60 % opacity; heading arrow 10 × 8 just above the disc; name pill 3 below the disc, 12 semibold, padding 6 × 2, corner 6, `surface-2` with an `outline` hairline. Pins: an amber (`#F59E0B`) teardrop 28 high with a white hole, anchored at its tip, with the pin's name under it. Android draws these into bitmaps scaled by screen density (`MarkerSize` in `MapScreen.kt`); iOS draws the same numbers (`MarkerSize` in `MapAnnotations.swift`).
 
-Marker language: personal = the person's tag (`short_name`) in identity colour with white ring, full name in the label chip below; live = solid + subtle pulse (off with reduce motion); stale = 50 % opacity, grey ring, age label; reduced precision = translucent accuracy circle; Base = house glyph, Router = antenna glyph, both in the reserved infrastructure colour; multiple bases share the glyph and differ by label.
+Marker language: personal = the person's tag (`short_name`) in identity colour with white ring, full name in the label chip below; a radio safety-net fix adds "radio" to the label (`Sam · radio · 5m`) and the detail says "From Sam's radio. Protected by Meshtastic's room key, not Firepit's."; live = solid + subtle pulse (off with reduce motion); stale = 50 % opacity, grey ring, age label; reduced precision = translucent accuracy circle; Base = house glyph, Router = antenna glyph, both in the reserved infrastructure colour; multiple bases share the glyph and differ by label.
 
 You are one dot, in the theme primary colour, using MapLibre's user-location dot. The app never draws the radio connected to this phone as a second "you" marker; Base and Router radios you own still use their normal markers. The dot uses the phone's GPS fix while it is under 10 minutes old, and the connected radio's own GPS fix (also under 10 minutes old) when the phone has none or has gone quiet while the radio kept fixing; with neither, it disappears. If location permission is off, there is no dot at all, including no radio fallback. "Centre on everyone" includes this dot.
 
@@ -420,12 +420,24 @@ You are one dot, in the theme primary colour, using MapLibre's user-location dot
 │ Share my location                        │
 │ Room     [ Camp ▾ ]  (stops sharing in Trail) │
 │ For      [15 min] [1 h] [8 h] [Custom]   │
-│ Precision: Precise (room setting)        │
-│ ⓘ Changing the update rate restarts your │
-│   node for about 10 seconds.             │  ← shown only when a tier change is needed
+│ □ If my phone dies, my radio answers     │
+│   'where are you?'                       │
+│ Uses Meshtastic's own protection, not    │
+│ Firepit's. Firepit's protection needs    │
+│ your phone.                              │
+│ While you share, your radio also answers │
+│ 'where are you?' itself, at most every   │
+│ 3 minutes, and sends its position when   │
+│ it starts and once a day. Anyone with   │
+│ the room's radio key could read it. If  │
+│ your phone dies, it keeps answering on  │
+│ that key until your phone is back, even │
+│ after the share's end.                  │
 │ [ Start sharing ]                        │
 └──────────────────────────────────────────┘
 ```
+
+The radio safety-net switch is off by default and is shown only when the connected radio reports GPS hardware. Its first explanatory line is exactly: "Uses Meshtastic's own protection, not Firepit's. Firepit's protection needs your phone." The second line says that while sharing, the radio can answer every 3 minutes, sends when it starts and once a day, anyone holding the room's radio key can read it, and if the phone dies it keeps answering on its current key until the phone is back, even after the share ends. If turning it on must change the radio's position config — GPS on, fixed position off, one-day periodic beacons, smart beacons off and GPS timestamps on — the sheet says the radio restarts once and that any fixed position on the radio is stopped. The normal "share every" cadence is now an app setting in Settings › Radio; changing it never writes the radio or restarts it.
 
 ### 6.8 Settings
 
@@ -829,8 +841,9 @@ Replace "online/last seen" with **heard**: "heard 3 min ago" from the node's `la
 | Owner name / tag | device account name; tag = first + last initials proposed (SJ), user confirms or types their own (exactly 2 chars) with a duplicate hint against known members | `set_owner` (no restart; triggers a NodeInfo refresh) | prefilled; editable at first run and in Profile |
 | Role | Personal on first run | `CLIENT`; Base → `CLIENT_BASE`; Router → `ROUTER_LATE` | card choice for added nodes |
 | Device telemetry | on, every 30 min | `set_module_config(telemetry)` | never |
-| Position profile | "off" tiers at setup; tier per live-sharing duration | `set_config(position)` on tier change | shown as "node restarts" note |
-| Room position precision | always Precise (32) — U-2 | per-room channel setting; carried in invites | never (Room info shows "Precise" as information) |
+| Position profile | safety-net setup only: GPS on, fixed position off, one-day beacons, smart off, timestamps on | `set_config(position)` once when needed | share sheet says the radio restarts once and stops any fixed position |
+| Share every | app setting, initialised once from the radio only when the position config is known and the interval is one Firepit offers | SharedPreferences / UserDefaults | Settings › Radio, no radio restart |
+| Room position precision | 32 only for the active opt-in safety-net room; 0 everywhere else | per-room channel setting; carried in invites | share sheet switch |
 | Favorites | all room members on Personal; members + infra on Base/Router | `set_favorite_node` | never |
 | Infra nodes unmessagable | yes | `set_owner(is_unmessagable)` | never |
 | Fixed position (Base) | from phone GPS at setup | `set_fixed_position` | one yes/no |

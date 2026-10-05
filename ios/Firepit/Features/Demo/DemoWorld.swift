@@ -267,7 +267,7 @@
                     nodeNum: num, latitudeI: Int32((latitude + north) * 1e7),
                     longitudeI: Int32((longitude + east) * 1e7),
                     altitude: 1_220, positionTime: now - minutesAgo * minute, positionPrecision: 32, groundSpeed: nil,
-                    groundTrack: nil)
+                    groundTrack: nil, positionFromRadio: false)
             }
 
             app.sharingStore.remember(roomId: camp, choice: .fourHours, nowMillis: now - 25 * minute)

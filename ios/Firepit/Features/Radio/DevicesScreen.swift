@@ -358,7 +358,7 @@ private struct NodeNameFields: View {
     }
 }
 
-/// How often your location goes to the room you share it with.
+/// How often your phone sends location to the room you share it with.
 private struct BeaconFields: View {
     let rate: BeaconRate?
     let whenMoved: Bool
@@ -373,8 +373,8 @@ private struct BeaconFields: View {
             SectionLabel("Beacon")
             Text(
                 """
-                How often your location goes to the room you share it with, while you share it. Your phone seals and \
-                sends it, so it pauses if your phone is away from this radio.
+                How often your phone sends your location while you share. Your phone seals it for the room. Changing \
+                this no longer restarts your radio.
                 """
             )
             .font(FirepitFont.bodySmall)

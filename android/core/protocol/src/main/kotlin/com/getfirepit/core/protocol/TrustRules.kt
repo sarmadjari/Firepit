@@ -154,12 +154,46 @@ object TrustRules {
      * An unsealed position, from the firmware's own broadcast or the radio's
      * node list.
      *
-     * Never for somebody in one of our rooms: members' positions only travel
-     * sealed, so an unsealed one naming a member was written by whoever holds a
-     * radio, not by them. For anyone else it is all there is, and it is shown
-     * as what it is — a position the mesh reported.
+     * A node outside our rooms has nothing else to send, so its position is
+     * kept, as it always was, for the map's "everyone this radio has heard".
+     * A room member's phone only ever sends positions sealed, so an unsealed
+     * one naming a member is taken only as the opt-in safety net: on the
+     * channel of a Firepit room we share, never on the primary and never PKI,
+     * and it is marked as from their radio.
      */
-    fun unsealedPositionAcceptable(senderInOurRooms: Boolean): Boolean = !senderInOurRooms
+    fun unsealedPositionAcceptable(
+        senderInOurRooms: Boolean,
+        channel: Int,
+        sharedFirepitRoomSlot: Int?,
+        pkiEncrypted: Boolean,
+    ): Boolean = !senderInOurRooms || (
+        !pkiEncrypted &&
+            channel != ChannelSlotManager.PRIMARY_SLOT &&
+            sharedFirepitRoomSlot == channel
+        )
+
+    /**
+     * A radio safety-net position must not roll back a newer phone-sealed fix.
+     */
+    fun radioPositionMayReplace(
+        existingHasPosition: Boolean,
+        existingFromRadio: Boolean,
+        existingPositionTime: Long?,
+        incomingPositionTime: Long?,
+        nowMillis: Long,
+    ): Boolean {
+        if (!existingHasPosition) return true
+        if (existingFromRadio) {
+            return existingPositionTime == null ||
+                (incomingPositionTime != null && incomingPositionTime >= existingPositionTime)
+        }
+        if (existingPositionTime != null && nowMillis - existingPositionTime < RADIO_POSITION_SEALED_QUIET_MILLIS) {
+            return false
+        }
+        return existingPositionTime == null || (incomingPositionTime != null && incomingPositionTime > existingPositionTime)
+    }
+
+    private const val RADIO_POSITION_SEALED_QUIET_MILLIS = 10 * 60 * 1000L
 
     /**
      * Whether to answer "where are you?".

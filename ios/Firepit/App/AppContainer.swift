@@ -43,6 +43,7 @@ final class AppContainer {
 
     let sessionStore: SessionStore
     let sharingStore: SharingStore
+    let locationSettings: LocationSettingsStore
     let roomKeys: RoomKeyStore
     let roomKeyMade: RoomKeyMadeStore
     let phoneKeys: PhoneKeyStore
@@ -133,6 +134,7 @@ final class AppContainer {
         pendingHandoverDao = daos.pendingHandoverDao
         sessionStore = SessionStore(defaults: defaults)
         sharingStore = SharingStore(defaults: defaults)
+        locationSettings = LocationSettingsStore(defaults: defaults)
         savedRadios = SavedRadioStore(defaults: defaults)
 
         scanner = RadioScanner(central: central)
@@ -200,7 +202,8 @@ final class AppContainer {
             admin: admin,
             phoneLocation: phoneLocation,
             rooms: rooms,
-            sharingStore: sharingStore
+            sharingStore: sharingStore,
+            locationSettings: locationSettings
         )
         waypoints = WaypointRepository(mesh: mesh, rooms: rooms, pinDao: mapPinDao)
         traceroute = TracerouteClient(link: radio, mesh: mesh, rooms: rooms)

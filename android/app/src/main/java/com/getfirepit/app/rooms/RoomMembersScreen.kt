@@ -94,9 +94,9 @@ fun RoomMembersScreen(
                 pickingRoom = false
                 sharingViewModel.stop()
             },
-            onShare = { chosen, choice ->
+            onShare = { chosen, choice, radioSafetyNet ->
                 pickingRoom = false
-                sharingViewModel.share(chosen, choice)
+                sharingViewModel.share(chosen, choice, radioSafetyNet)
             },
         )
     }

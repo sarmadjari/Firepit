@@ -243,7 +243,7 @@ struct MapScreen: View {
     }
 
     @ViewBuilder private var noticeView: some View {
-        if let text = model.uiState.error ?? model.ask.notice {
+        if let text = model.uiState.error ?? sharingModel.state.error ?? model.ask.notice {
             MapNotice(text: text, onClose: model.clearError)
         }
     }
@@ -282,14 +282,14 @@ struct MapScreen: View {
                 return nil
             }(),
             onDismiss: { pickingRoom = false },
-            onShare: { roomId, choice in
+            onShare: { roomId, choice, radioSafetyNet in
                 pickingRoom = false
                 if LocationPermission.isDenied {
-                    pendingShare = PendingShare(roomId: roomId, choice: choice)
+                    pendingShare = PendingShare(roomId: roomId, choice: choice, radioSafetyNet: radioSafetyNet)
                     model.reportPermissionDenied()
                 } else {
                     LocationPermission.requestIfNeeded()
-                    sharingModel.share(roomId: roomId, choice: choice)
+                    sharingModel.share(roomId: roomId, choice: choice, radioSafetyNet: radioSafetyNet)
                 }
             },
             onStop: {
@@ -356,6 +356,7 @@ private extension OwnPosition.Fix {
 private struct PendingShare: Identifiable {
     let roomId: Int32
     let choice: ShareDuration
+    let radioSafetyNet: Bool
     var id: Int32 { roomId }
 }
 

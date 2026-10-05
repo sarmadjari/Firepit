@@ -526,9 +526,8 @@ private fun NodeNameFields(owner: Owner?, onRename: (String, String) -> Unit) {
 /**
  * How often your location goes to the room you share it with.
  *
- * Stored on the radio, where the setting has always lived, but the phone does
- * the sending: it seals each fix under the room's key. So it pauses while the
- * phone is away from the radio.
+ * Stored in the app. The phone does the sending: it seals each fix under the
+ * room's key, so changing this never restarts the radio.
  */
 @Composable
 private fun BeaconFields(
@@ -543,9 +542,8 @@ private fun BeaconFields(
     Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.xs)) {
         SectionLabel("Beacon")
         Text(
-            text = "How often your location goes to the room you share it with, while you " +
-                "share it. Your phone seals and sends it, so it pauses if your phone is away " +
-                "from this radio.",
+            text = "How often your phone sends your location while you share. Your phone seals it " +
+                "for the room. Changing this no longer restarts your radio.",
             style = MaterialTheme.typography.bodySmall,
             color = FirepitTheme.colors.textSecondary,
         )

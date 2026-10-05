@@ -4,10 +4,11 @@ import android.location.Location
 import android.util.Log
 import com.getfirepit.core.crypto.InviteCodec
 import com.getfirepit.core.model.MeshNode
-import com.getfirepit.core.protocol.BeaconRate
 import com.getfirepit.core.protocol.PositionPrecision
 import com.getfirepit.core.protocol.PositionSharing
 import com.getfirepit.core.protocol.PrecisionWrite
+import com.getfirepit.core.protocol.PrimaryChannel
+import com.getfirepit.core.protocol.SafetyNetShare
 import com.getfirepit.core.protocol.ShareDuration
 import com.getfirepit.core.protocol.TrustRules
 import com.getfirepit.protocol.meshchat.MeshChatControl
@@ -81,7 +82,9 @@ class LocationRepository @Inject constructor(
     private val admin: NodeAdminClient,
     private val phoneLocation: PhoneLocationSource,
     private val rooms: RoomRepository,
+    private val history: RoomHistory,
     private val sharingStore: SharingStore,
+    private val locationSettings: LocationSettingsStore,
     @param:ApplicationScope private val scope: CoroutineScope,
 ) {
 
@@ -147,6 +150,7 @@ class LocationRepository @Inject constructor(
 
     /** When sharing stops on its own, or null when nothing is shared or nothing stops it. */
     val sharingDeadline: StateFlow<SharingDeadline?> get() = sharingStore.deadline
+    val settings: StateFlow<LocationSettings> get() = locationSettings.settings
 
     /** Nodes with a known fix, newest sighting first. */
     fun observePositions(): Flow<List<MeshNode>> =
@@ -154,24 +158,24 @@ class LocationRepository @Inject constructor(
 
     fun start() {
         scope.launch {
+            mesh.snapshot.collect { snapshot ->
+                locationSettings.initializeFromRadio(snapshot?.position)
+            }
+        }
+
+        scope.launch {
             // Whenever the radio reports its channels — every connect, and after
             // any channel write — make sure it broadcasts our position nowhere.
             mesh.channels.collect { channels ->
                 if (channels.isEmpty()) return@collect
-                val writes = PositionSharing.writesToSilence(channels)
-                if (writes.isNotEmpty()) {
-                    Log.w(TAG, "the radio broadcasts position on ${writes.size} channels; silencing it")
-                    runCatching { silence(writes) }
-                        .onFailure { cause -> Log.e(TAG, "could not stop the radio broadcasting position", cause) }
-                }
-                enforceDeadline()
+                enforceSafetyNetPrecision()
             }
         }
 
         // A deadline has to pass whether or not anything else happens.
         scope.launch {
             while (true) {
-                enforceDeadline()
+                enforceSafetyNetPrecision()
                 delay(DEADLINE_CHECK)
             }
         }
@@ -246,27 +250,26 @@ class LocationRepository @Inject constructor(
      */
     private suspend fun shareIfDue(location: OwnPosition.Fix) {
         val roomId = activeSharingRoom() ?: return
+        locationSettings.initializeFromRadio(mesh.snapshot.value?.position)
         val now = System.currentTimeMillis()
-        val config = mesh.snapshot.value?.position
-        // Whatever the radio holds, not only the rates Firepit offers, within
-        // reason: somebody else's app may have set it, and it was their choice.
-        val interval = (config?.position_broadcast_secs?.takeIf { it > 0 } ?: BeaconRate.FIRMWARE_DEFAULT_SECONDS)
+        val config = locationSettings.settings.value
+        val interval = config.rateSeconds
             .coerceAtLeast(MINIMUM_BEACON_SECONDS).seconds
         val sinceLast = now - lastSharedAt
         val due = lastSharedAt == 0L || sinceLast >= interval.inWholeMilliseconds ||
-            (config?.position_broadcast_smart_enabled == true && movedEnough(location, config) &&
+            (config.whenMoved && movedEnough(location, config) &&
                 sinceLast >= smartInterval(config).inWholeMilliseconds)
         if (due) share(roomId, location)
     }
 
-    private fun movedEnough(location: OwnPosition.Fix, config: Config.PositionConfig): Boolean {
+    private fun movedEnough(location: OwnPosition.Fix, config: LocationSettings): Boolean {
         val previous = lastShared ?: return true
-        val minimum = config.broadcast_smart_minimum_distance.takeIf { it > 0 } ?: SMART_DISTANCE_METRES
+        val minimum = config.smartDistanceMetres.takeIf { it > 0 } ?: SMART_DISTANCE_METRES
         return OwnPosition.distanceMetres(previous, location) >= minimum
     }
 
-    private fun smartInterval(config: Config.PositionConfig): Duration =
-        config.broadcast_smart_minimum_interval_secs.takeIf { it > 0 }?.seconds ?: SMART_MINIMUM_INTERVAL
+    private fun smartInterval(config: LocationSettings): Duration =
+        config.smartIntervalSeconds.takeIf { it > 0 }?.seconds ?: SMART_MINIMUM_INTERVAL
 
     /** Seals the fix under the room's key and sends it to the room. */
     private suspend fun share(roomId: Int, location: OwnPosition.Fix) {
@@ -356,17 +359,60 @@ class LocationRepository @Inject constructor(
      * Only a Firepit room whose key this phone holds: nowhere else can a
      * position be sealed.
      */
-    suspend fun shareWith(roomId: Int?, choice: ShareDuration) {
+    suspend fun shareWith(roomId: Int?, choice: ShareDuration, radioSafetyNet: Boolean = false) {
         if (roomId == null) {
-            stopSharing()
+            stopSharingAndSilence()
             return
         }
         val room = mesh.channels.value.firstOrNull { it.id == roomId && PositionSharing.canShare(it) }
-            ?: throw IllegalArgumentException("Positions can only be shared with a Firepit room")
-        sharingStore.remember(room.id, choice, System.currentTimeMillis())
+        if (room == null && sharingStore.deadline.value?.roomId != roomId) {
+            throw IllegalArgumentException("Positions can only be shared with a Firepit room")
+        }
+        val bound = if (radioSafetyNet) {
+            mesh.snapshot.value?.myNodeNum ?: sharingStore.deadline.value?.safetyNetNodeNum
+        } else {
+            null
+        }
+        sharingStore.remember(
+            roomId,
+            choice,
+            System.currentTimeMillis(),
+            radioSafetyNet,
+            safetyNetNodeNum = bound,
+        )
+        if (radioSafetyNet) {
+            if (room == null) error("Connect the radio to set up the safety net.")
+            prepareRadioSafetyNet(room.index)
+        }
+        enforceSafetyNetPrecision(throwOnFailure = true)
         // A fresh share is sent at once rather than at the next beacon.
         lastSharedAt = 0L
         chosenOwnPosition.value?.let { shareIfDue(it) }
+    }
+
+    private suspend fun prepareRadioSafetyNet(roomSlot: Int) {
+        val position = mesh.snapshot.value?.position ?: error("Radio position config is not loaded")
+        require(position.gps_mode != Config.PositionConfig.GpsMode.NOT_PRESENT) {
+            "This radio has no GPS, so it cannot answer if your phone dies."
+        }
+        val channel = admin.getChannel(roomSlot) ?: error("Could not read the room from the radio")
+        channel.settings?.psk ?: error("Could not read the room key from the radio")
+        val wanted = position.copy(
+            gps_mode = Config.PositionConfig.GpsMode.ENABLED,
+            fixed_position = false,
+            position_broadcast_secs = RADIO_SAFETY_NET_SECONDS,
+            position_broadcast_smart_enabled = false,
+            position_flags = position.position_flags or Config.PositionConfig.PositionFlags.TIMESTAMP.value,
+        )
+        if (position.gps_mode == wanted.gps_mode &&
+            position.fixed_position == wanted.fixed_position &&
+            position.position_broadcast_secs == wanted.position_broadcast_secs &&
+            position.position_broadcast_smart_enabled == wanted.position_broadcast_smart_enabled &&
+            (position.position_flags and Config.PositionConfig.PositionFlags.TIMESTAMP.value) != 0
+        ) {
+            return
+        }
+        admin.setPositionConfig(wanted)
     }
 
     /** Stops sharing if its time has run out. Safe to call as often as you like. */
@@ -374,14 +420,45 @@ class LocationRepository @Inject constructor(
         val deadline = sharingStore.deadline.value ?: return
         if (!deadline.hasPassed(System.currentTimeMillis())) return
         Log.i(TAG, "sharing with room ${deadline.roomId} has run out; stopping")
-        stopSharing()
+        stopSharingLocalOnly()
+    }
+
+    private suspend fun enforceSafetyNetPrecision(throwOnFailure: Boolean = false) {
+        enforceDeadline()
+        if (!mesh.isConnected.value || mesh.channels.value.isEmpty()) return
+        history.whileRearranging {
+            enforceDeadline()
+            val channels = mesh.channels.value
+            if (channels.isNotEmpty()) {
+                val keep = activeSafetyNetSlot(channels)
+                val writes = PositionSharing.writesToSilence(channels, keep)
+                if (writes.isNotEmpty()) {
+                    Log.w(TAG, "fixing radio position precision on ${writes.size} channels")
+                    if (throwOnFailure) {
+                        silence(writes)
+                    } else {
+                        runCatching { silence(writes) }
+                            .onFailure { cause -> Log.e(TAG, "could not stop the radio broadcasting position", cause) }
+                    }
+                }
+            }
+        }
     }
 
     /**
      * Stops sharing. The phone is what sends, so this takes effect at once, on
      * every radio, whether or not one is connected.
      */
+    suspend fun stopSharingAndSilence() {
+        stopSharingLocalOnly()
+        enforceSafetyNetPrecision(throwOnFailure = true)
+    }
+
     fun stopSharing() {
+        scope.launch { runCatching { stopSharingAndSilence() } }
+    }
+
+    private fun stopSharingLocalOnly() {
         sharingStore.clear()
         lastShared = null
         lastSharedAt = 0L
@@ -391,6 +468,26 @@ class LocationRepository @Inject constructor(
     private fun activeSharingRoom(): Int? {
         val roomId = sharingStore.deadline.value?.roomId ?: return null
         return mesh.channels.value.firstOrNull { it.id == roomId && PositionSharing.canShare(it) }?.id
+    }
+
+    private fun activeSafetyNetSlot(channels: List<com.getfirepit.core.model.RoomChannel>): Int? {
+        val deadline = sharingStore.deadline.value ?: return null
+        val share = SafetyNetShare(
+            roomId = deadline.roomId,
+            endsAt = deadline.endsAt,
+            radioSafetyNet = deadline.radioSafetyNet,
+            safetyNetNodeNum = deadline.safetyNetNodeNum,
+        )
+        return PositionSharing.safetyNetSlot(
+            channels = channels,
+            share = share,
+            nowMillis = System.currentTimeMillis(),
+            connectedNodeNum = mesh.snapshot.value?.myNodeNum,
+            positionConfig = mesh.snapshot.value?.position,
+            heldRoomIds = channels.filter { PositionSharing.canShare(it) }.map { it.id }.toSet(),
+            primaryKey = PrimaryChannel.key,
+            licensedMode = mesh.snapshot.value?.myNodeNum?.let { mesh.snapshot.value?.nodes?.get(it)?.user?.is_licensed } == true,
+        )
     }
 
     /**
@@ -436,7 +533,8 @@ class LocationRepository @Inject constructor(
             heard != null -> PositionAnswer.Answered
             else -> {
                 Log.i(TAG, "no position from $nodeNum inside $timeout")
-                PositionAnswer.Silent
+                val fallbackRoom = rooms.sharedRoomWith(nodeNum) ?: return PositionAnswer.NoSharedRoom
+                if (mesh.sendPositionRequest(nodeNum, fallbackRoom.index)) PositionAnswer.Asked else PositionAnswer.Silent
             }
         }
     }
@@ -464,6 +562,7 @@ class LocationRepository @Inject constructor(
         /** The firmware's own smart-beacon defaults, used when the radio leaves them at zero. */
         const val SMART_DISTANCE_METRES = 100
         val SMART_MINIMUM_INTERVAL = 30.seconds
+        const val RADIO_SAFETY_NET_SECONDS = 86_400
 
         /** One answer to many askers at once is enough. */
         val ANSWER_GAP = 1.minutes

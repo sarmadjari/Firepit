@@ -199,11 +199,108 @@ class TrustRulesTest {
         assertFalse(TrustRules.sealedPositionAcceptable(sealedUnderCurrent = true, onItsRoomSlot = false))
     }
 
-    /** A member's position only ever travels sealed; an unsealed one was written by a radio holder. */
+    /** A member's unsealed position is only believed on a shared Firepit room slot. */
     @Test
-    fun `an unsealed position is never believed about a member`() {
-        assertFalse(TrustRules.unsealedPositionAcceptable(senderInOurRooms = true))
-        assertTrue(TrustRules.unsealedPositionAcceptable(senderInOurRooms = false))
+    fun `an unsealed member position is accepted only on a shared Firepit room slot`() {
+        assertTrue(
+            TrustRules.unsealedPositionAcceptable(
+                senderInOurRooms = true,
+                channel = 2,
+                sharedFirepitRoomSlot = 2,
+                pkiEncrypted = false,
+            ),
+        )
+        assertFalse(
+            TrustRules.unsealedPositionAcceptable(
+                senderInOurRooms = true,
+                channel = ChannelSlotManager.PRIMARY_SLOT,
+                sharedFirepitRoomSlot = ChannelSlotManager.PRIMARY_SLOT,
+                pkiEncrypted = false,
+            ),
+        )
+        assertFalse(
+            TrustRules.unsealedPositionAcceptable(
+                senderInOurRooms = true,
+                channel = 2,
+                sharedFirepitRoomSlot = 2,
+                pkiEncrypted = true,
+            ),
+        )
+        assertFalse(
+            TrustRules.unsealedPositionAcceptable(
+                senderInOurRooms = true,
+                channel = 3,
+                sharedFirepitRoomSlot = 2,
+                pkiEncrypted = false,
+            ),
+        )
+        assertTrue(
+            "a node outside our rooms keeps showing, as it always did",
+            TrustRules.unsealedPositionAcceptable(
+                senderInOurRooms = false,
+                channel = ChannelSlotManager.PRIMARY_SLOT,
+                sharedFirepitRoomSlot = null,
+                pkiEncrypted = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `a radio position never replaces a newer sealed one`() {
+        assertFalse(
+            TrustRules.radioPositionMayReplace(
+                existingHasPosition = true,
+                existingFromRadio = false,
+                existingPositionTime = 590_000,
+                incomingPositionTime = 600_000,
+                nowMillis = 600_000,
+            ),
+        )
+        assertFalse(
+            TrustRules.radioPositionMayReplace(
+                existingHasPosition = true,
+                existingFromRadio = true,
+                existingPositionTime = 2_000,
+                incomingPositionTime = 1_000,
+                nowMillis = 600_000,
+            ),
+        )
+        assertTrue(
+            TrustRules.radioPositionMayReplace(
+                existingHasPosition = true,
+                existingFromRadio = false,
+                existingPositionTime = 2_000,
+                incomingPositionTime = 3_000,
+                nowMillis = 700_000,
+            ),
+        )
+        assertFalse(
+            TrustRules.radioPositionMayReplace(
+                existingHasPosition = true,
+                existingFromRadio = false,
+                existingPositionTime = 2_000,
+                incomingPositionTime = 1_000,
+                nowMillis = 700_000,
+            ),
+        )
+        assertFalse(
+            TrustRules.radioPositionMayReplace(
+                existingHasPosition = true,
+                existingFromRadio = false,
+                existingPositionTime = 2_000,
+                incomingPositionTime = null,
+                nowMillis = 700_000,
+            ),
+        )
+        assertTrue(
+            TrustRules.radioPositionMayReplace(
+                existingHasPosition = false,
+                existingFromRadio = false,
+                existingPositionTime = null,
+                incomingPositionTime = null,
+                nowMillis = 700_000,
+            ),
+        )
     }
 
     @Test

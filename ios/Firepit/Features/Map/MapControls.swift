@@ -276,6 +276,9 @@ struct PersonSheet: View {
     }
 
     private var positionAge: String {
+        if marker.node.positionFromRadio {
+            return String(localized: "From \(marker.name)'s radio. Protected by Meshtastic's room key, not Firepit's.")
+        }
         if let minutes = marker.fixAgeMinutes {
             return String(localized: "Last seen here \(MapWords.agePhrase(minutes: minutes)).")
         }

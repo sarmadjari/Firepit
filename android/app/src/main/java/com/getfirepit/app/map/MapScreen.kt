@@ -144,7 +144,7 @@ fun MapScreen(
         viewModel.setLocationAllowed(locationAllowed)
         if (locationAllowed) {
             viewModel.setMapVisible(true)
-            pendingShare?.let { sharingViewModel.share(it.roomId, it.choice) }
+            pendingShare?.let { sharingViewModel.share(it.roomId, it.choice, it.radioSafetyNet) }
         } else if (pendingShare != null) {
             // Reported only when it blocked something: a denial on opening the
             // map costs nothing but your own dot.
@@ -248,6 +248,7 @@ fun MapScreen(
             val swept = ask as? LocationAsk.Swept
             (
                 state.error
+                    ?: sharing.error
                     ?: sweeping?.let { "Asking ${it.done} of ${it.total}…" }
                     ?: swept?.said
                 )?.let { message ->
@@ -384,14 +385,14 @@ fun MapScreen(
                 pickingRoom = false
                 sharingViewModel.stop()
             },
-            onShare = { roomId, choice ->
+            onShare = { roomId, choice, radioSafetyNet ->
                 pickingRoom = false
                 locationAllowed = hasLocationPermission(context)
                 viewModel.setLocationAllowed(locationAllowed)
                 if (locationAllowed) {
-                    sharingViewModel.share(roomId, choice)
+                    sharingViewModel.share(roomId, choice, radioSafetyNet)
                 } else {
-                    pendingShare = PendingShare(roomId, choice)
+                    pendingShare = PendingShare(roomId, choice, radioSafetyNet)
                     locationPermission.launch(
                         arrayOf(
                             Manifest.permission.ACCESS_FINE_LOCATION,
@@ -488,9 +489,13 @@ private fun PersonSheet(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(FirepitSpacing.m)) {
                 Text(
-                    text = marker.fixAgeMinutes
-                        ?.let { "Last seen here ${agePhrase(it)}." }
-                        ?: "Nothing says when this position was taken.",
+                    text = if (marker.node.positionFromRadio) {
+                        "From ${marker.name}'s radio. Protected by Meshtastic's room key, not Firepit's."
+                    } else {
+                        marker.fixAgeMinutes
+                            ?.let { "Last seen here ${agePhrase(it)}." }
+                            ?: "Nothing says when this position was taken."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 if (said != null) {
@@ -751,7 +756,7 @@ private fun SheetAction(@DrawableRes icon: Int, label: String, onClick: () -> Un
 }
 
 /** A share waiting on the location permission dialog. */
-private data class PendingShare(val roomId: Int, val choice: ShareDuration)
+private data class PendingShare(val roomId: Int, val choice: ShareDuration, val radioSafetyNet: Boolean)
 
 /** Owns the symbol manager so markers are replaced rather than stacked. */
 private class MarkerLayer {
@@ -830,7 +835,8 @@ private class MarkerLayer {
             val longitude = marker.node.longitude ?: return@forEach
             // The age and the theme are drawn into the bitmap, so they belong in the key.
             val imageId = "node-${marker.node.nodeNum}-${marker.isLive}-" +
-                "${marker.isApproximate}-${marker.isSelf}-${marker.fixAgeMinutes}-${palette.dark}"
+                "${marker.isApproximate}-${marker.isSelf}-${marker.node.positionFromRadio}-" +
+                "${marker.fixAgeMinutes}-${palette.dark}"
             style.addImage(imageId, markerBitmap(context, marker, palette))
             val symbol = manager.create(
                 SymbolOptions()
@@ -1191,12 +1197,13 @@ private fun drawRoleIcon(
 private fun markerLabel(marker: MapMarker): String {
     val name = marker.name
     if (marker.isSelf) return name
-    val minutes = marker.fixAgeMinutes ?: return name
+    val radio = if (marker.node.positionFromRadio) " · radio" else ""
+    val minutes = marker.fixAgeMinutes ?: return "$name$radio"
     return when {
-        minutes < 1 -> name
-        minutes < 60 -> "$name · ${minutes}m"
-        minutes < 60 * 24 -> "$name · ${minutes / 60}h"
-        else -> "$name · ${minutes / (60 * 24)}d"
+        minutes < 1 -> "$name$radio"
+        minutes < 60 -> "$name$radio · ${minutes}m"
+        minutes < 60 * 24 -> "$name$radio · ${minutes / 60}h"
+        else -> "$name$radio · ${minutes / (60 * 24)}d"
     }
 }
 

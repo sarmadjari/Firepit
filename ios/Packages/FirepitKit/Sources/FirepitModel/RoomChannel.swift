@@ -1,3 +1,5 @@
+import Foundation
+
 /// What kind of conversation a channel slot holds, and therefore who can read it. Shown on the room itself, because
 /// the difference is the whole point.
 ///
@@ -108,11 +110,13 @@ public struct RoomChannel: Hashable, Sendable {
     public var id: Int32
     /// 0 means positions are never sent on this channel.
     public var positionPrecision: Int
+    /// The radio's channel PSK as reported now. Kept only in memory.
+    public var psk: Data?
     /// Least private by default: a slot is only a sealed room once a key proves it.
     public var kind: RoomKind
 
     public init(
-        index: Int, name: String, role: ChannelRole, id: Int32, positionPrecision: Int,
+        index: Int, name: String, role: ChannelRole, id: Int32, positionPrecision: Int, psk: Data? = nil,
         kind: RoomKind = .meshtasticPublic
     ) {
         self.index = index
@@ -120,6 +124,7 @@ public struct RoomChannel: Hashable, Sendable {
         self.role = role
         self.id = id
         self.positionPrecision = positionPrecision
+        self.psk = psk
         self.kind = kind
     }
 

@@ -36,7 +36,7 @@ class MigrationTest {
             db.execSQL("INSERT INTO channel_state (channel, lastReadAt, muted) VALUES (2, 50, 1)")
         }
 
-        helper.runMigrationsAndValidate(DB, 14, true, *FirepitDatabase.MIGRATIONS).use { db ->
+        helper.runMigrationsAndValidate(DB, 15, true, *FirepitDatabase.MIGRATIONS).use { db ->
             db.query("SELECT text, roomId FROM messages WHERE id = 1").use { cursor ->
                 cursor.moveToFirst()
                 assertEquals("kept", cursor.getString(0))
@@ -89,13 +89,32 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun fourteenToFifteenAddsRadioPositionFlagAndKeepsPositions() {
+        helper.createDatabase("$DB-14-15", 14).use { db ->
+            db.execSQL(
+                "INSERT INTO nodes (nodeNum, isUnmessagable, isFavorite, firstSeen, latitudeI, longitudeI) " +
+                    "VALUES (7, 0, 0, 100, 1, 2)",
+            )
+        }
+
+        helper.runMigrationsAndValidate("$DB-14-15", 15, true, *FirepitDatabase.MIGRATIONS).use { db ->
+            db.query("SELECT latitudeI, longitudeI, positionFromRadio FROM nodes WHERE nodeNum = 7").use { cursor ->
+                cursor.moveToFirst()
+                assertEquals(1, cursor.getInt(0))
+                assertEquals(2, cursor.getInt(1))
+                assertEquals(0, cursor.getInt(2))
+            }
+        }
+    }
+
     /** Every version still in the wild reaches the current one through the chain. */
     @Test
     fun everyExportedVersionUpgradesToTheCurrentOne() {
-        (1..13).forEach { version ->
+        (1..14).forEach { version ->
             val name = "$DB-from-$version"
             helper.createDatabase(name, version).close()
-            helper.runMigrationsAndValidate(name, 14, true, *FirepitDatabase.MIGRATIONS).close()
+            helper.runMigrationsAndValidate(name, 15, true, *FirepitDatabase.MIGRATIONS).close()
         }
     }
 

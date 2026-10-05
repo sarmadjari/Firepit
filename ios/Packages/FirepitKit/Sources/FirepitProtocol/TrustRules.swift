@@ -144,13 +144,41 @@ public enum TrustRules {
     /// An unsealed position, from the firmware's own broadcast or the radio's
     /// node list.
     ///
-    /// Never for somebody in one of our rooms: members' positions only travel
-    /// sealed, so an unsealed one naming a member was written by whoever holds a
-    /// radio, not by them. For anyone else it is all there is, and it is shown
-    /// as what it is — a position the mesh reported.
-    public static func unsealedPositionAcceptable(senderInOurRooms: Bool) -> Bool {
+    /// A node outside our rooms has nothing else to send, so its position is
+    /// kept, as it always was, for the map's "everyone this radio has heard".
+    /// A room member's phone only ever sends positions sealed, so an unsealed
+    /// one naming a member is taken only as the opt-in safety net: on the
+    /// channel of a Firepit room we share, never on the primary and never PKI,
+    /// and it is marked as from their radio.
+    public static func unsealedPositionAcceptable(
+        senderInOurRooms: Bool,
+        channel: Int,
+        sharedFirepitRoomSlot: Int?,
+        pkiEncrypted: Bool
+    ) -> Bool {
         !senderInOurRooms
+            || (!pkiEncrypted && channel != ChannelSlotManager.primarySlot && sharedFirepitRoomSlot == channel)
     }
+
+    public static func radioPositionMayReplace(
+        existingHasPosition: Bool,
+        existingFromRadio: Bool,
+        existingPositionTime: Int64?,
+        incomingPositionTime: Int64?,
+        nowMillis: Int64
+    ) -> Bool {
+        if !existingHasPosition { return true }
+        if existingFromRadio {
+            return existingPositionTime == nil
+                || (incomingPositionTime != nil && incomingPositionTime! >= existingPositionTime!)
+        }
+        if let existingPositionTime, nowMillis - existingPositionTime < radioPositionSealedQuietMillis {
+            return false
+        }
+        return existingPositionTime == nil || (incomingPositionTime != nil && incomingPositionTime! > existingPositionTime!)
+    }
+
+    private static let radioPositionSealedQuietMillis: Int64 = 10 * 60 * 1_000
 
     /// Whether to answer "where are you?".
     ///

@@ -211,18 +211,19 @@ struct SharingChip: View {
 struct ShareLocationSheet: View {
     let state: SharingUiState
     let onDismiss: () -> Void
-    let onShare: (Int32, ShareDuration) -> Void
+    let onShare: (Int32, ShareDuration, Bool) -> Void
     let onStop: () -> Void
 
     @State private var room: Int32?
     @State private var choice: ShareDuration
+    @State private var radioSafetyNet: Bool
 
     /// `preferredRoomId`: the room open beside the map, offered first when nothing is being shared yet (UX §6.11.6).
     init(
         state: SharingUiState,
         preferredRoomId: Int32? = nil,
         onDismiss: @escaping () -> Void,
-        onShare: @escaping (Int32, ShareDuration) -> Void,
+        onShare: @escaping (Int32, ShareDuration, Bool) -> Void,
         onStop: @escaping () -> Void
     ) {
         self.state = state
@@ -232,6 +233,7 @@ struct ShareLocationSheet: View {
         let preferred = preferredRoomId.flatMap { id in state.rooms.contains { $0.id == id } ? id : nil }
         _room = State(initialValue: state.roomId ?? preferred ?? state.rooms.first?.id)
         _choice = State(initialValue: state.choice)
+        _radioSafetyNet = State(initialValue: state.radioSafetyNet)
     }
 
     var body: some View {
@@ -264,7 +266,7 @@ struct ShareLocationSheet: View {
                     ToolbarItem(placement: .confirmationAction) {
                         Button(state.isSharing ? "Update" : "Share") {
                             if let room {
-                                onShare(room, choice)
+                                onShare(room, choice, radioSafetyNet && state.radioGpsAvailable)
                             }
                         }
                         .disabled(room == nil)
@@ -317,9 +319,38 @@ struct ShareLocationSheet: View {
             }
             .listRowBackground(FirepitColors.surface2)
 
+            if state.radioGpsAvailable {
+                Section {
+                    Toggle("If my phone dies, my radio answers 'where are you?'", isOn: $radioSafetyNet)
+                    Text(
+                        """
+                        Uses Meshtastic's own protection, not Firepit's. Firepit's protection needs your phone.
+                        While you share, your radio also answers 'where are you?' itself, at most every 3 minutes, \
+                        and sends its position when it starts and once a day. Anyone holding the room's radio key could \
+                        read it. If your phone dies, it keeps answering on the key it has until your phone is back, \
+                        even after the share's end.
+                        """)
+                    .font(FirepitFont.bodySmall)
+                    .foregroundStyle(FirepitColors.textSecondary)
+                    if radioSafetyNet {
+                        Text("Your radio restarts once if setup needs GPS on, fixed position off, one-day beacons, or smart off.")
+                            .font(FirepitFont.bodySmall)
+                            .foregroundStyle(FirepitColors.warn)
+                    }
+                }
+                .listRowBackground(FirepitColors.surface2)
+            }
+
             if state.isSharing {
                 Section {
                     Button("Stop sharing", role: .destructive, action: onStop)
+                }
+                .listRowBackground(FirepitColors.surface2)
+            }
+            if let error = state.error {
+                Section {
+                    Text(verbatim: error)
+                        .foregroundStyle(FirepitColors.danger)
                 }
                 .listRowBackground(FirepitColors.surface2)
             }

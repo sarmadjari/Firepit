@@ -40,7 +40,7 @@ internal class Converters {
         RoomActivityEntity::class,
         PendingHandoverEntity::class,
     ],
-    version = 14,
+    version = 15,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -304,6 +304,12 @@ abstract class FirepitDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(connection: SQLiteConnection) {
+                connection.execSQL("ALTER TABLE nodes ADD COLUMN positionFromRadio INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         private const val NAME = "firepit.db"
 
         /** Every upgrade, oldest first; the migration test runs them against the exported schemas. */
@@ -321,6 +327,7 @@ abstract class FirepitDatabase : RoomDatabase() {
             MIGRATION_11_12,
             MIGRATION_12_13,
             MIGRATION_13_14,
+            MIGRATION_14_15,
         )
 
         /** Opens the database encrypted; see [DatabaseEncryption] for why and how. */

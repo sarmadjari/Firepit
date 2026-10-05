@@ -188,10 +188,52 @@ import Testing
         #expect(!TrustRules.sealedPositionAcceptable(sealedUnderCurrent: true, onItsRoomSlot: false))
     }
 
-    /// A member's position only ever travels sealed; an unsealed one was written by a radio holder.
-    @Test func anUnsealedPositionIsNeverBelievedAboutAMember() {
-        #expect(!TrustRules.unsealedPositionAcceptable(senderInOurRooms: true))
-        #expect(TrustRules.unsealedPositionAcceptable(senderInOurRooms: false))
+    @Test func anUnsealedMemberPositionIsAcceptedOnlyOnASharedFirepitRoomSlot() {
+        #expect(
+            TrustRules.unsealedPositionAcceptable(
+                senderInOurRooms: true, channel: 2, sharedFirepitRoomSlot: 2, pkiEncrypted: false))
+        #expect(
+            !TrustRules.unsealedPositionAcceptable(
+                senderInOurRooms: true, channel: ChannelSlotManager.primarySlot, sharedFirepitRoomSlot: 0,
+                pkiEncrypted: false))
+        #expect(
+            !TrustRules.unsealedPositionAcceptable(
+                senderInOurRooms: true, channel: 2, sharedFirepitRoomSlot: 2, pkiEncrypted: true))
+        #expect(
+            !TrustRules.unsealedPositionAcceptable(
+                senderInOurRooms: true, channel: 3, sharedFirepitRoomSlot: 2, pkiEncrypted: false))
+        // A node outside our rooms keeps showing, as it always did.
+        #expect(
+            TrustRules.unsealedPositionAcceptable(
+                senderInOurRooms: false, channel: ChannelSlotManager.primarySlot, sharedFirepitRoomSlot: nil,
+                pkiEncrypted: false))
+    }
+
+    @Test func aRadioPositionNeverReplacesANewerSealedOne() {
+        #expect(
+            !TrustRules.radioPositionMayReplace(
+                existingHasPosition: true, existingFromRadio: false, existingPositionTime: 590_000,
+                incomingPositionTime: 600_000, nowMillis: 600_000))
+        #expect(
+            !TrustRules.radioPositionMayReplace(
+                existingHasPosition: true, existingFromRadio: true, existingPositionTime: 2_000,
+                incomingPositionTime: 1_000, nowMillis: 600_000))
+        #expect(
+            TrustRules.radioPositionMayReplace(
+                existingHasPosition: true, existingFromRadio: false, existingPositionTime: 2_000,
+                incomingPositionTime: 3_000, nowMillis: 700_000))
+        #expect(
+            !TrustRules.radioPositionMayReplace(
+                existingHasPosition: true, existingFromRadio: false, existingPositionTime: 2_000,
+                incomingPositionTime: 1_000, nowMillis: 700_000))
+        #expect(
+            !TrustRules.radioPositionMayReplace(
+                existingHasPosition: true, existingFromRadio: false, existingPositionTime: 2_000,
+                incomingPositionTime: nil, nowMillis: 700_000))
+        #expect(
+            TrustRules.radioPositionMayReplace(
+                existingHasPosition: false, existingFromRadio: false, existingPositionTime: nil,
+                incomingPositionTime: nil, nowMillis: 700_000))
     }
 
     @Test func whereWeAreIsOnlySaidToAMemberOfTheRoomWeShareWith() {

@@ -36,6 +36,8 @@ public struct MeshNode: Hashable, Sendable, Identifiable {
     public var groundSpeed: Int?
     /// True North course in hundredths of a degree.
     public var groundTrack: Int?
+    /// True when the newest stored position came from the radio safety net.
+    public var positionFromRadio: Bool
 
     public init(
         nodeNum: Int32,
@@ -61,7 +63,8 @@ public struct MeshNode: Hashable, Sendable, Identifiable {
         positionTime: Int64? = nil,
         positionPrecision: Int? = nil,
         groundSpeed: Int? = nil,
-        groundTrack: Int? = nil
+        groundTrack: Int? = nil,
+        positionFromRadio: Bool = false
     ) {
         self.nodeNum = nodeNum
         self.userId = userId
@@ -87,6 +90,7 @@ public struct MeshNode: Hashable, Sendable, Identifiable {
         self.positionPrecision = positionPrecision
         self.groundSpeed = groundSpeed
         self.groundTrack = groundTrack
+        self.positionFromRadio = positionFromRadio
     }
 
     public var id: Int32 { nodeNum }

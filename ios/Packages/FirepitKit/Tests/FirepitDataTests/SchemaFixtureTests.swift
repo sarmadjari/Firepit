@@ -8,6 +8,7 @@ private struct RoomSchema: Decodable {
 }
 
 private struct DatabaseSchema: Decodable {
+    var identityHash: String
     var entities: [Entity]
 }
 
@@ -24,7 +25,7 @@ private struct Field: Decodable {
 }
 
 private func fixtureSchema() throws -> RoomSchema {
-    let url = Bundle.module.url(forResource: "room-schema-14", withExtension: "json", subdirectory: "Fixtures")!
+    let url = Bundle.module.url(forResource: "room-schema-15", withExtension: "json", subdirectory: "Fixtures")!
     return try JSONDecoder().decode(RoomSchema.self, from: Data(contentsOf: url))
 }
 
@@ -37,6 +38,10 @@ private func fixtureSchema() throws -> RoomSchema {
     for entity in schema.database.entities {
         #expect(migrated.contains(entity.tableName))
     }
+}
+
+@Test func schemaFixtureIdentityHashMatchesTheApp() throws {
+    #expect(try fixtureSchema().database.identityHash == FirepitDatabase.identityHash)
 }
 
 @Test func schemaFixtureColumnNamesMatchMigratedTables() throws {
@@ -130,6 +135,43 @@ private func fixtureSchema() throws -> RoomSchema {
     }
     #expect(key?.phoneKey == "abc")
     #expect(key?.inPerson == false)
+    let hash = try queue.read { db in
+        try String.fetchOne(db, sql: "SELECT identity_hash FROM room_master_table WHERE id = 42")
+    }
+    #expect(hash == FirepitDatabase.identityHash)
+}
+
+@Test func v14DatabaseMigratesRadioPositionFlagAndKeepsPositions() throws {
+    var configuration = Configuration()
+    configuration.prepareDatabase { db in try db.execute(sql: "PRAGMA foreign_keys = ON") }
+    let queue = try DatabaseQueue(configuration: configuration)
+    try queue.write { db in
+        for sql in FirepitDatabase.createStatements { try db.execute(sql: sql) }
+        try db.execute(sql: "ALTER TABLE room_members ADD COLUMN lastOpenedGeneration INTEGER")
+        try db.execute(sql: "ALTER TABLE peer_keys ADD COLUMN inPerson INTEGER NOT NULL DEFAULT 0")
+        try db.execute(sql: "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)")
+        try db.execute(
+            sql: "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, ?)",
+            arguments: [FirepitDatabase.v14IdentityHash])
+        try db.execute(sql: "CREATE TABLE IF NOT EXISTS grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY)")
+        for id in ["create_v12", "v13_member_evidence", "v14_key_provenance"] {
+            try db.execute(sql: "INSERT INTO grdb_migrations (identifier) VALUES (?)", arguments: [id])
+        }
+        try db.execute(
+            sql: """
+                 INSERT INTO nodes (nodeNum, isUnmessagable, isFavorite, firstSeen, latitudeI, longitudeI)
+                 VALUES (7, 0, 0, 100, 1, 2)
+                 """)
+    }
+
+    try FirepitDatabase.migrator.migrate(queue)
+
+    let row = try queue.read { db in
+        try Row.fetchOne(db, sql: "SELECT latitudeI, longitudeI, positionFromRadio FROM nodes WHERE nodeNum = 7")
+    }
+    #expect(row?["latitudeI"] as Int? == 1)
+    #expect(row?["longitudeI"] as Int? == 2)
+    #expect(row?["positionFromRadio"] as Bool? == false)
     let hash = try queue.read { db in
         try String.fetchOne(db, sql: "SELECT identity_hash FROM room_master_table WHERE id = 42")
     }

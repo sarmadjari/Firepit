@@ -1335,7 +1335,6 @@ class RoomRepository @Inject constructor(
                 priority = MeshPacket.Priority.RELIABLE,
             )
         }
-
         // What sits in the slot unfiled is this channel's, or this room's from
         // before rooms were recorded. A room's own history goes by its id,
         // wherever it sits — including set aside while another radio was on.
@@ -1360,7 +1359,6 @@ class RoomRepository @Inject constructor(
         // if somebody invites us again.
         if (sharingStore.deadline.value?.roomId == roomId) sharingStore.clear()
     }
-
     /**
      * Takes every Firepit room off the connected radio and puts back the
      * primary channel it came with, for a radio that is being given away,

@@ -212,7 +212,7 @@ class MeshRepository @Inject constructor(
     suspend fun sendAwaitingAck(packet: MeshPacket, from: Int, timeout: Duration): Boolean = coroutineScope {
         val myNodeNum = _myNodeNum.value
         // Listening starts before sending: an answer can arrive first.
-        val answer = async(start = CoroutineStart.UNDISPATCHED) {
+        val routingAnswer = async(start = CoroutineStart.UNDISPATCHED) {
             withTimeoutOrNull(timeout) {
                 routing.first { event ->
                     event.requestId == packet.id &&
@@ -224,11 +224,26 @@ class MeshRepository @Inject constructor(
             .onFailure { cause -> Log.w(TAG, "could not send ${packet.id} to $from", cause) }
             .isSuccess
         if (!sent) {
-            answer.cancel()
+            routingAnswer.cancel()
             return@coroutineScope false
         }
-        val event = answer.await()
+        val event = routingAnswer.await()
         event != null && event.from == from && event.error == Routing.Error.NONE
+    }
+
+    suspend fun sendPositionRequest(to: Int, channel: Int): Boolean {
+        val packet = MeshPacketBuilder.meshPacket(
+            to = to,
+            channel = channel,
+            portNum = PortNum.POSITION_APP,
+            payload = ByteString.EMPTY,
+            hopLimit = hopLimitForSending(),
+            wantResponse = true,
+            priority = MeshPacket.Priority.RELIABLE,
+        )
+        return runCatching { link.send(ToRadio(packet = packet)) }
+            .onFailure { cause -> Log.w(TAG, "could not send radio position request to $to", cause) }
+            .isSuccess
     }
 
     /** Whether words to [peer] can be sealed to their phone, as that changes. */
@@ -250,6 +265,7 @@ class MeshRepository @Inject constructor(
             // Our own fix comes from the phone, which reports neither.
             groundSpeed = null,
             groundTrack = null,
+            positionFromRadio = false,
         )
     }
 
@@ -538,6 +554,7 @@ class MeshRepository @Inject constructor(
             },
             id = id,
             positionPrecision = channel.settings?.module_settings?.position_precision ?: 0,
+            psk = channel.settings?.psk?.toByteArray(),
             kind = kindOf(id, channel.settings?.psk?.toByteArray(), secondary = channel.role == Channel.Role.SECONDARY),
         )
     }
@@ -828,6 +845,11 @@ class MeshRepository @Inject constructor(
     private fun Int.ifPlausible(): Long? =
         RadioClock.ifPlausible(this, System.currentTimeMillis())
 
+    private fun Int.radioTimestamp(receivedAt: Long): Long? {
+        val plausible = RadioClock.ifPlausible(this, receivedAt) ?: return null
+        return minOf(plausible, receivedAt)
+    }
+
     private suspend fun handlePacket(packet: MeshPacket) {
         val data = packet.decoded ?: return
         noteClockSkew(packet)
@@ -897,11 +919,31 @@ class MeshRepository @Inject constructor(
             noteRadioFix(position, System.currentTimeMillis())
             return
         }
-        if (!TrustRules.unsealedPositionAcceptable(senderInOurRooms = memberDao.isInAnyRoom(packet.from))) {
+        val memberRoomSlot = sharedFirepitRoomSlot(packet.from, packet.channel)
+        val senderInRooms = memberDao.isInAnyRoom(packet.from)
+        if (!TrustRules.unsealedPositionAcceptable(
+                senderInOurRooms = senderInRooms,
+                channel = packet.channel,
+                sharedFirepitRoomSlot = memberRoomSlot,
+                pkiEncrypted = packet.pki_encrypted,
+            )
+        ) {
             Log.w(TAG, "dropped an unsealed position for member ${packet.from}")
             return
         }
-        storePosition(packet.from, position, precision = position.precision_bits.takeIf { it != 0 })
+        storePosition(
+            packet.from,
+            position,
+            precision = position.precision_bits.takeIf { it != 0 },
+            fromRadio = senderInRooms,
+        )
+    }
+
+    private suspend fun sharedFirepitRoomSlot(nodeNum: Int, slot: Int): Int? {
+        val room = _channels.value.firstOrNull {
+            it.index == slot && it.kind == RoomKind.FIREPIT && it.isRoom
+        } ?: return null
+        return if (memberDao.findEntity(room.id, nodeNum) != null) room.index else null
     }
 
     private fun noteRadioFix(position: Position, receivedAt: Long) {
@@ -913,7 +955,7 @@ class MeshRepository @Inject constructor(
             latitude = latitude / 1e7,
             longitude = longitude / 1e7,
             altitude = position.altitude,
-            timeMillis = position.time.ifPlausible() ?: receivedAt,
+            timeMillis = position.timestamp.ifPlausible() ?: position.time.ifPlausible() ?: 0L,
             source = OwnPosition.Source.RADIO,
         )
     }
@@ -923,14 +965,32 @@ class MeshRepository @Inject constructor(
      * already opened and checked by the room layer.
      */
     internal suspend fun storeSealedPosition(nodeNum: Int, position: Position) {
-        storePosition(nodeNum, position, precision = PositionPrecision.FULL)
+        storePosition(nodeNum, position, precision = PositionPrecision.FULL, fromRadio = false)
     }
 
-    private suspend fun storePosition(nodeNum: Int, position: Position, precision: Int?) {
+    private suspend fun storePosition(nodeNum: Int, position: Position, precision: Int?, fromRadio: Boolean) {
         val latitude = position.latitude_i ?: return
         val longitude = position.longitude_i ?: return
         // 0,0 is in the Atlantic and is what a node with no fix reports.
         if (latitude == 0 && longitude == 0) return
+        val now = System.currentTimeMillis()
+        val positionTime = if (fromRadio) {
+            position.timestamp.radioTimestamp(receivedAt = now)
+        } else {
+            position.time.ifPlausible() ?: now
+        }
+        val existing = nodeDao.findEntity(nodeNum)
+        if (fromRadio && !TrustRules.radioPositionMayReplace(
+                existingHasPosition = existing?.let { it.latitudeI != null && it.longitudeI != null } == true,
+                existingFromRadio = existing?.positionFromRadio == true,
+                existingPositionTime = existing?.positionTime,
+                incomingPositionTime = positionTime,
+                nowMillis = now,
+            )
+        ) {
+            Log.i(TAG, "ignored an older radio position for $nodeNum")
+            return
+        }
 
         nodeDao.updatePosition(
             nodeNum = nodeNum,
@@ -939,10 +999,11 @@ class MeshRepository @Inject constructor(
             altitude = position.altitude,
             // Their stamp while it holds up, otherwise the fact we can vouch
             // for: it reached us now.
-            positionTime = position.time.ifPlausible() ?: System.currentTimeMillis(),
+            positionTime = positionTime,
             positionPrecision = precision,
             groundSpeed = position.ground_speed,
             groundTrack = position.ground_track,
+            positionFromRadio = fromRadio,
         )
     }
 
@@ -1084,7 +1145,15 @@ class MeshRepository @Inject constructor(
         val user = info.user
         // The radio learned this from an unsealed broadcast, if at all; a
         // member's position is only believed sealed, from their phone.
-        val position = info.position.takeIf { TrustRules.unsealedPositionAcceptable(memberDao.isInAnyRoom(info.num)) }
+        val isMember = memberDao.isInAnyRoom(info.num)
+        val position = info.position.takeIf {
+            !isMember || TrustRules.unsealedPositionAcceptable(
+                senderInOurRooms = isMember,
+                channel = 0,
+                sharedFirepitRoomSlot = null,
+                pkiEncrypted = false,
+            )
+        }
         nodeDao.save(
             MeshNode(
                 nodeNum = info.num,
